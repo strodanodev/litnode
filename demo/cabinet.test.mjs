@@ -60,7 +60,7 @@ test('cabinet contract: fields by name, cabinet served at /, vendored protocol i
 
   // the node is a frontend host: the cabinet at /, its files at the root, the protocol modules it imports
   const page = await get('/'); assert.match(page.headers.get('content-type'), /text\/html/); assert.match(await page.text(), /LIT GAMES/);
-  for (const f of ['/app.js', '/client.js', '/config.js', '/style.css', '/sw.js', '/manifest.webmanifest', '/protocol/keys.js', '/protocol/derive.js', '/cabinet/protocol/keys.js'])
+  for (const f of ['/app.js', '/client.js', '/wallet.js', '/config.js', '/style.css', '/sw.js', '/manifest.webmanifest', '/protocol/keys.js', '/protocol/derive.js', '/protocol/profile.js', '/cabinet/protocol/keys.js'])
     assert.equal((await fetch(`${node.addr}${f}`)).status, 200, f);
   assert.equal((await fetch(`${node.addr}/protocol/../package.json`)).status, 404, 'no path escape');
   assert.equal((await fetch(`${node.addr}/nope.js`)).status, 404);
@@ -77,7 +77,8 @@ test('cabinet contract: fields by name, cabinet served at /, vendored protocol i
 
   // /health — SYNC §1.3
   const health = await json('/health');
-  hasFields(health, { nodeId: 'string', operator: 'string', roles: 'array', region: 'string', addr: 'string', epoch: 'number', peers: 'number', rulesets: 'object', buildsHeld: 'number', staking: 'string', bonded: 'any', 'chain.offline': 'boolean', 'chain.rpc': 'string', 'chain.head': 'any', 'chain.lastError': 'any', startedAt: 'string', uptimeMs: 'number', 'inbound.peers': 'number', 'inbound.reachable': 'any' }, '/health');
+  hasFields(health, { nodeId: 'string', operator: 'string', roles: 'array', region: 'string', addr: 'string', epoch: 'number', peers: 'number', rulesets: 'object', buildsHeld: 'number', staking: 'string', bonded: 'any', 'chain.offline': 'boolean', 'chain.rpc': 'string', 'chain.head': 'any', 'chain.lastError': 'any', startedAt: 'string', uptimeMs: 'number', 'inbound.peers': 'number', 'inbound.reachable': 'any', profiles: 'string' }, '/health');
+  assert.equal(health.profiles, 'unset', 'no PlayerProfile configured → keys are players, and it says so');
   assert.equal(health.inbound.reachable, null, 'no peers known → reachability is unknown, not false');
   assert.equal(health.rulesets['agent-fighter.v1'], manifest.buildHash);
   assert.ok(health.uptimeMs >= 0 && !Number.isNaN(Date.parse(health.startedAt)));
@@ -100,6 +101,10 @@ test('cabinet contract: fields by name, cabinet served at /, vendored protocol i
   // /stats — keyed by playerId
   const st = await json('/stats?ruleset=agent-fighter.v1');
   hasFields(st[kps[0].publicKey], { matches: 'number', wins: 'number', ticks: 'number' }, '/stats[player]');
+
+  // /profile — what the cabinet's profile card asks about this browser's key
+  const prof = await json(`/profile?player=${kps[0].publicKey}`);
+  hasFields(prof, { player: 'string', profiles: 'string', owner: 'any', tokenId: 'any', active: 'any', name: 'any' }, '/profile');
 
   // /deltas — what the history table and the rating chart are built from
   const ds = await json('/deltas?ruleset=agent-fighter.v1');

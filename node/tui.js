@@ -43,6 +43,7 @@ export function formatEvent(ev, color = true) {
     case 'block': return `${tag(G.block, 'block', c.magenta)} #${ev.number}  ${hash(ev.hash, 20)}`;
     case 'stakes': return `${tag(G.stake, 'stakes', c.magenta)} ${ev.bonded}/${ev.read} bonded`;
     case 'ruleset': return `${tag(G.ruleset, 'ruleset', c.blue)} ${ev.rulesetId} @ ${hash(ev.buildHash, 16)}  ${ev.current ? 'current' : 'held'}  ${kb(ev.bytes)}`;
+    case 'revoked': return `${tag(G.bad, 'revoked', c.yellow)} key ${hash(ev.playerId, 12)} revoked by its owner ${hash(ev.owner, 10)} — queue entries refused from now`;
     case 'refused': return `${tag(G.bad, 'refused', c.red)} ${ev.what}${ev.matchId ? ` ${ev.matchId}` : ''}: ${ev.reason}`;
     case 'log': return `${tag(G.log, 'log', c.gray)} ${P(c.gray, ev.msg)}`;
     default: return `${tag(G.log, ev.type, c.gray)} ${P(c.gray, JSON.stringify(ev).slice(0, 120))}`;

@@ -5,6 +5,7 @@
     "keys.js": "c00525feb29eb8235a76e61d23b71fdad5ca079748f96307fa835b2b26ec7f45",
     "keccak.js": "7a6abd1fa19c5dc7464d4723dc7feee2f6c1fcee5e7547affa9f7a698009ba2e",
     "staking.js": "7fe2be215628aa55a1fb6e717693151eb9377d575f4b09013f234de08b7aad75",
+    "profile.js": "3e4332b59c16eae1ca3abdd662c95fca2d0a1c262a9fecf0852d0221342f69d8",
     "derive.js": "67e76438cd9d8501ab0943955e3ef321306f85ee07b73792f7a2168194fed2ef",
     "placement.js": "d7a883dca5b0c486e7fa3eb0d72c47901e9557fbc607dd071da0719e1fa879e8",
     "pairing.js": "d436c729a6649e9a6e199fc9be11e6dc574e11831169ab972b1d2c5a5abff875",

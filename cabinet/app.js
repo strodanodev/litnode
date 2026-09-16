@@ -17,6 +17,7 @@ import { identicon, fileToAvatar } from './avatar.js';
 import { paintBackdrop } from './bg.js';
 import { sample, loadHistory, slots, uptimePct, hoursOnline, fmtDuration, ring, strip, heatmap } from './uptime.js';
 import { readStake } from './chain.js';
+import * as wallet from './wallet.js';
 import { CHAIN } from './config.js';
 
 const $ = (id) => document.getElementById(id);
@@ -52,6 +53,12 @@ $('avatar-file').addEventListener('change', async (e) => {
 
 // ═══════════════════════════════════════════════ node state ══
 const S = { online: false, checked: false, health: null, boards: {}, stats: {}, deltas: {}, peers: [], snapshot: null, uptime: {}, stake: null };
+// Wallet / profile (docs/WALLET-IDENTITY.md): what the chain says about THIS browser's key.
+const Wl = { binding: null, account: null, profile: null, busy: '', error: '' };
+async function refreshBinding() {
+  if (!wallet.configured() || !player?.kp) return;
+  try { Wl.binding = await wallet.bindingOf(player.id); } catch { /* chain unreachable; keep what we had */ }
+}
 let misses = 0, polls = 0;
 async function pollNode() {
   $('node-url').textContent = nodeUrl();
@@ -208,6 +215,40 @@ const tierOf = (level) => TIERS.find(([min]) => level >= min)[1];
 const styleTag = (s) => `<span class="style" style="--sc:${STYLES[s]?.color ?? '#999'}">${esc(STYLES[s]?.label ?? s)}</span>`;
 const nodeHint = () => (S.online ? '' : !S.checked ? '<div class="empty">Connecting to the node…</div>' : `<div class="empty">Node offline — <a class="link" href="#/node">start a node</a> to see mesh data.</div>`);
 
+/** The wallet row under the key: bound → who owns it; unbound → sign in. */
+function walletLine() {
+  if (!wallet.configured()) return '';
+  if (!player.kp) return '<div class="sub dim">No key on this page (insecure context), so nothing to bind.</div>';
+  const b = Wl.binding;
+  if (Wl.busy) return `<div class="sub">${esc(Wl.busy)}</div>`;
+  if (b?.active) return `<div class="sub">profile <b>${esc(Wl.profile?.name ?? `#${b.tokenId}`)}</b> · wallet <span class="mono" title="${esc(b.owner)}">${b.owner.slice(0, 6)}…${b.owner.slice(-4)}</span></div>`;
+  if (b && !b.active) return '<div class="sub" style="color:var(--bad,#ff7b8a)">this key was revoked by its profile owner — nodes refuse it</div>';
+  if (!wallet.hasWallet()) return '<div class="sub dim">Install a wallet (MetaMask) to bind this key to a litVM Games profile.</div>';
+  return `<div class="sub"><button class="btn sm" id="wallet-btn">Sign in with wallet</button> <span class="dim">one transaction: a soulbound profile owns this key</span>${Wl.error ? `<div class="dim">${esc(Wl.error)}</div>` : ''}</div>`;
+}
+/** Connect, then register (no profile yet) or bindKey (profile exists, new device). */
+async function signInWithWallet() {
+  Wl.error = '';
+  try {
+    Wl.busy = 'connecting wallet…'; render();
+    Wl.account = await wallet.connect();
+    Wl.profile = await wallet.profileOf(Wl.account);
+    if (Wl.profile) {
+      Wl.busy = `adding this device to ${Wl.profile.name} — confirm in your wallet`; render();
+      await wallet.bindKey(Wl.account, player.id);
+    } else {
+      const name = prompt('Profile name (1–32 letters, digits, space _ . -)', player.name.replace(/[^A-Za-z0-9 _.-]/g, '').slice(0, 32) || 'player');
+      if (!name) { Wl.busy = ''; render(); return; }
+      Wl.busy = 'minting your profile — confirm in your wallet'; render();
+      await wallet.register(Wl.account, player.id, name.trim());
+    }
+    Wl.busy = 'waiting for the chain…'; render();
+    Wl.binding = await wallet.waitForBinding(player.id);
+    Wl.profile = Wl.binding ? await wallet.profileOf(Wl.binding.owner) : Wl.profile;
+    if (!Wl.binding) Wl.error = 'the transaction did not land in 60 s — check the explorer, then reload';
+  } catch (e) { Wl.error = e?.message ?? String(e); }
+  Wl.busy = ''; render();
+}
 function profilePanel() {
   const t = myTotals();
   const xpRaw = t.wins * 60 + (t.matches - t.wins) * 20;
@@ -222,6 +263,7 @@ function profilePanel() {
         <h2>${esc(player.name)} <button class="link" id="name-btn" title="rename">✎</button></h2>
         <div class="sub">Level ${L.level} · ${tierOf(L.level)}</div>
         <span class="token" title="${esc(player.id)}">${player.guest ? 'guest' : 'ed25519'}:${player.id.slice(0, 8)}…${player.id.slice(-4)}</span>
+        ${walletLine()}
       </div>
     </div>
     <div class="xp"><div class="row"><span>LEVEL ${L.level}</span><span>${L.xp} / ${L.next} XP</span></div><div class="bar"><i style="width:${pct(L.xp, L.next)}%"></i></div></div>
@@ -522,8 +564,9 @@ window.addEventListener('hashchange', navigate);
 
 // One delegated click handler for everything rendered from templates.
 document.addEventListener('click', (e) => {
-  const t = e.target.closest('[data-play],[data-queue],[data-mm-stop],[data-mm-reset],[data-mm-launch],[data-lb],[data-style],#name-btn,#avatar-btn');
+  const t = e.target.closest('[data-play],[data-queue],[data-mm-stop],[data-mm-reset],[data-mm-launch],[data-lb],[data-style],#name-btn,#avatar-btn,#wallet-btn');
   if (!t) return;
+  if (t.id === 'wallet-btn') { signInWithWallet(); return; }
   if (t.dataset.play) { e.preventDefault(); const g = GAMES.find((x) => x.id === t.dataset.play); if (g) play(g); }
   else if (t.dataset.queue) { e.preventDefault(); const g = GAMES.find((x) => x.id === t.dataset.queue); if (g) findMatch(g); }
   else if ('mmStop' in t.dataset || 'mmReset' in t.dataset) stopMatchmaking();
@@ -574,6 +617,8 @@ paintBackdrop($('bg'));
 player = await loadPlayer();
 renderChrome();
 navigate();
+refreshBinding().then(render);
+setInterval(() => refreshBinding().then(render), 60_000);
 pollNode();
 setInterval(pollNode, 5000);
 

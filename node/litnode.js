@@ -38,7 +38,7 @@ export const rulesetHash = (source) => h('ruleset', source);
 export async function createNode({
   dataDir, port = 0, host = '127.0.0.1', publicAddr = null,
   operator = 'dev', roles = ['mesh', 'witness'], region = 'local', wsAddr = null,
-  seeds = [], rulesets = [], rpc = null, offline = !rpc, nodeStake = null,
+  seeds = [], rulesets = [], rpc = null, offline = !rpc, nodeStake = null, playerProfile = null, chainFetch = globalThis.fetch,
   heartbeatMs = EPOCH_MS / 2, log = () => {}, onEvent = () => {},
 }) {
   // Every observable thing the node does goes through emit(): the TUI draws
@@ -55,7 +55,27 @@ export async function createNode({
   if (!existsSync(idPath)) writeFileSync(idPath, JSON.stringify(identity, null, 2) + '\n');
   const nodeId = identity.publicKey;
 
-  const chain = createChain({ rpc: rpc ?? 'offline', offline, nodeStake });
+  const chain = createChain({ rpc: rpc ?? 'offline', offline, nodeStake, playerProfile, fetchImpl: chainFetch });
+
+  // ---------------------------------------------------------------- player profiles
+  // key → { owner, tokenId, active, at }. Read like stakes: every tick, for
+  // keys seen in the queue or in settled deltas, refreshed after PROFILE_TTL;
+  // merged, never replaced. Unset contract → keys are players, reported.
+  const profileCache = new Map();
+  const PROFILE_TTL = 30_000;
+  const profileState = () => (!playerProfile ? 'unset' : offline ? 'offline' : profilesRead ? 'chain' : 'unreadable');
+  let profilesRead = false;
+  const profilesFor = (keys) => Object.fromEntries(keys.filter((k) => profileCache.has(k)).map((k) => [k, profileCache.get(k)]));
+  const refreshProfiles = async (keys) => {
+    if (!playerProfile || offline) return;
+    const now = Date.now();
+    const stale = [...new Set(keys)].filter((k) => now - (profileCache.get(k)?.at ?? 0) > PROFILE_TTL).slice(0, 50);
+    if (!stale.length) return;
+    const got = await chain.profiles(stale);
+    if (!got) return;
+    for (const [k, v] of Object.entries(got)) { const prev = profileCache.get(k); profileCache.set(k, { ...v, at: now }); if (prev && prev.active && !v.active) emit('revoked', { playerId: k, owner: prev.owner }); }
+    profilesRead = true;
+  };
 
   // ---------------------------------------------------------------- rulesets
   const loaded = new Map(); // rulesetId → CURRENT build { buildHash, source, title, mod } (advertised)
@@ -199,6 +219,7 @@ export async function createNode({
         }
       }
       await hydrateMissing(currentSnapshot());
+      await refreshProfiles([...queue.values()].map((b) => b.playerId).concat(settlement.list().flatMap((d) => d.participants)));
     } catch (e) { log(`tick: ${e.message}`); }
   };
   const envelopeCache = new Map(); // nodeId → latest envelope (for forwarding)
@@ -321,7 +342,7 @@ export async function createNode({
       if (req.method === 'GET' && (url.pathname.startsWith('/cabinet/') || url.pathname.startsWith('/protocol/'))) { if (serveStatic(res, url.pathname)) return; return json(res, 404, { error: 'not found' }); }
       if (req.method === 'GET' && url.pathname === '/health') {
         const s = currentSnapshot();
-        return json(res, 200, { nodeId, operator, roles, region, addr, epoch: s.epoch, peers: s.peers.length, rulesets: buildHashes(), buildsHeld: builds.size, staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null, chain: chain.status(), startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt,
+        return json(res, 200, { nodeId, operator, roles, region, addr, epoch: s.epoch, peers: s.peers.length, rulesets: buildHashes(), buildsHeld: builds.size, staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null, chain: chain.status(), profiles: profileState(), startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt,
           // reachable: a peer has pushed gossip to us in the last 30 s. null = no peers known, so nothing to conclude.
           inbound: { peers: [...inbound.values()].filter((t) => Date.now() - t < 30_000).length, lastAt: inbound.size ? new Date(Math.max(...inbound.values())).toISOString() : null, reachable: peersKnown.size ? [...inbound.values()].some((t) => Date.now() - t < 30_000) : null } });
       }
@@ -370,6 +391,10 @@ export async function createNode({
         if (!b || b.playerId !== env.signer) return json(res, 400, { error: 'queue entry must be signed by the player it names' });
         if (!(await opened(QUEUE_TAG, env))) return json(res, 403, { error: 'bad signature' });
         if (Math.abs(b.bucket - bucketOf(Date.now())) > 2) return json(res, 400, { error: 'bucket out of window' });
+        // A key its profile owner revoked is refused; an unbound key is a guest and fine.
+        await refreshProfiles([b.playerId]).catch(() => {});
+        const prof = profileCache.get(b.playerId);
+        if (prof && prof.tokenId !== 0n && !prof.active) { emit('refused', { what: 'queue', reason: 'key revoked', playerId: b.playerId }); return json(res, 403, { error: 'key revoked by its profile owner' }); }
         queueEnvelopes.set(`${b.bucket}|${b.playerId}`, env);
         await mergeQueue([env]);
         emit('queue', { playerId: b.playerId, rulesetId: b.rulesetId, mode: b.mode, bucket: b.bucket, region: b.region ?? null, sig: env.sig });
@@ -412,13 +437,24 @@ export async function createNode({
         else emit('refused', { what: 'cosign', reason: r.reason, matchId: c.matchId });
         return json(res, 200, r);
       }
+      if (req.method === 'GET' && url.pathname === '/profile') {
+        const pid = url.searchParams.get('player');
+        if (!pid) return json(res, 400, { error: 'player= required' });
+        if (!playerProfile) return json(res, 200, { player: pid, profiles: 'unset', owner: null, tokenId: null, active: null, name: null });
+        await refreshProfiles([pid]).catch(() => {});
+        const p = profileCache.get(pid);
+        if (!p) return json(res, 200, { player: pid, profiles: profileState(), owner: null, tokenId: null, active: null, name: null });
+        const name = p.tokenId ? await chain.profileName(p.tokenId) : null;
+        return json(res, 200, { player: pid, profiles: profileState(), owner: p.owner, tokenId: p.tokenId ? p.tokenId.toString() : null, active: p.tokenId ? p.active : null, name });
+      }
       if (req.method === 'GET' && ['/leaderboard', '/credits', '/stats'].includes(url.pathname)) {
         const rid = url.searchParams.get('ruleset');
         if (!rid) return json(res, 400, { error: 'ruleset= required' });
         try {
-          const d = settlement.derived(rid, { requireCosign: url.searchParams.get('cosigned') === '1' });
+          const byOwner = url.searchParams.get('by') === 'owner';
+          const d = settlement.derived(rid, { requireCosign: url.searchParams.get('cosigned') === '1', profiles: byOwner ? profilesFor(settlement.list(rid).flatMap((x) => x.participants)) : null });
           const player = url.searchParams.get('player');
-          if (url.pathname === '/leaderboard') return json(res, 200, { rulesetId: rid, deriveVersion: d.deriveVersion, digest: d.digest, skipped: d.skipped, leaderboard: d.leaderboard });
+          if (url.pathname === '/leaderboard') return json(res, 200, { rulesetId: rid, by: d.by, deriveVersion: d.deriveVersion, digest: d.digest, skipped: d.skipped, leaderboard: d.leaderboard });
           if (url.pathname === '/credits') { const cur = url.searchParams.get('currency'); const table = cur ? d.credits[cur] ?? {} : d.credits; return json(res, 200, player ? { player, currency: cur, balance: table[player] ?? 0 } : table); }
           return json(res, 200, player ? { player, ...(d.stats[player] ?? { matches: 0, wins: 0, ticks: 0 }) } : d.stats);
         } catch (e) { return json(res, 400, { error: e.message }); }

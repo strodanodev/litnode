@@ -43,6 +43,7 @@ const node = await createNode({
   rpc: env.OFFLINE ? null : (env.RPC ?? deployed.rpc ?? 'https://liteforge.rpc.caldera.xyz/http'),
   offline: !!env.OFFLINE,
   nodeStake: env.NODE_STAKE ?? deployed.NodeStake?.address ?? null,
+  playerProfile: env.PLAYER_PROFILE ?? deployed.PlayerProfile?.address ?? null,
   log: tui ? tui.log : (m) => console.log(`${stamp()} ${m}`),
   onEvent: tui ? tui.event : plainEvent,
 });

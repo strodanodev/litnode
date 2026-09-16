@@ -18,6 +18,7 @@ import { sign, verify } from '../protocol/keys.js';
 import { chainHead, verifyLedger } from '../protocol/log.js';
 import { hydrationManifest, agent as makeAgent } from '../protocol/erc6699.js';
 import { derive } from '../protocol/derive.js';
+import { applyProfiles } from '../protocol/profile.js';
 import { buildTree, leafOf, proofFor, anchorCalldata, hourOf } from '../protocol/epoch.js';
 
 export const COSIGN_TAG = 'cosign';
@@ -181,10 +182,13 @@ export function createSettlement({ dataDir, nodeId, identity, loaded, builds = n
   const stripSig = ({ hostSig, cosigners, cosigs, ...body }) => body;
   const list = (rulesetId) => [...deltas.values()].filter((d) => !rulesetId || d.rulesetId === rulesetId);
 
-  const derived = (rulesetId, opts) => {
+  /** Tables for one ruleset. `profiles` (key → {owner, active}) folds by
+   *  wallet owner instead of by key; the response says which (`by`). */
+  const derived = (rulesetId, { profiles = null, ...opts } = {}) => {
     const rs = loaded.get(rulesetId);
     if (!rs) throw new Error(`ruleset ${rulesetId} not loaded`);
-    return { rulesetId, ...derive(list(rulesetId), rs.title.manifest, opts) };
+    const ds = profiles ? applyProfiles(list(rulesetId), profiles) : list(rulesetId);
+    return { rulesetId, by: profiles ? 'owner' : 'key', ...derive(ds, rs.title.manifest, opts) };
   };
 
   const epoch = (hour = hourOf(Date.now())) => {

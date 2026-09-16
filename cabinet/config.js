@@ -76,5 +76,10 @@ export const CHAIN = {
   NodeStake: '0x11C984bE3ee572eb7280334501B57c82001F397F',
   TestLITVM: '0x697aC520dFBe1B1830Bf22A77b54564F8ee21744',
   EpochAnchor: '0x09fBf6A5026b4E02eE9f78222117F97b19eE507A',
+  /** Set after `npm run deploy:testnet` writes it to contracts/deployed.testnet.json.
+   *  null = "Sign in with wallet" stays hidden; keys are players (docs/WALLET-IDENTITY.md). */
+  PlayerProfile: null,
+  NodeBadge: null,
+  explorer: 'https://liteforge.explorer.caldera.xyz',
   token: 'tLITVM',
 };

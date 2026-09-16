@@ -12,7 +12,7 @@
  *    2. deploy TestLITVM, pull the faucet
  *    3. deploy NodeStake(token, minStake, unbondingPeriod, slasher, treasury)
  *       with the values in contracts/deploy.testnet.json
- *    4. deploy ERC6699Registry
+ *    4. deploy ERC6699Registry, EpochAnchor, PlayerProfile, NodeBadge(NodeStake)
  *    5. generate (or load) the local node identity and bond minStake behind it
  *    6. write contracts/deployed.testnet.json — the node reads this
  *
@@ -41,7 +41,7 @@ console.log(`deployer ${wallet.address} · ${ethers.formatEther(balance)} zkLTC 
 if (balance === 0n) { console.error('no zkLTC for gas — use the faucet first'); process.exit(1); }
 
 // ---------------------------------------------------------------- compile
-const files = ['TestLITVM.sol', 'NodeStake.sol', 'ERC6699Registry.sol', 'EpochAnchor.sol'];
+const files = ['TestLITVM.sol', 'NodeStake.sol', 'ERC6699Registry.sol', 'EpochAnchor.sol', 'PlayerProfile.sol', 'NodeBadge.sol'];
 const sources = Object.fromEntries(files.map((f) => [f, { content: readFileSync(join(root, 'contracts', f), 'utf8') }]));
 const compiled = JSON.parse(solc.compile(JSON.stringify({
   language: 'Solidity', sources,
@@ -88,6 +88,9 @@ save();
 // ---------------------------------------------------------------- ERC-6699 + EpochAnchor
 await deploy('ERC6699Registry', 'ERC6699Registry.sol', 'ERC6699Registry');
 await deploy('EpochAnchor', 'EpochAnchor.sol', 'EpochAnchor');
+// ---------------------------------------------------------------- identity: player profiles + node badges (docs/WALLET-IDENTITY.md)
+await deploy('PlayerProfile', 'PlayerProfile.sol', 'PlayerProfile');
+await deploy('NodeBadge', 'NodeBadge.sol', 'NodeBadge', [await stake.getAddress()]);
 
 // ---------------------------------------------------------------- bond the first node
 const dataDir = process.env.LITNODE_DATA ?? join(root, 'data', 'node-1');

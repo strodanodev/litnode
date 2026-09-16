@@ -2,8 +2,9 @@
  *  Every read reports its source so a fallback never looks like a chain read. */
 import { beaconFromBlocks, blockOf, localBeacon } from '../protocol/beacon.js';
 import { standingCall, decodeStanding } from '../protocol/staking.js';
+import { ownerOfKeyCall, decodeOwner, nameOfCall, decodeString } from '../protocol/profile.js';
 
-export function createChain({ rpc, offline = false, nodeStake = null, fetchImpl = globalThis.fetch }) {
+export function createChain({ rpc, offline = false, nodeStake = null, playerProfile = null, fetchImpl = globalThis.fetch }) {
   let id = 0;
   const blocks = [];
   let lastError = null;
@@ -50,8 +51,23 @@ export function createChain({ rpc, offline = false, nodeStake = null, fetchImpl 
     return out;
   };
 
+  /** PlayerProfile.ownerOfKey for many player keys. Missing contract → null. */
+  const profiles = async (keys) => {
+    if (!playerProfile || offline) return null;
+    const out = {};
+    for (const k of keys) {
+      try { out[k] = decodeOwner(await call('eth_call', [ownerOfKeyCall(playerProfile, k), 'latest'])); }
+      catch (e) { lastError = String(e.message ?? e); }
+    }
+    return out;
+  };
+  const profileName = async (tokenId) => {
+    if (!playerProfile || offline) return null;
+    try { return decodeString(await call('eth_call', [nameOfCall(playerProfile, tokenId), 'latest'])); } catch { return null; }
+  };
+
   return {
-    pollBlock, beaconFor, standings,
-    status: () => ({ rpc, offline, nodeStake, blocks: blocks.length, head: blocks.at(-1)?.number ?? null, lastError }),
+    pollBlock, beaconFor, standings, profiles, profileName,
+    status: () => ({ rpc, offline, nodeStake, playerProfile, blocks: blocks.length, head: blocks.at(-1)?.number ?? null, lastError }),
   };
 }
