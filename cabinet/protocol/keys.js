@@ -6,8 +6,19 @@
  *  for one purpose can never be replayed as another. */
 import { canonical } from './canonical.js';
 
-const subtle = globalThis.crypto.subtle;
+const subtle = globalThis.crypto?.subtle;
 const enc = new TextEncoder();
+
+/** Browsers expose WebCrypto only in a SECURE CONTEXT: https, or localhost.
+ *  A lobby opened as http://<lan-ip>/ has no `crypto.subtle` and cannot hold a
+ *  key. That is a property of the platform, not a bug here — in production a
+ *  node is reached over https (tunnel or reverse proxy); on a LAN, open the
+ *  node on the machine itself as http://localhost:<port>/. */
+export const hasWebCrypto = () => !!subtle;
+const needSubtle = () => {
+  if (!subtle) throw new Error('WebCrypto unavailable: open this page over https or localhost (insecure context has no crypto.subtle)');
+  return subtle;
+};
 
 export const toHex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 export const fromHex = (hex) => {
@@ -23,16 +34,16 @@ const seedToPkcs8 = (seed) => { const b = new Uint8Array(48); b.set(PKCS8_PREFIX
 
 /** Generate an identity: { publicKey, privateKey } as hex. */
 export async function generateKeypair() {
-  const kp = await subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
-  const pub = new Uint8Array(await subtle.exportKey('raw', kp.publicKey));
-  const pkcs8 = new Uint8Array(await subtle.exportKey('pkcs8', kp.privateKey));
+  const kp = await needSubtle().generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+  const pub = new Uint8Array(await needSubtle().exportKey('raw', kp.publicKey));
+  const pkcs8 = new Uint8Array(await needSubtle().exportKey('pkcs8', kp.privateKey));
   return { publicKey: toHex(pub), privateKey: toHex(pkcs8.slice(16)) };
 }
 
 const importPrivate = (seedHex) =>
-  subtle.importKey('pkcs8', seedToPkcs8(fromHex(seedHex)), { name: 'Ed25519' }, false, ['sign']);
+  needSubtle().importKey('pkcs8', seedToPkcs8(fromHex(seedHex)), { name: 'Ed25519' }, false, ['sign']);
 const importPublic = (pubHex) =>
-  subtle.importKey('raw', fromHex(pubHex), { name: 'Ed25519' }, false, ['verify']);
+  needSubtle().importKey('raw', fromHex(pubHex), { name: 'Ed25519' }, false, ['verify']);
 
 /** Bytes that get signed: tag NUL canonical(body). Tag binds purpose. */
 export const signingBytes = (tag, body) => enc.encode(`${tag}\0${canonical(body)}`);
@@ -40,14 +51,14 @@ export const signingBytes = (tag, body) => enc.encode(`${tag}\0${canonical(body)
 /** Sign a body under a purpose tag. Returns hex signature (64 bytes). */
 export async function sign(tag, body, privateKeyHex) {
   const key = await importPrivate(privateKeyHex);
-  return toHex(new Uint8Array(await subtle.sign({ name: 'Ed25519' }, key, signingBytes(tag, body))));
+  return toHex(new Uint8Array(await needSubtle().sign({ name: 'Ed25519' }, key, signingBytes(tag, body))));
 }
 
 /** Verify; never throws — a malformed key or signature is simply false. */
 export async function verify(tag, body, signatureHex, publicKeyHex) {
   try {
     const key = await importPublic(publicKeyHex);
-    return await subtle.verify({ name: 'Ed25519' }, key, fromHex(signatureHex), signingBytes(tag, body));
+    return await needSubtle().verify({ name: 'Ed25519' }, key, fromHex(signatureHex), signingBytes(tag, body));
   } catch { return false; }
 }
 

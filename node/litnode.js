@@ -19,8 +19,11 @@ import { placement } from '../protocol/placement.js';
 import { createChain } from './chain.js';
 import { createSettlement } from './settle.js';
 
+// Every response is readable from any origin, and from an https page reaching
+// a loopback node (Chrome's Private Network Access asks on the preflight).
+const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-private-network': 'true' };
 const json = (res, status, body) => {
-  res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': '*' });
+  res.writeHead(status, { 'content-type': 'application/json', ...CORS });
   res.end(JSON.stringify(body));
 };
 const readBody = (req) => new Promise((resolve, reject) => {
@@ -40,6 +43,7 @@ export async function createNode({
 }) {
   mkdirSync(dataDir, { recursive: true });
   mkdirSync(join(dataDir, 'rulesets'), { recursive: true });
+  const startedAt = Date.now(); // /health reports it so a dashboard can show process uptime
 
   // ---------------------------------------------------------------- identity
   const idPath = join(dataDir, 'identity.json');
@@ -271,17 +275,18 @@ export async function createNode({
   const matchEnvelopes = () => [...matchBook.values()].map((e) => e.envelope).filter(Boolean);
 
   // ---------------------------------------------------------------- static
-  // Every node serves the arcade lobby and the protocol modules it needs, so
-  // a node is also a frontend host: open http://<node>/ and play. The same
-  // files deploy unchanged to any static host (BUILD-SPEC §12: origin is not
-  // authorization).
+  // Every node serves the cabinet (the arcade frontend) at / and the protocol
+  // modules it imports, so a node is also a frontend host: open http://<node>/
+  // and play. The same cabinet/ folder deploys unchanged to any static host
+  // (BUILD-SPEC §12: origin is not authorization). API paths are matched
+  // before the static fallback, so /health can never be shadowed by a file.
   const staticRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-  const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
+  const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon' };
   const serveStatic = (res, rel) => {
     const safe = rel.replace(/\.\./g, '').replace(/^\/+/, '');
     const file = join(staticRoot, safe);
     if (!existsSync(file) || !statSync(file).isFile()) return false;
-    res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream', 'access-control-allow-origin': '*', 'cache-control': 'no-cache' });
+    res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream', ...CORS, 'cache-control': 'no-cache' });
     res.end(readFileSync(file));
     return true;
   };
@@ -291,11 +296,11 @@ export async function createNode({
     try {
       const url = new URL(req.url, 'http://x');
       if (req.method === 'OPTIONS') return json(res, 204, {});
-      if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) { if (serveStatic(res, 'arcade/index.html')) return; }
-      if (req.method === 'GET' && (url.pathname.startsWith('/arcade/') || url.pathname.startsWith('/protocol/'))) { if (serveStatic(res, url.pathname)) return; return json(res, 404, { error: 'not found' }); }
+      if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) { if (serveStatic(res, 'cabinet/index.html')) return; }
+      if (req.method === 'GET' && (url.pathname.startsWith('/cabinet/') || url.pathname.startsWith('/protocol/'))) { if (serveStatic(res, url.pathname)) return; return json(res, 404, { error: 'not found' }); }
       if (req.method === 'GET' && url.pathname === '/health') {
         const s = currentSnapshot();
-        return json(res, 200, { nodeId, operator, roles, region, addr, epoch: s.epoch, peers: s.peers.length, rulesets: buildHashes(), buildsHeld: builds.size, staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null, chain: chain.status() });
+        return json(res, 200, { nodeId, operator, roles, region, addr, epoch: s.epoch, peers: s.peers.length, rulesets: buildHashes(), buildsHeld: builds.size, staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null, chain: chain.status(), startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt });
       }
       if (req.method === 'GET' && url.pathname === '/snapshot') return json(res, 200, currentSnapshot());
       // Everyone we have heard from, bonded or not — for onboarding a new
@@ -318,7 +323,7 @@ export async function createNode({
         const want = url.searchParams.get('build');
         const r = want ? (builds.get(want)?.rulesetId === rid ? builds.get(want) : null) : loaded.get(rid);
         if (!r) return json(res, 404, { error: want ? 'build not held' : 'unknown ruleset' });
-        res.writeHead(200, { 'content-type': 'text/javascript', 'x-build-hash': r.buildHash, 'access-control-allow-origin': '*' });
+        res.writeHead(200, { 'content-type': 'text/javascript', 'x-build-hash': r.buildHash, ...CORS });
         return res.end(r.source);
       }
       if (req.method === 'POST' && url.pathname === '/gossip') {
@@ -394,6 +399,9 @@ export async function createNode({
         const p = settlement.proof(decodeURIComponent(url.pathname.slice(7)));
         return p ? json(res, 200, p) : json(res, 404, { error: 'unknown match' });
       }
+      // The cabinet's own files (app.js, style.css, sw.js, covers/…) resolve
+      // relative to /, after every API route above has had its chance.
+      if (req.method === 'GET' && serveStatic(res, `cabinet/${url.pathname}`)) return;
       json(res, 404, { error: 'not found' });
     } catch (e) { json(res, 500, { error: e.message }); }
   });

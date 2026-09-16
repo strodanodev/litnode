@@ -78,15 +78,3 @@ export const CHAIN = {
   EpochAnchor: '0x09fBf6A5026b4E02eE9f78222117F97b19eE507A',
   token: 'tLITVM',
 };
-
-/** Node reward projection. THERE IS NO REWARDS CONTRACT YET — nothing
- *  accrues on-chain. These rates only drive the "projected" figure so the
- *  dashboard can show what uptime and settlement work would be worth; tune
- *  them here and the whole UI follows. */
-export const REWARDS = {
-  token: 'litVM',
-  perHourOnline: 0.5,   // per observed hour up (bonded nodes only)
-  perSettled: 2,        // per match settled as host
-  perCosign: 1,         // per witness co-signature
-  status: 'projected · rates provisional until the rewards contract ships',
-};

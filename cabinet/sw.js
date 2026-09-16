@@ -2,7 +2,7 @@
  * Network first, always. The cache is only an offline fallback for the
  * cabinet's own static files, so a fresh deploy shows up on the next load
  * and node API responses (/health, /leaderboard, …) are never cached. */
-const VERSION = 'cabinet-v6';
+const VERSION = 'cabinet-v7';
 const STATIC = /\.(html|css|js|mjs|json|webmanifest|png|svg)$|\/$/;
 
 self.addEventListener('install', () => self.skipWaiting());

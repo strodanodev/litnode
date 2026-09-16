@@ -50,7 +50,7 @@ run it in, and nowhere else. Never write a private key into a file here.
 ## Production shape
 
 - **Seeds** are two or three operator nodes with stable public addresses,
-  listed in the arcade client. Everything else discovers through them.
+  set as NODE_URL in cabinet/config.js. Everything else discovers through them.
 - **Operators** stay up. A node that lapses ages out of the draw in ~6 s and
   back in when it returns; nothing it settled is lost, because deltas and
   builds are kept on disk and served by hash.

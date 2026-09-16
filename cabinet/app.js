@@ -9,14 +9,15 @@
  *             the player key (the node's own ed25519 module).
  *    sample — which fighters are unlocked, items, pets, tickets: account data
  *             that arrives with the Agent Fighter sync. Labelled "sample". */
-import { generateKeypair } from './protocol/keys.js';
+import { loadPlayer as loadKeypair, createClient, IDENTITY_KEY } from './client.js';
+import { applyDelta, sortDeltas } from './protocol/derive.js';
 import { NODE_URL, GAMES } from './config.js';
 import { CHARACTERS, STYLES, ITEMS, ITEM_LINES, PETS, RARITY, INVENTORY_SAMPLE, portraitUrl } from './roster.js';
 import { identicon, fileToAvatar } from './avatar.js';
 import { paintBackdrop } from './bg.js';
 import { sample, loadHistory, slots, uptimePct, hoursOnline, fmtDuration, ring, strip, heatmap } from './uptime.js';
 import { readStake } from './chain.js';
-import { REWARDS, CHAIN } from './config.js';
+import { CHAIN } from './config.js';
 
 const $ = (id) => document.getElementById(id);
 const view = (name) => document.querySelector(`.view[data-view="${name}"]`);
@@ -31,14 +32,16 @@ const PRIMARY = GAMES.find((g) => g.rulesetId) ?? GAMES[0];
 
 // ═══════════════════════════════════════════════ player ══
 let player = null;
+/** The player is an ed25519 keypair under IDENTITY_KEY (client.js), the same
+ *  key the node-served page and the tests use. A key made under the cabinet's
+ *  old name is migrated once. Without WebCrypto (plain http from a LAN
+ *  address) there is no key: the cabinet is read-only and says so. */
 async function loadPlayer() {
-  let id = null, guest = false;
-  try { const kp = JSON.parse(load('cabinet.identity')); if (kp?.publicKey) id = kp.publicKey; } catch { /* regenerate */ }
-  if (!id) {
-    try { const kp = await generateKeypair(); id = kp.publicKey; store('cabinet.identity', JSON.stringify(kp)); }
-    catch { id = 'guest' + Array.from(crypto.getRandomValues(new Uint8Array(28)), (b) => b.toString(16).padStart(2, '0')).join(''); guest = true; }
-  }
-  return { id, guest, name: load('cabinet.name') || `PLAYER_${id.slice(0, 6).toUpperCase()}`, avatar: load('cabinet.avatar') || identicon(id, 160) };
+  let kp = null, id = null, guest = false;
+  try { const old = load('cabinet.identity'); if (old && !load(IDENTITY_KEY)) { store(IDENTITY_KEY, old); store('cabinet.identity'); } } catch { /* ignore */ }
+  try { kp = await loadKeypair(localStorage); id = kp.publicKey; }
+  catch { id = load('cabinet.guest') || 'guest' + Array.from(crypto.getRandomValues(new Uint8Array(28)), (b) => b.toString(16).padStart(2, '0')).join(''); store('cabinet.guest', id); guest = true; }
+  return { id, kp, guest, name: load('cabinet.name') || `PLAYER_${id.slice(0, 6).toUpperCase()}`, avatar: load('cabinet.avatar') || identicon(id, 160) };
 }
 const setName = () => { const v = prompt('Display name', player.name); if (v && v.trim()) { player.name = v.trim().slice(0, 24); store('cabinet.name', player.name); renderChrome(); render(); } };
 $('avatar-file').addEventListener('change', async (e) => {
@@ -48,7 +51,7 @@ $('avatar-file').addEventListener('change', async (e) => {
 });
 
 // ═══════════════════════════════════════════════ node state ══
-const S = { online: false, checked: false, health: null, boards: {}, stats: {}, deltas: {}, peers: [], uptime: {}, stake: null };
+const S = { online: false, checked: false, health: null, boards: {}, stats: {}, deltas: {}, peers: [], snapshot: null, uptime: {}, stake: null };
 let misses = 0, polls = 0;
 async function pollNode() {
   $('node-url').textContent = nodeUrl();
@@ -66,6 +69,7 @@ async function pollNode() {
       if (ds) S.deltas[g.rulesetId] = ds.deltas ?? [];
     }
     S.peers = (await api('/peers').catch(() => ({}))).peers ?? [];
+    S.snapshot = await api('/snapshot').catch(() => S.snapshot);
   } catch {
     // One slow answer is not an outage: flip to offline on the second miss.
     if (++misses >= 2) { S.online = false; S.health = null; }
@@ -88,26 +92,20 @@ function myTotals() {
   for (const rid of Object.keys(S.stats)) { const s = S.stats[rid]?.[player.id]; if (s) { t.matches += s.matches; t.wins += s.wins; t.ticks += s.ticks; } }
   return t;
 }
-/** Match history for one ruleset, oldest → newest, with my rating after each (Elo k=24, same fold as the node's derive.js). */
+/** Match history for one ruleset, oldest → newest, with my rating after each.
+ *  Walks protocol/derive.js applyDelta over sortDeltas — the node's own fold,
+ *  one step at a time — so the chart cannot drift from /leaderboard. */
 function history(rid, who = player.id) {
-  const ds = [...(S.deltas[rid] ?? [])].sort((a, b) => (a.epoch ?? 0) - (b.epoch ?? 0) || (a.matchId < b.matchId ? -1 : 1));
-  const rating = {};
+  const svc = S.snapshot?.manifests?.[rid]?.services ?? { leaderboard: { kind: 'elo', k: 24 }, stats: true };
+  const tables = { rating: {}, credits: {}, stats: {} };
   const out = [];
-  for (const d of ds) {
-    const teams = Array.isArray(d.teams) && d.teams.length === 2 ? d.teams : d.participants.map((p) => [p]);
-    const [A, B] = teams;
-    const sc = (team) => Math.max(...team.map((p) => d.scores?.[p] ?? 0));
-    const sa = sc(A) > sc(B) ? 1 : sc(A) < sc(B) ? 0 : 0.5;
-    const avg = (xs) => xs.reduce((s, x) => s + x, 0) / xs.length;
-    const ra = avg(A.map((p) => rating[p] ?? 1200)), rb = avg(B.map((p) => rating[p] ?? 1200));
-    const ea = 1 / (1 + 10 ** ((rb - ra) / 400));
-    for (const p of A) rating[p] = Math.round((rating[p] ?? 1200) + 24 * (sa - ea));
-    for (const p of B) rating[p] = Math.round((rating[p] ?? 1200) + 24 * ((1 - sa) - (1 - ea)));
+  for (const d of sortDeltas(S.deltas[rid] ?? [])) {
+    const { teams: [A, B], sa } = applyDelta(tables, d, svc);
     const mine = A.includes(who) ? 'A' : B.includes(who) ? 'B' : null;
     if (!mine) continue;
     const res = sa === 0.5 ? 'draw' : (mine === 'A') === (sa === 1) ? 'win' : 'loss';
     const opp = (mine === 'A' ? B : A).filter((p) => p !== who);
-    out.push({ matchId: d.matchId, when: d.settledAt, res, opp, ticks: d.ticks ?? 0, rating: rating[who], mode: d.mode, cosigned: (d.cosigners?.length ?? 0) > 0 });
+    out.push({ matchId: d.matchId, when: d.settledAt, res, opp, ticks: d.ticks ?? 0, rating: tables.rating[who] ?? 1200, mode: d.mode, cosigned: (d.cosigners?.length ?? 0) > 0 });
   }
   return out;
 }
@@ -139,22 +137,16 @@ function nodeWork() {
   }
   return { settled, cosigned, latest };
 }
-/** Projected rewards from the rate card. Not on-chain — see REWARDS. */
-function rewards() {
-  const w = nodeWork();
-  const hours = hoursOnline(S.uptime, 7 * 24 * 6);
-  const bonded = !!(S.stake?.bonded ?? S.health?.bonded);
-  const online = bonded ? hours * REWARDS.perHourOnline : 0;
-  const work = w.settled * REWARDS.perSettled + w.cosigned * REWARDS.perCosign;
-  return { hours, bonded, online, work, total: online + work, ...w };
-}
 const fmtTok = (n) => (n == null ? '—' : n.toLocaleString(undefined, { maximumFractionDigits: 2 }));
 
-/** The highlighted band: uptime ring + 24 h strip · work · $litVM. */
+/** The highlighted band: uptime ring + 24 h strip · mesh work · on chain.
+ *  No reward figure: there is no rewards contract, and a number nothing can
+ *  pay is a claim (BUILD-SPEC honest zeroes). Work counters are real — they
+ *  are counted from settled deltas any node can reproduce. */
 function nodePanel({ compact = true } = {}) {
   const h = S.health;
   const u24 = uptimePct(S.uptime, 24 * 6), u7 = uptimePct(S.uptime, 7 * 24 * 6);
-  const rw = rewards();
+  const rw = nodeWork();
   const fresh = S.peers.filter((p) => p.fresh).length;
   const bonded = S.stake?.bonded ?? h?.bonded ?? null;
   const uptimeCol = `
@@ -177,21 +169,21 @@ function nodePanel({ compact = true } = {}) {
     <div class="source">${S.online ? `Last mesh work ${rw.latest ? new Date(rw.latest).toLocaleString() : 'none yet'} · epoch ${h.epoch}` : 'Start the node to count work.'}</div>`;
   const rewardCol = `
     <div class="reward">
-      <div class="k">Projected rewards</div>
-      <div class="big-tok"><span class="chrome">${fmtTok(rw.total)}</span><span class="tok">$${REWARDS.token}</span></div>
+      <div class="k">On chain · ${esc(CHAIN.name)}</div>
+      <div class="big-tok"><span class="chrome">${S.stake?.amount != null ? fmtTok(S.stake.amount) : '—'}</span><span class="tok">${CHAIN.token} bonded</span></div>
       <div class="breakdown">
-        <div><span>Uptime</span><span>${fmtTok(rw.hours)} h × ${REWARDS.perHourOnline}</span><span>${fmtTok(rw.online)}</span></div>
-        <div><span>Settled</span><span>${rw.settled} × ${REWARDS.perSettled}</span><span>${fmtTok(rw.settled * REWARDS.perSettled)}</span></div>
-        <div><span>Witnessed</span><span>${rw.cosigned} × ${REWARDS.perCosign}</span><span>${fmtTok(rw.cosigned * REWARDS.perCosign)}</span></div>
+        <div><span>Hours observed up</span><span>${fmtTok(hoursOnline(S.uptime, 7 * 24 * 6))} h</span><span class="dim">7 d</span></div>
+        <div><span>Settled as host</span><span>${rw.settled}</span><span class="dim">deltas</span></div>
+        <div><span>Witnessed</span><span>${rw.cosigned}</span><span class="dim">co-signs</span></div>
       </div>
       <div class="onchain">
         <div class="kv2"><span class="k">Bonded</span><span class="v">${S.stake?.amount != null ? `${fmtTok(S.stake.amount)} ${CHAIN.token}` : '—'}</span></div>
         <div class="kv2"><span class="k">Wallet</span><span class="v">${S.stake?.balance != null ? `${fmtTok(S.stake.balance)} ${CHAIN.token}` : '—'}</span></div>
         <div class="kv2"><span class="k">Operator</span><span class="v mono" title="${esc(S.stake?.operator ?? '')}">${S.stake?.bonded && S.stake.operator ? `${S.stake.operator.slice(0, 6)}…${S.stake.operator.slice(-4)}` : '—'}</span></div>
       </div>
-      <span class="tag projected">${esc(REWARDS.status)}</span>
+      <span class="tag projected">no rewards contract yet — nothing accrues; the bond is a cost of misbehaviour, not a yield</span>
     </div>`;
-  return `<section class="panel hi s12"><div class="panel-h"><h3>Node uptime · $${REWARDS.token} rewards</h3><span class="tag ${S.online ? 'live' : ''}">${S.online ? 'node online' : S.checked ? 'node offline' : 'connecting'}</span>${compact ? moreLink('#/node', 'node') : ''}</div>
+  return `<section class="panel hi s12"><div class="panel-h"><h3>Node uptime · mesh work</h3><span class="tag ${S.online ? 'live' : ''}">${S.online ? 'node online' : S.checked ? 'node offline' : 'connecting'}</span>${compact ? moreLink('#/node', 'node') : ''}</div>
     <div class="panel-b hi-grid"><div>${uptimeCol}</div><div>${workCol}</div><div>${rewardCol}</div></div></section>`;
 }
 
@@ -362,8 +354,9 @@ function renderGame(g) {
     <div class="page-h"><a class="dim" href="#/games">‹ all games</a></div>
     <section class="hero ${g.cover ? 'has-cover' : ''}" style="${g.cover ? `--cover:url('${esc(g.cover)}')` : ''}">
       <div><h1 class="chrome">${esc(g.title)}</h1><div class="tagline">${esc(g.tagline)}</div><div class="chips">${gameTag(g)}<span class="tag">${esc(g.players)}</span>${(g.tags ?? []).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}${statusTag(g)}</div></div>
-      <div class="hero-actions">${g.playable ? `<button class="btn primary" data-play="${g.id}">Play now</button>` : '<button class="btn" disabled>Played off-cabinet</button>'}${g.url ? `<a class="btn" href="${esc(g.url)}" target="_blank" rel="noopener">↗ open in tab</a>` : ''}</div>
+      <div class="hero-actions">${g.rulesetId ? `<button class="btn primary" data-queue="${g.id}" ${S.online && player.kp ? '' : 'disabled'}>Find match</button>` : ''}${g.playable ? `<button class="btn ${g.rulesetId ? '' : 'primary'}" data-play="${g.id}">Play now</button>` : '<button class="btn" disabled>Played off-cabinet</button>'}${g.url ? `<a class="btn" href="${esc(g.url)}" target="_blank" rel="noopener">↗ open in tab</a>` : ''}</div>
     </section>
+    ${g.rulesetId ? '<div id="mm"></div>' : ''}
     <div class="cols">
       <div class="col">
         ${panel('About', `<p>${esc(g.description)}</p>`)}
@@ -379,7 +372,56 @@ function renderGame(g) {
           <table><thead><tr><th>Result</th><th>Opponent</th><th class="num">Length</th><th class="num">Rating</th><th>When</th></tr></thead><tbody>${hist.map((h) => `<tr><td class="res ${h.res[0]}">${h.res.toUpperCase()}</td><td>${h.opp.map((o) => short(o, 10)).join(', ') || '—'}</td><td class="num">${Math.floor(h.ticks / 3600)}:${String(Math.floor((h.ticks / 60) % 60)).padStart(2, '0')}</td><td class="num">${h.rating}</td><td class="dim">${h.when ? new Date(h.when).toLocaleDateString() : '—'}${h.cosigned ? ' ✓' : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="dim">No matches yet.</td></tr>'}</tbody></table>` : `<div class="empty">${S.online ? 'No settled matches under your key yet. Play one — it shows up here once the mesh settles it.' : 'Start a node to load your record.'}</div>`)}
       </div>
     </div>`;
+  if (g.rulesetId) renderMatchmaking(g);
 }
+
+// ═══════════════════════════════════════════════ matchmaking ══
+// The point of the design (client.js): sign a queue entry, wait for the pair,
+// recompute placement from a snapshot this page can hash, and refuse a host
+// the rule did not produce. The node is a directory, never an authority.
+const MM = { state: 'idle', game: null, text: '', match: null, check: null, host: null, waitedMs: 0 };
+let mmPolling = null;
+function renderMatchmaking(g) {
+  const el = $('mm'); if (!el) return;
+  if (MM.game && MM.game.id !== g.id && MM.state !== 'idle') { el.innerHTML = ''; return; }
+  if (MM.state === 'idle') { el.innerHTML = player.kp ? '' : panel('Find match', '<div class="empty">This page has no WebCrypto (plain http from a network address), so it holds no player key and cannot queue. Open it as http://localhost:&lt;port&gt;/ on the node&#39;s machine, or over https.</div>'); return; }
+  const m = MM.match, c = MM.check;
+  const body = MM.state === 'queued' ? `<div class="empty">${esc(MM.text)}</div><div class="hero-actions"><button class="btn" data-mm-stop>Stop</button></div>`
+    : `<dl class="mesh">
+        <div><dt>match</dt><dd class="mono" title="${esc(m.matchId)}">${short(m.matchId, 16)}</dd></div>
+        <div><dt>opponent</dt><dd class="mono">${short(m.participants.find((p) => p !== player.id) ?? '', 16)}</dd></div>
+        <div><dt>beacon</dt><dd>${esc(m.beaconSource ?? '?')}</dd></div>
+        <div><dt>host (node says)</dt><dd class="mono">${short(m.host ?? '', 16)}</dd></div>
+        <div><dt>host (you computed)</dt><dd class="mono">${short(c.host ?? '', 16)}</dd></div>
+        <div><dt>witness</dt><dd class="mono">${c.witness ? short(c.witness, 16) : 'none (single operator)'}</dd></div>
+        <div><dt>verdict</dt><dd>${c.ok ? `<span class="res w">ACCEPT</span> — the host is the one the rule produces${m.disputes?.length ? ` (${m.disputes.length} node(s) disputed)` : ''}` : `<span class="res l">REFUSE</span> — ${esc(c.reason)}`}</dd></div>
+      </dl>
+      <div class="hero-actions">${c.ok ? (MM.host?.wsAddr ? '<button class="btn primary" data-mm-launch>Launch on this host</button>' : `<span class="dim">host ${short(m.host ?? '', 12)} advertises no relay (wsAddr) — placed, not playable from here</span>`) : '<span class="dim">not launching against a host the rule did not produce</span>'}<button class="btn" data-mm-reset>Clear</button></div>
+      <div class="source">paired after ${(MM.waitedMs / 1000).toFixed(1)} s · snapshot root ${short(m.snapshotRoot ?? '', 12)}${c.sameSnapshot === false ? ' · eligible set moved since the draw' : ''}</div>`;
+  el.innerHTML = panel('Find match', body, '', 'mm');
+}
+async function findMatch(g) {
+  if (!player.kp || !S.online || MM.state === 'queued') return;
+  const client = createClient({ nodeUrl: nodeUrl(), player: player.kp });
+  Object.assign(MM, { state: 'queued', game: g, text: 'signing a queue entry…', match: null, check: null, host: null });
+  render();
+  try {
+    const region = S.health?.region ?? null; // queue with the region of the node we talk to: the draw prefers hosts near us
+    const { bucket } = await client.queue({ rulesetId: g.rulesetId, mode: 'ranked', region });
+    const t0 = Date.now();
+    MM.text = `queued for ${g.rulesetId} (ranked), bucket ${bucket}. Waiting for a pair and the chain beacon…`; render();
+    mmPolling = setInterval(async () => {
+      const m = await client.match({ sinceBucket: bucket }).catch(() => null);
+      MM.text = `waiting… ${((Date.now() - t0) / 1000).toFixed(0)} s (bucket ${bucket})`;
+      if (!m) { if (route.name === 'game') renderMatchmaking(g); return; }
+      clearInterval(mmPolling); mmPolling = null;
+      const s = await client.snapshot();
+      Object.assign(MM, { state: 'placed', match: m, check: client.verifyPlacement(m, s), host: s.peers.find((p) => p.nodeId === m.host) ?? null, waitedMs: Date.now() - t0 });
+      render();
+    }, 500);
+  } catch (e) { Object.assign(MM, { state: 'idle', text: '' }); alert(`queue: ${e.message}`); render(); }
+}
+function stopMatchmaking() { if (mmPolling) clearInterval(mmPolling); mmPolling = null; Object.assign(MM, { state: 'idle', match: null, check: null, host: null }); render(); }
 let lbQuery = '';
 function renderLeaderboards() {
   const g = GAMES.find((x) => x.rulesetId === lbTab);
@@ -431,11 +473,11 @@ function renderNode() {
     <div class="home">
       ${nodePanel({ compact: false })}
       ${panel('7-day uptime', `${heatmap(S.uptime)}<div class="legend"><i class="up"></i>up <i class="partial"></i>partial <i class="down"></i>down <i class="none"></i>dashboard closed</div><div class="source">Observed by this dashboard while it is open, 10-minute resolution, stored locally per node URL. The node's own process uptime is the "process up" figure above.</div>`, '', 's6')}
-      ${panel('Reward rate card', `<table><thead><tr><th>Source</th><th class="num">Rate</th><th class="num">Yours</th></tr></thead><tbody>
-          <tr><td>Hour online (bonded)</td><td class="num">${REWARDS.perHourOnline} $${REWARDS.token}</td><td class="num">${fmtTok(rewards().hours)} h</td></tr>
-          <tr><td>Match settled as host</td><td class="num">${REWARDS.perSettled} $${REWARDS.token}</td><td class="num">${rewards().settled}</td></tr>
-          <tr><td>Witness co-signature</td><td class="num">${REWARDS.perCosign} $${REWARDS.token}</td><td class="num">${rewards().cosigned}</td></tr>
-        </tbody></table><div class="source">${esc(REWARDS.status)}. Bond and wallet figures are read live from ${esc(CHAIN.name)} (chain ${CHAIN.chainId}); NodeStake ${CHAIN.NodeStake.slice(0, 10)}…</div>`, '', 's6')}
+      ${panel('Mesh work', `<table><thead><tr><th>Source</th><th class="num">Yours</th><th>Counted from</th></tr></thead><tbody>
+          <tr><td>Match settled as host</td><td class="num">${nodeWork().settled}</td><td class="dim">deltas with hostId = this node</td></tr>
+          <tr><td>Witness co-signature</td><td class="num">${nodeWork().cosigned}</td><td class="dim">deltas listing this node in cosigners</td></tr>
+          <tr><td>Hours observed up</td><td class="num">${fmtTok(hoursOnline(S.uptime, 7 * 24 * 6))} h</td><td class="dim">this dashboard, while open — not a mesh figure</td></tr>
+        </tbody></table><div class="source">There is no rewards contract on litVM; nothing accrues. Bond and wallet figures are read live from ${esc(CHAIN.name)} (chain ${CHAIN.chainId}); NodeStake ${CHAIN.NodeStake.slice(0, 10)}…</div>`, '', 's6')}
       ${panel('This node', status, '', 's6')}
       ${panel('Run a node', `<ol class="steps">
           <li>Install Node.js 20+ if missing: <span class="mono">winget install OpenJS.NodeJS.LTS</span></li>
@@ -479,9 +521,12 @@ window.addEventListener('hashchange', navigate);
 
 // One delegated click handler for everything rendered from templates.
 document.addEventListener('click', (e) => {
-  const t = e.target.closest('[data-play],[data-lb],[data-style],#name-btn,#avatar-btn');
+  const t = e.target.closest('[data-play],[data-queue],[data-mm-stop],[data-mm-reset],[data-mm-launch],[data-lb],[data-style],#name-btn,#avatar-btn');
   if (!t) return;
   if (t.dataset.play) { e.preventDefault(); const g = GAMES.find((x) => x.id === t.dataset.play); if (g) play(g); }
+  else if (t.dataset.queue) { e.preventDefault(); const g = GAMES.find((x) => x.id === t.dataset.queue); if (g) findMatch(g); }
+  else if ('mmStop' in t.dataset || 'mmReset' in t.dataset) stopMatchmaking();
+  else if ('mmLaunch' in t.dataset) { if (MM.game && MM.check?.ok) play(MM.game, { matchId: MM.match.matchId, host: MM.match.host, witness: MM.check.witness, wsAddr: MM.host?.wsAddr ?? null, beacon: MM.match.beacon, participants: MM.match.participants }); }
   else if (t.dataset.lb) { lbTab = t.dataset.lb; render(); }
   else if (t.dataset.style) { styleFilter = t.dataset.style; render(); }
   else if (t.id === 'name-btn') setName();
@@ -489,27 +534,33 @@ document.addEventListener('click', (e) => {
 });
 
 // ═══════════════════════════════════════════════ play ══
-// Shell → game: { type:'cabinet:init', player:{id,guest,name}, node:{url,online}, game:{id,title} }
+// Shell → game: { type:'cabinet:init', version:1, player:{id,guest,name}, node:{url,online}, game:{id,title},
+//                 match?:{matchId, host, witness, wsAddr, beacon, participants} }   ← present when launched from a verified placement
 // Game → shell: { type:'cabinet:hello' } (ask for init) · { type:'cabinet:exit' }
-let current = null;
+let current = null, currentMatch = null;
 const frame = $('game');
-const sendInit = () => { if (current && frame.contentWindow) frame.contentWindow.postMessage({ type: 'cabinet:init', version: 1, player: { id: player.id, guest: player.guest, name: player.name }, node: { url: nodeUrl(), online: S.online }, game: { id: current.id, title: current.title } }, '*'); };
+const sendInit = () => { if (current && frame.contentWindow) frame.contentWindow.postMessage({ type: 'cabinet:init', version: 1, player: { id: player.id, guest: player.guest, name: player.name }, node: { url: nodeUrl(), online: S.online }, game: { id: current.id, title: current.title }, ...(currentMatch ? { match: currentMatch } : {}) }, '*'); };
 window.addEventListener('message', (e) => {
   if (e.source !== frame.contentWindow || !e.data?.type) return;
   if (e.data.type === 'cabinet:hello') sendInit();
   if (e.data.type === 'cabinet:exit') exit();
 });
 frame.addEventListener('load', sendInit);
-function play(g) {
+/** Open a title. With `match` (from a verified placement) the title is told
+ *  which relay to join: Agent Fighter's client takes the relay as ?ws=, and
+ *  every title gets the full descriptor in cabinet:init. */
+function play(g, match = null) {
   if (!g.playable || !g.url) return;
-  current = g;
+  current = g; currentMatch = match;
   $('play').style.setProperty('--ga', g.accent);
   $('play-title').textContent = g.title;
-  $('play-status').textContent = g.badge;
-  frame.src = g.url;
+  $('play-status').textContent = match ? `${g.badge} · match ${short(match.matchId, 10)} · host ${short(match.host, 10)}` : g.badge;
+  const u = new URL(g.url);
+  if (match?.wsAddr && g.id === 'agent-fighter') { u.searchParams.set('ws', match.wsAddr); u.searchParams.set('match', match.matchId); }
+  frame.src = u.href;
   $('play').hidden = false;
 }
-function exit() { current = null; frame.src = 'about:blank'; $('play').hidden = true; }
+function exit() { current = null; currentMatch = null; frame.src = 'about:blank'; $('play').hidden = true; }
 $('play-exit').addEventListener('click', exit);
 $('play-tab').addEventListener('click', () => { if (current) window.open(current.url, '_blank', 'noopener'); });
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && current) exit(); });

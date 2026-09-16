@@ -22,14 +22,14 @@ for (const kind of kinds) {
   rmSync(stage, { recursive: true, force: true });
   mkdirSync(stage, { recursive: true });
 
-  for (const d of ['node', 'protocol', 'rulesets', 'arcade']) cpSync(join(root, d), join(stage, d), { recursive: true });
+  for (const d of ['node', 'protocol', 'rulesets', 'cabinet']) cpSync(join(root, d), join(stage, d), { recursive: true });
   mkdirSync(join(stage, 'contracts'), { recursive: true });
   for (const f of ['deployed.testnet.json', 'deploy.testnet.json']) if (existsSync(join(root, 'contracts', f))) cpSync(join(root, 'contracts', f), join(stage, 'contracts', f));
   mkdirSync(join(stage, 'tools'), { recursive: true });
   cpSync(join(root, 'portable', 'start-node.cmd'), join(stage, 'start-node.cmd'));
   cpSync(join(root, 'portable', 'node.env.example'), join(stage, 'node.env.example'));
 
-  const scripts = { node: 'node node/cli.mjs', keygen: 'node tools/keygen.mjs' };
+  const scripts = { node: 'node node/cli.mjs', keygen: 'node tools/keygen.mjs', cabinet: 'node cabinet/serve.mjs' };
   let deps;
   if (kind === 'portable') {
     for (const f of ['keygen.mjs', 'bond-node.mjs']) cpSync(join(root, 'tools', f), join(stage, 'tools', f));

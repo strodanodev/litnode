@@ -3,10 +3,10 @@
  *  queue entries, polls for a pair, and — the point of the design — recomputes
  *  placement from a snapshot it can hash and refuses a host the rule did not
  *  produce. A node is a directory, never an authority. */
-import { generateKeypair, seal } from '../protocol/keys.js';
-import { placement } from '../protocol/placement.js';
-import { QUEUE_TAG, bucketOf } from '../protocol/pairing.js';
-import { snapshotRoot } from '../protocol/snapshot.js';
+import { generateKeypair, seal } from './protocol/keys.js';
+import { placement } from './protocol/placement.js';
+import { QUEUE_TAG, bucketOf } from './protocol/pairing.js';
+import { snapshotRoot } from './protocol/snapshot.js';
 
 export const IDENTITY_KEY = 'litnode.player';
 

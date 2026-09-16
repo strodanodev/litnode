@@ -1,15 +1,15 @@
-/** The arcade client against a two-node mesh: identity persists, a signed
+/** The cabinet's client (cabinet/client.js) against a two-node mesh: identity persists, a signed
  *  queue entry pairs, the client recomputes placement and ACCEPTS the host the
  *  rule produced, and REFUSES a descriptor naming another host. The node also
  *  serves the lobby page and the protocol modules it imports.
- *    node --test demo/arcade.test.mjs */
+ *    node --test demo/client.test.mjs */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNode } from '../node/litnode.js';
-import { loadPlayer, createClient } from '../arcade/client.js';
+import { loadPlayer, createClient } from '../cabinet/client.js';
 
 const RULESET = join(process.cwd(), 'rulesets', 'agent-fighter.v1.js');
 const tmp = mkdtempSync(join(tmpdir(), 'litnode-arcade-'));
@@ -22,7 +22,7 @@ test('arcade: lobby served, identity persists, queue → pair → client verifie
   const a = await spawn({ operator: 'publisher', roles: ['mesh', 'host', 'witness'], rulesets: [RULESET] });
   const b = await spawn({ operator: 'guild-a', roles: ['mesh', 'host', 'witness'], seeds: [a.addr] });
 
-  const page = await fetch(`${a.addr}/`); assert.equal(page.status, 200); assert.match(await page.text(), /litVM ARCADE/);
+  const page = await fetch(`${a.addr}/`); assert.equal(page.status, 200); assert.match(await page.text(), /LIT GAMES/);
   const mod = await fetch(`${a.addr}/protocol/placement.js`); assert.equal(mod.status, 200); assert.match(mod.headers.get('content-type'), /javascript/);
   assert.equal((await fetch(`${a.addr}/protocol/../package.json`)).status, 404, 'no path escape');
 
