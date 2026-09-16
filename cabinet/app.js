@@ -614,7 +614,9 @@ function play(g, match = null) {
 }
 function exit() { current = null; currentMatch = null; frame.src = 'about:blank'; $('play').hidden = true; }
 $('play-exit').addEventListener('click', exit);
-$('play-tab').addEventListener('click', () => { if (current) window.open(current.url, '_blank', 'noopener'); });
+// Open the SAME url the frame has — with ?ws= ?room= ?player= when this is a
+// placed match — never the bare title url, or the tab loses its relay.
+$('play-tab').addEventListener('click', () => { if (current) window.open(frame.src && frame.src !== 'about:blank' ? frame.src : current.url, '_blank', 'noopener'); });
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && current) exit(); });
 
 // ═══════════════════════════════════════════════ boot ══
