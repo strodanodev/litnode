@@ -8,6 +8,15 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 Consolidation. One repository, one frontend, one node, one packing step.
 
 ### Added
+- **Play through the cabinet, steps 1–2.** *Find match* on Agent Fighter now
+  launches the title with `?ws=`, `?room=LIT-<32 hex of the mesh matchId>`
+  (`protocol/pairing.js roomCodeFor`) and `?player=<key>`; AF's friendly-room
+  rendezvous pairs the two placed players, its relay pins the room and the
+  keys into the archived ledger, and `tools/af-watch.mjs` / `af-import`
+  (shared `tools/lib/af-submission.mjs`) settle it under the mesh match id
+  and the placed keys. The delta lands on the cabinet's ladder under the
+  key that queued. Attestation stays `relay` until the client signs the
+  chain head (SYNC §3.2 step 3). Needs AF `b362c87` deployed.
 - **Wallet-bound player profiles, built.** `contracts/PlayerProfile.sol`
   (soulbound ERC-721: `register(key, name)` mints and binds in one
   transaction; `bindKey` / `revokeKey` / `rename`; `ownerOfKey` is the read)

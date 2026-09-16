@@ -98,22 +98,37 @@ visitor: a tunnel or reverse proxy in front of the desktop's 7801,
 `cabinet/config.js`, then redeploy. Zero-cost path: a Cloudflare tunnel, the
 same mechanism the Agent Fighter relay already uses.
 
-### 3.2 A title that consumes `cabinet:init.match` — sprint 1
+### 3.2 A title that consumes the placement — sprint 1, steps 1–2 done
 
-The cabinet places a match and launches against the drawn host's relay
-(`?ws=` for Agent Fighter, the descriptor for everyone). Nothing joins that
-room yet. For Agent Fighter:
+Agent Fighter, 17 Sep 2026 (AF commit `b362c87`, litnode `tools/lib/af-submission.mjs`):
 
-1. The client reads `init.match` (or `?ws=` + `?match=`) and joins that relay
-   room as `init.player.id` — the ed25519 key — instead of a display name.
-2. The relay writes ledgers keyed by those ids; `af-watch` (or the relay
-   itself, `POST /ledger`) submits `participants` as player keys. Deltas
-   then land on the cabinet's ladder under the key that queued.
-3. The client signs the chain head at match end (`protocol/log.js ledgerBody`,
-   `LEDGER_TAG`) so the delta settles `attestation: 'players'`.
+1. ~~Join the placed match under the placed key.~~ The cabinet launches AF
+   with `?ws=<wsAddr>&room=LIT-<32 hex of matchId>&player=<key>`
+   (`protocol/pairing.js roomCodeFor`). AF's existing friendly-room
+   rendezvous pairs the two mesh-placed players; the client sends the key
+   in `hello.playerKey`; the relay pins `room` and `playerKeys` into the
+   archived ledger and now archives LIT-room friendlies (it archived only
+   wager matches before). No AF protocol bump: every field is optional.
+2. ~~Settle under the mesh id and the keys.~~ `af-watch` / `af-import` map
+   `pin.room` back to the node's live descriptor (`/match`, 15 min) and
+   submit `matchId` = the mesh match, `participants` = `pin.playerKeys`;
+   without a room or keys they fall back to the relay id and `af:<name>`.
+3. **Open:** the client signs the chain head at match end so the delta
+   settles `attestation: 'players'` rather than `relay`. The key lives in
+   the cabinet's origin, not the game's, so the honest path is the SDK:
+   the game reports `{matchId, ticks, head}` to the shell, the cabinet
+   signs and posts. Needs `protocol/log.js` chain-head arithmetic in the AF
+   client (vendored, same bytes).
 
-Acceptance: a match started with *Find match* appears in that player's
-record on the cabinet, co-signed by a node under another operator.
+Acceptance (unchanged): a match started with *Find match* appears in that
+player's record on the cabinet, co-signed by a node under another
+operator. To run it live: push AF `b362c87`, redeploy the relay (tunnel or
+Railway), redeploy the cabinet, and play one match from *Find match*.
+
+What AF still gates on: online play requires AIR sign-in, which is blocked
+inside the cabinet's iframe by AF's `frame-ancestors`. Until the allowlist
+or the popup path (§3.4), launch with *open in tab* — the URL carries the
+room and key either way.
 
 ### 3.3 Pickle Brawl online and AFC — sprint 2
 

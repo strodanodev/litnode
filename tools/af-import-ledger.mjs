@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
+import { meshRooms, toSubmission } from './lib/af-submission.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const AF_ROOT = resolve(process.env.AF_ROOT ?? 'E:/NPC/AGENT FIGHTER/agent-fighter');
@@ -31,34 +32,19 @@ const manifest = JSON.parse(readFileSync(join(root, 'rulesets', 'agent-fighter.v
 const { engine } = await import(pathToFileURL(join(root, 'rulesets', 'agent-fighter.v1.js')).href);
 if (row.engine !== engine.ENGINE_VERSION) console.warn(`WARNING: ledger engine ${row.engine} ≠ artifact engine ${engine.ENGINE_VERSION}; replay is not expected to reproduce`);
 
-const [t0, t1] = engine.decodeLedger(row.ledger);
-const n = Math.min(t0.length, t1.length);
-const entries = Array.from({ length: n }, (_, k) => ({ k, inputs: [t0[k] | 0, t1[k] | 0] }));
-
 const pin = row.pin;
-const bundles = {};
-for (const id of pin.chars) {
-  const file = join(AF_ROOT, 'characters', id, 'character.json');
-  const bytes = readFileSync(file);
-  const digest = createHash('sha256').update(bytes).digest('hex');
-  const i = pin.chars.indexOf(id);
+for (const [i, id] of pin.chars.entries()) {
+  const digest = createHash('sha256').update(readFileSync(join(AF_ROOT, 'characters', id, 'character.json'))).digest('hex');
   if (pin.charDigests?.[i] && pin.charDigests[i] !== digest) console.warn(`WARNING: bundle ${id} retuned since the match (digest differs)`);
-  bundles[id] = JSON.parse(bytes.toString('utf8'));
 }
-
-const participants = pin.names.map((name) => `af:${name}`); // same player on either side
-const submission = {
-  matchId: row.match_id, rulesetId: 'agent-fighter.v1', buildHash: manifest.buildHash,
-  mode: 'ranked', participants, entries,
-  hydration: { pin, bundles },
-  expected: pin.result ? { hash: pin.result.hash, winner: pin.result.winner, rounds: pin.result.rounds, endTick: pin.result.endTick, reason: pin.result.reason } : null,
-  source: { table: 'match_ledgers', engine: row.engine, protocol: row.protocol, codecVersion: row.codec_version, digest: row.digest, createdAt: row.created_at },
-};
+const rooms = post && pin.room ? await meshRooms(post) : new Map();
+const submission = toSubmission(row, { engine, manifest, afRoot: AF_ROOT, rooms });
 const outDir = join(root, 'data', 'ledgers-import');
 mkdirSync(outDir, { recursive: true });
 const out = join(outDir, `${row.match_id}.json`);
 writeFileSync(out, JSON.stringify(submission));
-console.log(`${row.match_id}: ${n} ticks · ${pin.names[0]} (${pin.chars[0]}) vs ${pin.names[1]} (${pin.chars[1]}) · ${pin.result?.reason} · engine ${row.engine}\nwrote ${out}`);
+console.log(`${row.match_id}${submission.matchId !== row.match_id ? ` → mesh ${submission.matchId}` : ''}: ${submission.entries.length} ticks · ${submission.participants.map((p) => p.slice(0, 16)).join(' vs ')} · ${pin.result?.reason} · engine ${row.engine}
+wrote ${out}`);
 
 if (post) {
   const r = await fetch(`${post}/ledger`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(submission) });

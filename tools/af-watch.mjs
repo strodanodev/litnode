@@ -11,7 +11,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createHash } from 'node:crypto';
+import { meshRooms, toSubmission } from './lib/af-submission.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const AF_ROOT = resolve(process.env.AF_ROOT ?? 'E:/NPC/AGENT FIGHTER/agent-fighter');
@@ -27,21 +27,6 @@ const manifest = JSON.parse(readFileSync(join(root, 'rulesets', 'agent-fighter.v
 const { engine } = await import(pathToFileURL(join(root, 'rulesets', 'agent-fighter.v1.js')).href);
 const log = (m) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${m}`);
 
-const bundleFor = (id) => JSON.parse(readFileSync(join(AF_ROOT, 'characters', id, 'character.json'), 'utf8'));
-const toSubmission = (row) => {
-  const [t0, t1] = engine.decodeLedger(row.ledger);
-  const n = Math.min(t0.length, t1.length);
-  const pin = row.pin;
-  return {
-    matchId: row.match_id, rulesetId: 'agent-fighter.v1', buildHash: manifest.buildHash, mode: 'ranked',
-    // A player is the same player on either side; no side suffix.
-    participants: pin.names.map((name) => `af:${name}`),
-    entries: Array.from({ length: n }, (_, k) => ({ k, inputs: [t0[k] | 0, t1[k] | 0] })),
-    hydration: { pin, bundles: Object.fromEntries(pin.chars.map((id) => [id, bundleFor(id)])) },
-    expected: pin.result ? { hash: pin.result.hash, winner: pin.result.winner, rounds: pin.result.rounds, endTick: pin.result.endTick, reason: pin.result.reason } : null,
-    source: { table: 'match_ledgers', engine: row.engine, protocol: row.protocol, codecVersion: row.codec_version, digest: row.digest, createdAt: row.created_at },
-  };
-};
 
 let since = new Date(Date.now() - 6 * 3600_000).toISOString();
 const settled = new Set((await (await fetch(`${nodeUrl}/deltas`)).json()).deltas.map((d) => d.matchId));
@@ -54,10 +39,14 @@ for (;;) {
       since = row.created_at;
       if (settled.has(row.match_id)) continue;
       if (row.engine !== engine.ENGINE_VERSION) { log(`${row.match_id}: engine ${row.engine} ≠ ${engine.ENGINE_VERSION}, skipped`); settled.add(row.match_id); continue; }
-      const sub = toSubmission(row);
+      // A LIT- room means the cabinet placed this match: settle it under the
+      // mesh's own match id and the keys it placed, if the node still holds
+      // the descriptor (15 min); the relay id otherwise.
+      const rooms = row.pin?.room ? await meshRooms(nodeUrl) : new Map();
+      const sub = toSubmission(row, { engine, manifest, afRoot: AF_ROOT, rooms });
       const r = await fetch(`${nodeUrl}/ledger`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(sub) });
       const d = await r.json();
-      if (r.ok) { settled.add(row.match_id); log(`settled ${row.match_id} · ${d.ticks} ticks · ${d.attestation} · ${sub.hydration.pin.names.join(' vs ')} · ${JSON.stringify(d.scores)}`); }
+      if (r.ok) { settled.add(row.match_id); log(`settled ${sub.matchId}${sub.matchId !== row.match_id ? ` (relay ${row.match_id}, room ${sub.source.room})` : ''} · ${d.ticks} ticks · ${d.attestation} · ${sub.source.identity === 'keys' ? sub.participants.map((k) => k.slice(0, 12)).join(' vs ') : sub.hydration.pin.names.join(' vs ')} · ${JSON.stringify(d.scores)}`); }
       else log(`${row.match_id}: node refused: ${d.error}`);
     }
   } catch (e) { log(`watch: ${e.message}`); }

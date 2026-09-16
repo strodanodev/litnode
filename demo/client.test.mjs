@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNode } from '../node/litnode.js';
 import { loadPlayer, createClient } from '../cabinet/client.js';
+import { roomCodeFor } from '../protocol/pairing.js';
 
 const RULESET = join(process.cwd(), 'rulesets', 'agent-fighter.v1.js');
 const tmp = mkdtempSync(join(tmpdir(), 'litnode-arcade-'));
@@ -41,6 +42,9 @@ test('arcade: lobby served, identity persists, queue → pair → client verifie
   assert.equal(r1.check.ok, true, r1.check.reason);
   assert.equal(r2.check.ok, true, r2.check.reason);
   assert.equal(r1.check.host, r1.match.host);
+  // the relay rendezvous code both players derive from the same match
+  assert.equal(roomCodeFor(r1.match.matchId), roomCodeFor(r2.match.matchId));
+  assert.match(roomCodeFor(r1.match.matchId), /^[A-Z0-9-]{3,40}$/, "fits Agent Fighter's room-code rule");
 
   // A node that lies about the host is refused by the client.
   const other = r1.snapshot.peers.find((p) => p.nodeId !== r1.match.host)?.nodeId;

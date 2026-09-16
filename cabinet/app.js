@@ -10,6 +10,7 @@
  *    sample — which fighters are unlocked, items, pets, tickets: account data
  *             that arrives with the Agent Fighter sync. Labelled "sample". */
 import { loadPlayer as loadKeypair, createClient, IDENTITY_KEY } from './client.js';
+import { roomCodeFor } from './protocol/pairing.js';
 import { applyDelta, sortDeltas } from './protocol/derive.js';
 import { NODE_URL, GAMES } from './config.js';
 import { CHARACTERS, STYLES, ITEMS, ITEM_LINES, PETS, RARITY, INVENTORY_SAMPLE, portraitUrl } from './roster.js';
@@ -600,7 +601,14 @@ function play(g, match = null) {
   $('play-title').textContent = g.title;
   $('play-status').textContent = match ? `${g.badge} · match ${short(match.matchId, 10)} · host ${short(match.host, 10)}` : g.badge;
   const u = new URL(g.url);
-  if (match?.wsAddr && g.id === 'agent-fighter') { u.searchParams.set('ws', match.wsAddr); u.searchParams.set('match', match.matchId); }
+  if (match?.wsAddr && g.id === 'agent-fighter') {
+    // Agent Fighter: relay override, friendly-room rendezvous keyed on the
+    // mesh match (both placed players derive the same code), and the key
+    // this match was placed under — the relay pins it into the ledger.
+    u.searchParams.set('ws', match.wsAddr);
+    u.searchParams.set('room', roomCodeFor(match.matchId));
+    if (player.kp) u.searchParams.set('player', player.id);
+  }
   frame.src = u.href;
   $('play').hidden = false;
 }

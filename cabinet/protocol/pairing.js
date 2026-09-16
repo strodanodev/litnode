@@ -21,6 +21,13 @@ export const QUEUE_TAG = 'queue';
 
 export const matchIdFor = (rulesetId, p1, p2, beacon) => h('match', rulesetId, p1, p2, beacon);
 
+/** A rendezvous code a title's own relay can key on (Agent Fighter's
+ *  friendly rooms take [A-Z0-9-]{3,40}): the mesh match, shortened. Both
+ *  placed players derive it from the same matchId and land in the same
+ *  room; the relay's ledger carries it back so the mesh settles the result
+ *  under the match it placed. */
+export const roomCodeFor = (matchId) => `LIT-${String(matchId).slice(0, 32).toUpperCase()}`;
+
 /** @param {Array} entries  verified queue bodies {playerId, rulesetId, tokenId, mode, bucket, region?}
  *  @param {number} nowMs
  *  @param {(bucket:number)=>string|null} beaconFor  null = beacon not yet known → bucket skipped

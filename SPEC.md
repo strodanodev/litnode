@@ -203,10 +203,11 @@ the game's existing hosted build in an iframe.
 
 One list, kept here. BUILD-SPEC §16 has the reasoning behind each.
 
-- **No title consumes `cabinet:init.match` yet.** The cabinet places a
-  match and launches against the drawn relay; Agent Fighter's client does
-  not yet join that room under the cabinet's player key, so its ledgers
-  still settle under `af:<name>` with `attestation: 'relay'`. Sprint 1.
+- **Agent Fighter joins the placed match under the placed key** (room +
+  `?player=`, AF `b362c87`), and its ledgers settle under the mesh match
+  id and the keys — but the client does not yet sign the chain head, so
+  the attestation is `relay`, not `players` (SYNC §3.2 step 3). Not yet
+  exercised live: AF must be redeployed first.
 - **Relay matches settle `relay`, not `players`**, until the client signs
   the chain head. The witness path for player-signed ledgers is exercised
   in tests only.
