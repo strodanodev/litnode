@@ -44,6 +44,8 @@ export function formatEvent(ev, color = true) {
     case 'stakes': return `${tag(G.stake, 'stakes', c.magenta)} ${ev.bonded}/${ev.read} bonded`;
     case 'ruleset': return `${tag(G.ruleset, 'ruleset', c.blue)} ${ev.rulesetId} @ ${hash(ev.buildHash, 16)}  ${ev.current ? 'current' : 'held'}  ${kb(ev.bytes)}`;
     case 'revoked': return `${tag(G.bad, 'revoked', c.yellow)} key ${hash(ev.playerId, 12)} revoked by its owner ${hash(ev.owner, 10)} — queue entries refused from now`;
+    case 'update': return `${tag(G.ruleset, 'update', c.yellow)} ${ev.latest} is available (running ${ev.version}) — press u to update and restart`;
+    case 'restart': return `${tag(G.ruleset, 'restart', c.yellow)} restarting to run the new build`;
     case 'refused': return `${tag(G.bad, 'refused', c.red)} ${ev.what}${ev.matchId ? ` ${ev.matchId}` : ''}: ${ev.reason}`;
     case 'log': return `${tag(G.log, 'log', c.gray)} ${P(c.gray, ev.msg)}`;
     default: return `${tag(G.log, ev.type, c.gray)} ${P(c.gray, JSON.stringify(ev).slice(0, 120))}`;
@@ -95,7 +97,9 @@ export function createTui({ chainId = null } = {}) {
 
     // ── header
     const bonded = s.staking === 'chain' ? (me?.staked ? paint(c.green, `${G.on} bonded ${me.standing} LITVM`) : paint(c.red, `${G.off} unbonded`)) : paint(c.yellow, `${G.dim} ${s.staking}`);
-    L.push(`${paint(c.cyan + c.bold, `${G.self} litnode`)}  ${paint(c.white + c.bold, short(node.nodeId, 16))}  ${paint(c.bold, node.operator)}  ${paint(c.gray, node.roles.join(G.link))}  ${paint(c.gray, node.region)}  up ${hms(Date.now() - node.startedAt)}  ${bonded}`);
+    const up = node.updater?.status();
+    const ver = up?.available ? paint(c.yellow, `v${node.version} → ${up.latest} available (u)`) : paint(c.gray, `v${node.version ?? '?'}`);
+    L.push(`${paint(c.cyan + c.bold, `${G.self} litnode`)} ${ver}  ${paint(c.white + c.bold, short(node.nodeId, 16))}  ${paint(c.bold, node.operator)}  ${paint(c.gray, node.roles.join(G.link))}  ${paint(c.gray, node.region)}  up ${hms(Date.now() - node.startedAt)}  ${bonded}`);
     const chain = ch.offline ? paint(c.yellow, 'offline beacon') : `${paint(c.magenta, `#${ch.head ?? '?'}`)}${chainId ? paint(c.gray, ` chain ${chainId}`) : ''}${ch.lastError ? paint(c.red, ` ${ch.lastError.slice(0, 30)}`) : ''}`;
     const reach = node.inbound.size === 0 && peers.length <= 1 ? paint(c.gray, 'no peers yet') : inb ? paint(c.green, `${inb} peer${inb === 1 ? '' : 's'} reach us`) : paint(c.yellow, 'nobody reaches us (fine for a witness)');
     L.push(`  ${paint(c.gray, node.addr)}  ${chain}  epoch ${s.epoch}  hour root ${paint(c.gray, short(ep.root, 12))} (${ep.count})  ${deltas.length} settled  ${reach}`);
@@ -143,7 +147,7 @@ export function createTui({ chainId = null } = {}) {
       for (const ev of feed.filter((e) => e.type === 'log').slice(-logH)) L.push(` ${paint(c.gray, clock(ev.t))} ${paint(c.gray, ev.msg)}`);
     }
     if (shown.length === 0) L[L.length - feedH] = paint(c.gray, '  waiting for a queue entry, a placement, a ledger… (g shows every gossip envelope)');
-    L.push(paint(c.gray, ` q quit  g ${showGossip ? 'hide' : 'show'} gossip  l ${showLog ? 'hide' : 'show'} log  p ${paused ? 'resume' : 'pause'} feed   http://localhost:${node.port}/`));
+    L.push(paint(c.gray, ` q quit  g ${showGossip ? 'hide' : 'show'} gossip  l ${showLog ? 'hide' : 'show'} log  p ${paused ? 'resume' : 'pause'} feed${up?.available ? '  u update' : ''}   http://localhost:${node.port}/`));
 
     out.write(`${E}H` + L.slice(0, H).map((l) => fit(l, W) + `${E}K`).join('\n'));
     dirty = false;
@@ -158,6 +162,7 @@ export function createTui({ chainId = null } = {}) {
         if (k === 'q' || k === '') { await stop(); await node.stop().catch(() => {}); process.exit(0); }
         if (k === 'l') { showLog = !showLog; dirty = true; }
         if (k === 'g') { showGossip = !showGossip; dirty = true; }
+        if (k === 'u') { const s = node.updater?.status(); if (s?.available) { log(`updating to ${s.latest}…`); node.updater.apply().then(() => node.restart()).catch((e) => log(`update failed: ${e.message}`)); } else log('no update available'); }
         if (k === 'p') { paused = !paused; dirty = true; }
       });
     }

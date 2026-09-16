@@ -45,6 +45,8 @@ const node = await createNode({
   offline: !!env.OFFLINE,
   nodeStake: env.NODE_STAKE ?? deployed.NodeStake?.address ?? null,
   playerProfile: env.PLAYER_PROFILE ?? deployed.PlayerProfile?.address ?? null,
+  updates: env.LITNODE_NO_UPDATE !== '1',            // hourly signed-manifest check; apply is always manual
+  releaseUrl: env.RELEASE_URL || undefined,           // a mirror, for testing
   log: tui ? tui.log : (m) => console.log(`${stamp()} ${m}`),
   onEvent: tui ? tui.event : plainEvent,
 });

@@ -3,6 +3,40 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.0] — 2026-09-17
+
+The node updates itself, and the first release nodes can update from.
+
+### Added
+- **Self-update.** A release is an artifact like a ruleset — fetched,
+  sha256-checked, refused unless it verifies — plus a signature, because
+  "which build is latest" is a claim only the publisher may make. The
+  release public key is pinned in `node/update.js`; `npm run release`
+  packs every zip, signs `release.json` with the private half (kept in
+  `~/.litnode/`, never in the repo) and publishes to GitHub Releases. Nodes
+  check hourly and report on `/health.update`, in the dashboard header
+  (`u` applies), and on the cabinet's Nodes page (**Update node**, only
+  when the page is on the node's own machine — `POST /update` is
+  loopback-only). `update.cmd` / `npm run update` do the same from a shell.
+  Code is replaced; `data/`, `node.env` and the log are never touched; a
+  new vendored runtime lands in `runtime.new/` and `start-node.cmd` swaps
+  it on relaunch (exit code 75). `demo/update.test.mjs`.
+- Heartbeats carry `version`; `/peers` shows each peer's.
+
+### Fixed
+- **CORS preflight**: a POST from another origin (the cabinet on
+  `localhost` talking to `127.0.0.1`) failed with `net::ERR_FAILED` —
+  "queue: failed to fetch" — because `OPTIONS` named no methods or headers.
+  Reads worked, every write failed. The cabinet now also talks to the
+  origin that served it.
+- **Matchmaking across seconds**: a queue entry lives in one 2 s bucket,
+  so two players only paired if they clicked within the same two seconds.
+  The client re-enters every bucket while waiting (up to 5 min).
+- **Open in tab** kept the launched URL (`?ws= ?room= ?player=`) instead
+  of the bare title URL, which had sent the game to a relay that no longer
+  exists.
+- Plain log: `stakes` only on change, no per-block lines.
+
 ## [0.4.0] — 2026-09-17
 
 Consolidation. One repository, one frontend, one node, one packing step.

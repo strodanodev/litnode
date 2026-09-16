@@ -48,5 +48,16 @@ echo  litnode  operator=%OPERATOR%  addr=%PUBLIC_ADDR%  seeds=%SEEDS%  roles=%RO
 echo  dashboard: http://localhost:%PORT%/    keys: q quit  g gossip  l log  p pause
 echo  If peers must reach this machine and /health says reachable: false, run allow-firewall.cmd once.
 echo.
+:run
 %NODE% node\cli.mjs
+if "%errorlevel%"=="75" (
+  rem The node updated itself (or update.cmd ran) and asked to be relaunched.
+  if exist "runtime.new\node.exe" (
+    rmdir /s /q runtime 2>nul
+    move /y runtime.new runtime >nul
+    set "NODE=runtime\node.exe"
+  )
+  echo  restarting on the new build...
+  goto run
+)
 if not "%LITNODE_NOPAUSE%"=="1" pause

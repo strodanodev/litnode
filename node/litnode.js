@@ -18,6 +18,7 @@ import { pair, QUEUE_TAG, bucketOf } from '../protocol/pairing.js';
 import { placement } from '../protocol/placement.js';
 import { createChain } from './chain.js';
 import { createSettlement } from './settle.js';
+import { createUpdater, RESTART_EXIT } from './update.js';
 
 // Every response is readable from any origin, and from an https page reaching
 // a loopback node (Chrome's Private Network Access asks on the preflight).
@@ -43,6 +44,7 @@ export async function createNode({
   dataDir, port = 0, host = '127.0.0.1', publicAddr = null,
   operator = 'dev', roles = ['mesh', 'witness'], region = 'local', wsAddr = null,
   seeds = [], rulesets = [], rpc = null, offline = !rpc, nodeStake = null, playerProfile = null, chainFetch = globalThis.fetch,
+  version = null, updates = true, releaseUrl = undefined, onRestart = null,
   heartbeatMs = EPOCH_MS / 2, log = () => {}, onEvent = () => {},
 }) {
   // Every observable thing the node does goes through emit(): the TUI draws
@@ -52,6 +54,16 @@ export async function createNode({
   mkdirSync(dataDir, { recursive: true });
   mkdirSync(join(dataDir, 'rulesets'), { recursive: true });
   const startedAt = Date.now(); // /health reports it so a dashboard can show process uptime
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+  version ??= (() => { try { return JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version ?? null; } catch { return null; } })();
+
+  // ---------------------------------------------------------------- updates
+  // A release is an artifact like a ruleset, plus a signature (node/update.js).
+  // Checked hourly; applied only on request, and only from this machine.
+  const updater = createUpdater({ root, version: version ?? '0.0.0', releaseUrl, log });
+  const checkUpdates = async () => { if (!updates || !version) return; const before = updater.status().available; await updater.check(); const s = updater.status(); if (s.available && !before) emit('update', { version: s.version, latest: s.latest }); };
+  const isLoopback = (req) => /^(::1|127\.\d+\.\d+\.\d+|::ffff:127\.\d+\.\d+\.\d+)$/.test(req.socket.remoteAddress ?? '');
+  const restart = () => { log('restarting to run the new build'); emit('restart', {}); setTimeout(() => { if (onRestart) onRestart(); else process.exit(RESTART_EXIT); }, 300); };
 
   // ---------------------------------------------------------------- identity
   const idPath = join(dataDir, 'identity.json');
@@ -139,7 +151,7 @@ export async function createNode({
   let addr = publicAddr;
 
   const myHeartbeat = () => seal(HEARTBEAT_TAG, {
-    nodeId, operator, roles, region, addr, wsAddr, standing: 0,
+    nodeId, operator, roles, region, addr, wsAddr, standing: 0, version,
     buildHashes: buildHashes(), manifests: manifests(), epoch: epochOf(Date.now()),
   }, identity);
 
@@ -185,7 +197,7 @@ export async function createNode({
   };
 
   // ---------------------------------------------------------------- gossip loop
-  let timer = null;
+  let timer = null, updateTimer = null;
   const tick = async () => {
     try {
       await mergeHeartbeats([await myHeartbeat()]);
@@ -348,7 +360,7 @@ export async function createNode({
       if (req.method === 'GET' && (url.pathname.startsWith('/cabinet/') || url.pathname.startsWith('/protocol/'))) { if (serveStatic(res, url.pathname)) return; return json(res, 404, { error: 'not found' }); }
       if (req.method === 'GET' && url.pathname === '/health') {
         const s = currentSnapshot();
-        return json(res, 200, { nodeId, operator, roles, region, addr, epoch: s.epoch, peers: s.peers.length, rulesets: buildHashes(), buildsHeld: builds.size, staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null, chain: chain.status(), profiles: profileState(), startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt,
+        return json(res, 200, { nodeId, operator, roles, region, addr, epoch: s.epoch, peers: s.peers.length, rulesets: buildHashes(), buildsHeld: builds.size, staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null, chain: chain.status(), profiles: profileState(), version, update: updater.status(), startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt,
           // reachable: a peer has pushed gossip to us in the last 30 s. null = no peers known, so nothing to conclude.
           inbound: { peers: [...inbound.values()].filter((t) => Date.now() - t < 30_000).length, lastAt: inbound.size ? new Date(Math.max(...inbound.values())).toISOString() : null, reachable: peersKnown.size ? [...inbound.values()].some((t) => Date.now() - t < 30_000) : null } });
       }
@@ -365,7 +377,7 @@ export async function createNode({
           // more than ~4 s behind never reads as fresh: that is clock skew,
           // not a dead node (BUILD-SPEC §16).
           clockSkewS: +(((b.epoch - epochOf(now)) * EPOCH_MS) / 1000).toFixed(1),
-          rulesets: Object.keys(b.buildHashes ?? {}),
+          rulesets: Object.keys(b.buildHashes ?? {}), version: b.version ?? null,
         })) });
       }
       if (req.method === 'GET' && url.pathname.startsWith('/ruleset/')) {
@@ -443,6 +455,16 @@ export async function createNode({
         else emit('refused', { what: 'cosign', reason: r.reason, matchId: c.matchId });
         return json(res, 200, r);
       }
+      // Updates: anyone may ask; only this machine may apply. The cabinet's
+      // button works on http://localhost:<port>/ and nowhere else.
+      if (url.pathname === '/update') {
+        if (req.method === 'GET') { if (url.searchParams.get('check') === '1') await updater.check(); return json(res, 200, updater.status()); }
+        if (req.method === 'POST') {
+          if (!isLoopback(req)) return json(res, 403, { error: 'updates are applied from the node\'s own machine only (open http://localhost:' + actualPort + '/)' });
+          try { await updater.check(); const r = await updater.apply(); json(res, 200, { ok: true, ...r, restarting: true }); restart(); return; }
+          catch (e) { return json(res, 400, { error: e.message }); }
+        }
+      }
       if (req.method === 'GET' && url.pathname === '/profile') {
         const pid = url.searchParams.get('player');
         if (!pid) return json(res, 400, { error: 'player= required' });
@@ -486,12 +508,14 @@ export async function createNode({
   addr ??= `http://${host}:${actualPort}`;
   timer = setInterval(tick, heartbeatMs);
   await tick();
+  if (updates && version) { setTimeout(() => checkUpdates().catch(() => {}), 5_000); updateTimer = setInterval(() => checkUpdates().catch(() => {}), 60 * 60_000); }
   log(`litnode ${nodeId.slice(0, 12)} on ${addr} roles=${roles.join(',')} rulesets=${[...loaded.keys()].join(',') || '-'}`);
 
   return {
     nodeId, addr, port: actualPort, identity,
     snapshot: currentSnapshot, matches: matchesNow, installRuleset, chain, settlement,
     rulesets: () => buildHashes(), peers: () => heartbeats, inbound, operator, roles, region, startedAt,
-    async stop() { clearInterval(timer); await new Promise((r) => server.close(r)); },
+    version, updater, restart,
+    async stop() { clearInterval(timer); clearInterval(updateTimer); await new Promise((r) => server.close(r)); },
   };
 }

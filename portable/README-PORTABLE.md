@@ -24,6 +24,15 @@ first interactive start shows Windows' own "allow this app" prompt; or run
 `allow-firewall.cmd` once (one UAC click, a rule for this folder's runtime
 on private networks only). `/health` says `inbound.reachable` either way.
 
+## Updating
+
+The node checks for a new signed release every hour and says so in its
+dashboard header (press `u`), on `/health`, and on the cabinet's Nodes
+page (**Update node** — only from `http://localhost:7801/` on the node's
+own machine). Or double-click `update.cmd`. The release must be signed by
+the litnode release key and the zip must hash as the manifest says, or it
+is refused. Your `data` folder, `node.env` and log are never touched.
+
 ## Bond the node (once per machine)
 
 A node that is not bonded gossips and hydrates rulesets but is excluded from

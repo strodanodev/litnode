@@ -509,11 +509,26 @@ function renderInventory() {
       </div>
     </div>`;
 }
+const isLoopbackNode = () => /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(nodeUrl());
+/** POST /update on the node (loopback only), then wait for it to come back on the new version. */
+async function updateNode() {
+  const btn = $('update-btn'); if (btn) { btn.disabled = true; btn.textContent = 'downloading…'; }
+  try {
+    const r = await fetch(`${nodeUrl()}/update`, { method: 'POST', signal: AbortSignal.timeout(180_000) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error ?? r.status);
+    if (btn) btn.textContent = `applied ${j.to} — restarting…`;
+    const was = j.to;
+    for (let i = 0; i < 60; i++) { await new Promise((res) => setTimeout(res, 2000)); const h = await api('/health').catch(() => null); if (h && h.version === was) { S.health = h; render(); return; } }
+    alert('the node did not come back in 2 minutes — check its window or litnode.log');
+  } catch (e) { alert(`update: ${e.message}`); render(); }
+}
 function renderNode() {
   const h = S.health;
   const status = h ? `<dl class="kv">
       <dt>node id</dt><dd title="${esc(h.nodeId)}">${esc(h.nodeId)}</dd><dt>operator</dt><dd>${esc(h.operator)}</dd><dt>roles</dt><dd>${esc(h.roles.join(', '))}</dd><dt>region</dt><dd>${esc(h.region)}</dd>
       <dt>address</dt><dd>${esc(h.addr)}</dd><dt>bonded</dt><dd>${h.bonded === null ? 'unknown (offline / no stake contract)' : h.bonded ? 'yes' : 'no — run tools/bond-node.mjs'}</dd>
+      <dt>version</dt><dd>${esc(h.version ?? '?')}${h.update?.available ? ` — <b>${esc(h.update.latest)} available</b>` : h.update?.checkedAt ? ' — up to date' : ''}${h.update?.lastError ? ` <span class="dim">(check failed: ${esc(h.update.lastError)})</span>` : ''}</dd>
       <dt>reachable</dt><dd>${h.inbound ? (h.inbound.reachable === null ? 'no peers known yet' : h.inbound.reachable ? `yes — ${h.inbound.peers} peer${h.inbound.peers === 1 ? '' : 's'} push gossip to this node` : `no peer has reached this node in 30 s — fine for a witness; a seed, LAN host or relay needs allow-firewall.cmd or a tunnel`) : '—'}</dd>
       <dt>epoch</dt><dd>${h.epoch}</dd><dt>chain</dt><dd>${h.chain.offline ? 'offline beacon' : `${esc(h.chain.rpc)} · block ${h.chain.head ?? '?'}`}${h.chain.lastError ? ` · ${esc(h.chain.lastError)}` : ''}</dd>
       <dt>rulesets</dt><dd>${Object.entries(h.rulesets).map(([k, v]) => `${esc(k)} @ ${v.slice(0, 10)}`).join(', ')}</dd><dt>builds held</dt><dd>${h.buildsHeld}</dd>
@@ -528,7 +543,7 @@ function renderNode() {
           <tr><td>Witness co-signature</td><td class="num">${nodeWork().cosigned}</td><td class="dim">deltas listing this node in cosigners</td></tr>
           <tr><td>Hours observed up</td><td class="num">${fmtTok(hoursOnline(S.uptime, 7 * 24 * 6))} h</td><td class="dim">this dashboard, while open — not a mesh figure</td></tr>
         </tbody></table><div class="source">There is no rewards contract on litVM; nothing accrues. Bond and wallet figures are read live from ${esc(CHAIN.name)} (chain ${CHAIN.chainId}); NodeStake ${CHAIN.NodeStake.slice(0, 10)}…</div>`, '', 's6')}
-      ${panel('This node', status, '', 's6')}
+      ${panel('This node', status, h?.update?.available ? (isLoopbackNode() ? '<button class="btn sm primary" id="update-btn">Update node</button>' : '<span class="dim">update from the node\'s own machine</span>') : '', 's6')}
       ${panel('Run a node', `<ol class="steps">
           <li>Install Node.js 20+ if missing: <span class="mono">winget install OpenJS.NodeJS.LTS</span></li>
           <li>Double-click <span class="mono">start-node.cmd</span> in the litnode folder. Give it an operator name and a seed URL.</li>
@@ -537,6 +552,7 @@ function renderNode() {
       ${panel('Peers', peers, '', 's12')}
     </div>`;
   $('node-edit2')?.addEventListener('click', editNode);
+  $('update-btn')?.addEventListener('click', updateNode);
 }
 
 // ═══════════════════════════════════════════════ router ══

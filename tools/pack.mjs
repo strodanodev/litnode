@@ -63,7 +63,8 @@ for (const kind of kinds) {
   mkdirSync(join(stage, 'contracts'), { recursive: true });
   for (const f of ['deployed.testnet.json', 'deploy.testnet.json']) if (existsSync(join(root, 'contracts', f))) cpSync(join(root, 'contracts', f), join(stage, 'contracts', f));
   mkdirSync(join(stage, 'tools'), { recursive: true });
-  for (const f of ['start-node.cmd', 'allow-firewall.cmd', 'node.env.example']) cpSync(join(root, 'portable', f), join(stage, f));
+  for (const f of ['start-node.cmd', 'allow-firewall.cmd', 'update.cmd', 'node.env.example']) cpSync(join(root, 'portable', f), join(stage, f));
+  cpSync(join(root, 'tools', 'update.mjs'), join(stage, 'tools', 'update.mjs'));
   if (runtime) {
     mkdirSync(join(stage, 'runtime'), { recursive: true });
     cpSync(runtime.exe, join(stage, 'runtime', 'node.exe'));
@@ -71,7 +72,7 @@ for (const kind of kinds) {
     writeFileSync(join(stage, 'runtime', 'VERSION'), `${runtime.version}\n`);
   }
 
-  const scripts = { node: 'node node/cli.mjs', keygen: 'node tools/keygen.mjs', cabinet: 'node cabinet/serve.mjs' };
+  const scripts = { node: 'node node/cli.mjs', keygen: 'node tools/keygen.mjs', cabinet: 'node cabinet/serve.mjs', update: 'node tools/update.mjs' };
   let deps;
   if (kind === 'portable') {
     for (const f of ['keygen.mjs', 'bond-node.mjs']) cpSync(join(root, 'tools', f), join(stage, 'tools', f));

@@ -79,6 +79,14 @@ is the operator's runbook: bonding a key, public reachability, clocks,
 seeds. A node that is not bonded gossips and hydrates rulesets but is
 excluded from placement and cannot co-sign; `/health` says `bonded: false`.
 
+**Updating a node.** Every node checks the latest signed release hourly
+(`/health.update`); apply with the dashboard's `u`, the cabinet's Nodes
+page (from the node's own machine), or `update.cmd`. To cut a release:
+`npm run release` — packs, signs `release.json` with the release key in
+`~/.litnode/release-key.json` (its public half is pinned in
+`node/update.js`; a manifest signed by anything else is refused), and
+publishes to GitHub Releases.
+
 Chain tools read the signing key from the environment and nowhere else:
 
 ```
