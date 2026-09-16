@@ -21,7 +21,11 @@ import { createSettlement } from './settle.js';
 
 // Every response is readable from any origin, and from an https page reaching
 // a loopback node (Chrome's Private Network Access asks on the preflight).
-const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-private-network': 'true' };
+// A POST with a JSON body from another origin (the cabinet on localhost
+// talking to 127.0.0.1, or the hosted cabinet) is preflighted: the OPTIONS
+// answer must name the method and the header or the POST never leaves the
+// browser (net::ERR_FAILED, seen live 17 Sep 2026 on Find match).
+const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-private-network': 'true', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '600' };
 const json = (res, status, body) => {
   res.writeHead(status, { 'content-type': 'application/json', ...CORS });
   res.end(JSON.stringify(body));

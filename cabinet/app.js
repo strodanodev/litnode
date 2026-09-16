@@ -26,7 +26,11 @@ const view = (name) => document.querySelector(`.view[data-view="${name}"]`);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const short = (id, n = 10) => (id ? `${id.slice(0, n)}…` : '—');
 const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
-const nodeUrl = () => localStorage.getItem('cabinet.nodeUrl') || NODE_URL;
+// The node that serves this page IS the node to talk to (same origin, no
+// preflight); a static host (Vercel) falls back to config, and the footer
+// override wins over both.
+const servedByNode = () => /^https?:$/.test(location.protocol) && !/vercel\.app$|litvm\.games$/.test(location.hostname) && location.port !== '5180' ? location.origin : null;
+const nodeUrl = () => localStorage.getItem('cabinet.nodeUrl') || servedByNode() || NODE_URL;
 const store = (k, v) => { try { v === undefined ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* private mode */ } };
 const load = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const api = async (path) => (await fetch(`${nodeUrl()}${path}`, { signal: AbortSignal.timeout(5000) })).json();
@@ -423,7 +427,7 @@ function renderGame(g) {
 // recompute placement from a snapshot this page can hash, and refuse a host
 // the rule did not produce. The node is a directory, never an authority.
 const MM = { state: 'idle', game: null, text: '', match: null, check: null, host: null, waitedMs: 0 };
-let mmPolling = null;
+let mmAbort = null;
 function renderMatchmaking(g) {
   const el = $('mm'); if (!el) return;
   if (MM.game && MM.game.id !== g.id && MM.state !== 'idle') { el.innerHTML = ''; return; }
@@ -448,23 +452,25 @@ async function findMatch(g) {
   const client = createClient({ nodeUrl: nodeUrl(), player: player.kp });
   Object.assign(MM, { state: 'queued', game: g, text: 'signing a queue entry…', match: null, check: null, host: null });
   render();
+  mmAbort = new AbortController();
   try {
     const region = S.health?.region ?? null; // queue with the region of the node we talk to: the draw prefers hosts near us
-    const { bucket } = await client.queue({ rulesetId: g.rulesetId, mode: 'ranked', region });
+    const entry = { rulesetId: g.rulesetId, mode: 'ranked', region };
+    const { bucket } = await client.queue(entry);
     const t0 = Date.now();
-    MM.text = `queued for ${g.rulesetId} (ranked), bucket ${bucket}. Waiting for a pair and the chain beacon…`; render();
-    mmPolling = setInterval(async () => {
-      const m = await client.match({ sinceBucket: bucket }).catch(() => null);
-      MM.text = `waiting… ${((Date.now() - t0) / 1000).toFixed(0)} s (bucket ${bucket})`;
-      if (!m) { if (route.name === 'game') renderMatchmaking(g); return; }
-      clearInterval(mmPolling); mmPolling = null;
-      const s = await client.snapshot();
-      Object.assign(MM, { state: 'placed', match: m, check: client.verifyPlacement(m, s), host: s.peers.find((p) => p.nodeId === m.host) ?? null, waitedMs: Date.now() - t0 });
-      render();
-    }, 500);
+    MM.text = `queued for ${g.rulesetId} (ranked). Re-entering every 2 s bucket until someone else queues…`; render();
+    // Keep re-entering every bucket for up to 5 min: an entry lives in one
+    // 2 s bucket, so waiting without re-queuing would only ever pair with
+    // someone who clicked in the same two seconds.
+    const r = await client.waitForMatch({ timeoutMs: 5 * 60_000, sinceBucket: bucket, requeue: entry, signal: mmAbort.signal,
+      onTick: () => { MM.text = `waiting… ${((Date.now() - t0) / 1000).toFixed(0)} s — the other player must press Find match too`; if (route.name === 'game') renderMatchmaking(g); } });
+    if (!r) { if (MM.state === 'queued') { Object.assign(MM, { state: 'idle', text: '' }); render(); } return; }
+    Object.assign(MM, { state: 'placed', match: r.match, check: r.check, host: r.snapshot.peers.find((p) => p.nodeId === r.match.host) ?? null, waitedMs: r.waitedMs });
+    render();
   } catch (e) { Object.assign(MM, { state: 'idle', text: '' }); alert(`queue: ${e.message}`); render(); }
+  finally { mmAbort = null; }
 }
-function stopMatchmaking() { if (mmPolling) clearInterval(mmPolling); mmPolling = null; Object.assign(MM, { state: 'idle', match: null, check: null, host: null }); render(); }
+function stopMatchmaking() { mmAbort?.abort(); Object.assign(MM, { state: 'idle', match: null, check: null, host: null }); render(); }
 let lbQuery = '';
 function renderLeaderboards() {
   const g = GAMES.find((x) => x.rulesetId === lbTab);

@@ -68,6 +68,8 @@ test('cabinet contract: fields by name, cabinet served at /, vendored protocol i
   const pre = await fetch(`${node.addr}/health`, { method: 'OPTIONS' });
   assert.equal(pre.headers.get('access-control-allow-private-network'), 'true');
   assert.equal(pre.headers.get('access-control-allow-origin'), '*');
+  assert.match(pre.headers.get('access-control-allow-methods') ?? '', /POST/, 'preflight must allow POST or every write fails in a browser');
+  assert.match(pre.headers.get('access-control-allow-headers') ?? '', /content-type/i);
 
   // settle one real match so every table has a row
   const kps = await Promise.all([generateKeypair(), generateKeypair()]);

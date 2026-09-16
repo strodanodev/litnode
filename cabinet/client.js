@@ -62,13 +62,19 @@ export function createClient({ nodeUrl, player, fetchImpl = globalThis.fetch }) 
       reason: sameSnapshot ? 'node named a host the rule did not produce' : 'computed against a different snapshot (eligible set moved)' };
   };
 
-  /** Poll until paired (or timeout), then verify. */
-  const waitForMatch = async ({ timeoutMs = 30_000, intervalMs = 500, sinceBucket = 0, onTick } = {}) => {
+  /** Poll until paired (or timeout), then verify. With `requeue`, a fresh
+   *  entry is signed for every bucket while waiting: an entry lives in ONE
+   *  2 s bucket (protocol/pairing.js), so two players who click ten seconds
+   *  apart never meet unless the earlier one keeps re-entering. */
+  const waitForMatch = async ({ timeoutMs = 30_000, intervalMs = 500, sinceBucket = 0, requeue = null, onTick, signal } = {}) => {
     const t0 = Date.now();
-    while (Date.now() - t0 < timeoutMs) {
+    let lastBucket = bucketOf(Date.now());
+    while (Date.now() - t0 < timeoutMs && !signal?.aborted) {
       const m = await match({ sinceBucket });
       onTick?.(m);
       if (m) { const s = await snapshot(); return { match: m, check: verifyPlacement(m, s), snapshot: s, waitedMs: Date.now() - t0 }; }
+      const b = bucketOf(Date.now());
+      if (requeue && b !== lastBucket) { lastBucket = b; await queue(requeue).catch(() => {}); }
       await new Promise((r) => setTimeout(r, intervalMs));
     }
     return null;
