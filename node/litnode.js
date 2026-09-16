@@ -39,8 +39,12 @@ export async function createNode({
   dataDir, port = 0, host = '127.0.0.1', publicAddr = null,
   operator = 'dev', roles = ['mesh', 'witness'], region = 'local', wsAddr = null,
   seeds = [], rulesets = [], rpc = null, offline = !rpc, nodeStake = null,
-  heartbeatMs = EPOCH_MS / 2, log = () => {},
+  heartbeatMs = EPOCH_MS / 2, log = () => {}, onEvent = () => {},
 }) {
+  // Every observable thing the node does goes through emit(): the TUI draws
+  // from it, a log file gets a line per event, tests can subscribe. Never
+  // throws into the caller.
+  const emit = (type, data = {}) => { try { onEvent({ t: Date.now(), type, ...data }); } catch { /* observer's problem */ } };
   mkdirSync(dataDir, { recursive: true });
   mkdirSync(join(dataDir, 'rulesets'), { recursive: true });
   const startedAt = Date.now(); // /health reports it so a dashboard can show process uptime
@@ -79,6 +83,7 @@ export async function createNode({
     builds.set(actual, entry);
     if (current) loaded.set(title.manifest.rulesetId, entry);
     log(`ruleset ${title.manifest.rulesetId} @ ${actual.slice(0, 12)} ${current ? 'loaded' : 'held (not current)'}`);
+    emit('ruleset', { rulesetId: title.manifest.rulesetId, buildHash: actual, current, bytes: source.length });
     return title;
   };
   // Re-hold every build cached on disk from earlier runs, then make the
@@ -99,6 +104,10 @@ export async function createNode({
 
   // ---------------------------------------------------------------- registry state
   const heartbeats = new Map(); // nodeId → latest verified body
+  // Remote addresses that have POSTed /gossip to us, with the last time. If
+  // this stays empty while peers are fresh, nobody can reach us inbound —
+  // fine for a witness, not for a seed or a LAN host.
+  const inbound = new Map();
   const queue = new Map();      // `${bucket}|${playerId}` → verified body
   const peersKnown = new Set(seeds);
   let stakes = null;            // nodeId → standing, when nodeStake configured
@@ -165,13 +174,17 @@ export async function createNode({
       payload.deltas = settlement.list().map((d) => ({ matchId: d.matchId, rulesetId: d.rulesetId, buildHash: d.buildHash, hostId: d.hostId, addr, cosigners: d.cosigners }));
       matchesNow();
       payload.matches = matchEnvelopes();
-      for (const peer of [...peersKnown]) {
-        if (peer === addr) continue;
-        fetch(`${peer}/gossip`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
-          .then(async (r) => { if (r.ok) await absorb(await r.json()); })
+      const body = JSON.stringify(payload);
+      const targets = [...peersKnown].filter((p) => p !== addr);
+      if (targets.length) emit('gossip.out', { peers: targets.length, bytes: body.length, heartbeats: payload.heartbeats.length, queue: payload.queue.length, deltas: payload.deltas.length, matches: payload.matches.length });
+      for (const peer of targets) {
+        fetch(`${peer}/gossip`, { method: 'POST', headers: { 'content-type': 'application/json' }, body })
+          .then(async (r) => { if (r.ok) { const text = await r.text(); const m = JSON.parse(text); await absorb(m, { from: peer, bytes: text.length, via: 'reply' }); } })
           .catch(() => {});
       }
-      await chain.pollBlock();
+      const head = chain.status().head;
+      const b = await chain.pollBlock();
+      if (b && b.number !== head) emit('block', { number: b.number, hash: b.hash });
       if (nodeStake && !offline) {
         const ids = [...heartbeats.keys()];
         const st = await chain.standings(ids);
@@ -182,6 +195,7 @@ export async function createNode({
           const next = { ...(stakes ?? {}), ...st };
           for (const k of Object.keys(next)) if (!heartbeats.has(k)) delete next[k];
           stakes = next;
+          emit('stakes', { read: Object.keys(st).length, bonded: Object.values(next).filter((x) => x.active).length });
         }
       }
       await hydrateMissing(currentSnapshot());
@@ -189,7 +203,11 @@ export async function createNode({
   };
   const envelopeCache = new Map(); // nodeId → latest envelope (for forwarding)
   const queueEnvelopes = new Map();
-  const absorb = async (msg) => {
+  const absorb = async (msg, meta = null) => {
+    if (meta) {
+      const sig = msg.heartbeats?.find((e) => e?.body?.nodeId !== nodeId)?.sig ?? null;
+      emit('gossip.in', { from: meta.from, via: meta.via, bytes: meta.bytes, heartbeats: msg.heartbeats?.length ?? 0, queue: msg.queue?.length ?? 0, deltas: msg.deltas?.length ?? 0, matches: msg.matches?.length ?? 0, sig });
+    }
     for (const env of msg.heartbeats ?? []) if (env?.body?.nodeId && env.body.nodeId !== nodeId) {
       const cur = envelopeCache.get(env.body.nodeId);
       if (!cur || env.body.epoch >= cur.body.epoch) envelopeCache.set(env.body.nodeId, env);
@@ -223,9 +241,10 @@ export async function createNode({
         fetch(`${ad.addr}/ledger/${encodeURIComponent(ad.matchId)}`).then((r) => r.json()),
       ]);
       const res = await settlement.cosign(delta, ledger);
-      if (!res.ok) { log(`witness ${ad.matchId}: DISAGREE (${res.reason})`); return; }
+      if (!res.ok) { log(`witness ${ad.matchId}: DISAGREE (${res.reason})`); emit('witness', { matchId: ad.matchId, ok: false, reason: res.reason, ours: res.ours, theirs: res.theirs }); return; }
       await fetch(`${ad.addr}/cosign`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(res) });
       log(`witness ${ad.matchId}: co-signed`);
+      emit('witness', { matchId: ad.matchId, ok: true, hostId: ad.hostId, root: delta.finalStateRoot, sig: res.sig });
     } catch (e) { witnessed.delete(ad.matchId); log(`witness ${ad.matchId}: ${e.message}`); }
   };
 
@@ -256,6 +275,7 @@ export async function createNode({
       const d = describe(m, s);
       if (!d.host) continue; // nobody eligible yet; try again next call
       matchBook.set(m.matchId, { descriptor: d, envelope: null, disputes: [] });
+      emit('placed', { matchId: m.matchId, rulesetId: m.rulesetId, host: d.host, witness: d.witness, beacon: d.beaconSource, snapshotRoot: d.snapshotRoot, participants: m.participants });
       seal(MATCH_TAG, d, identity).then((env) => { const e = matchBook.get(m.matchId); if (e) e.envelope = env; }).catch(() => {});
     }
     return [...matchBook.values()].map((e) => ({ ...e.descriptor, disputes: e.disputes }));
@@ -269,6 +289,7 @@ export async function createNode({
     if (!mine) { matchBook.set(d.matchId, { descriptor: { ...d, disputes: undefined }, envelope: env, disputes: [] }); return; }
     if (mine.descriptor.host !== d.host && !mine.disputes.some((x) => x.by === d.computedBy)) {
       mine.disputes.push({ by: d.computedBy, host: d.host, snapshotRoot: d.snapshotRoot });
+      emit('dispute', { matchId: d.matchId, ours: mine.descriptor.host, theirs: d.host, by: d.computedBy });
       log(`placement dispute ${d.matchId.slice(0, 12)}: we drew ${mine.descriptor.host.slice(0, 12)}, ${d.computedBy.slice(0, 12)} drew ${d.host.slice(0, 12)}`);
     }
   };
@@ -300,7 +321,9 @@ export async function createNode({
       if (req.method === 'GET' && (url.pathname.startsWith('/cabinet/') || url.pathname.startsWith('/protocol/'))) { if (serveStatic(res, url.pathname)) return; return json(res, 404, { error: 'not found' }); }
       if (req.method === 'GET' && url.pathname === '/health') {
         const s = currentSnapshot();
-        return json(res, 200, { nodeId, operator, roles, region, addr, epoch: s.epoch, peers: s.peers.length, rulesets: buildHashes(), buildsHeld: builds.size, staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null, chain: chain.status(), startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt });
+        return json(res, 200, { nodeId, operator, roles, region, addr, epoch: s.epoch, peers: s.peers.length, rulesets: buildHashes(), buildsHeld: builds.size, staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null, chain: chain.status(), startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt,
+          // reachable: a peer has pushed gossip to us in the last 30 s. null = no peers known, so nothing to conclude.
+          inbound: { peers: [...inbound.values()].filter((t) => Date.now() - t < 30_000).length, lastAt: inbound.size ? new Date(Math.max(...inbound.values())).toISOString() : null, reachable: peersKnown.size ? [...inbound.values()].some((t) => Date.now() - t < 30_000) : null } });
       }
       if (req.method === 'GET' && url.pathname === '/snapshot') return json(res, 200, currentSnapshot());
       // Everyone we have heard from, bonded or not — for onboarding a new
@@ -327,7 +350,10 @@ export async function createNode({
         return res.end(r.source);
       }
       if (req.method === 'POST' && url.pathname === '/gossip') {
-        await absorb(await readBody(req));
+        const text = await new Promise((resolve, reject) => { let b = ''; req.on('data', (d) => { b += d; if (b.length > 4e6) reject(new Error('body too large')); }); req.on('end', () => resolve(b)); req.on('error', reject); });
+        const from = req.socket.remoteAddress ?? '?';
+        inbound.set(from, Date.now());
+        await absorb(text ? JSON.parse(text) : {}, { from, bytes: text.length, via: 'push' });
         // Answer with everything we push, deltas included: a peer that can
         // reach us while we cannot reach it (NAT, a second subnet) must still
         // learn what we settled, or it can never witness it.
@@ -346,6 +372,7 @@ export async function createNode({
         if (Math.abs(b.bucket - bucketOf(Date.now())) > 2) return json(res, 400, { error: 'bucket out of window' });
         queueEnvelopes.set(`${b.bucket}|${b.playerId}`, env);
         await mergeQueue([env]);
+        emit('queue', { playerId: b.playerId, rulesetId: b.rulesetId, mode: b.mode, bucket: b.bucket, region: b.region ?? null, sig: env.sig });
         return json(res, 202, { ok: true, bucket: b.bucket });
       }
       if (req.method === 'GET' && url.pathname === '/match') {
@@ -356,8 +383,11 @@ export async function createNode({
       // ---------------------------------------------------------- settlement
       if (req.method === 'POST' && url.pathname === '/ledger') {
         if (!canSettle) return json(res, 403, { error: 'this node has no settling role' });
-        try { return json(res, 200, await settlement.intake(await readBody(req))); }
-        catch (e) { return json(res, 400, { error: e.message }); }
+        try {
+          const d = await settlement.intake(await readBody(req));
+          emit('settled', { matchId: d.matchId, rulesetId: d.rulesetId, ticks: d.ticks, root: d.finalStateRoot, attestation: d.attestation, hostSig: d.hostSig, participants: d.participants });
+          return json(res, 200, d);
+        } catch (e) { emit('refused', { what: 'ledger', reason: e.message }); return json(res, 400, { error: e.message }); }
       }
       if (req.method === 'GET' && url.pathname.startsWith('/ledger/')) {
         const l = settlement.ledger(decodeURIComponent(url.pathname.slice(8)));
@@ -377,7 +407,10 @@ export async function createNode({
           if (!w?.active) return json(res, 200, { ok: false, reason: 'witness not bonded' });
           if (me?.operator && w.operator === me.operator) return json(res, 200, { ok: false, reason: 'witness shares the host\'s staking address' });
         }
-        return json(res, 200, await settlement.acceptCosign(c));
+        const r = await settlement.acceptCosign(c);
+        if (r.ok) emit('cosigned', { matchId: c.matchId, witnessId: c.witnessId, sig: c.sig, cosigners: r.cosigners.length });
+        else emit('refused', { what: 'cosign', reason: r.reason, matchId: c.matchId });
+        return json(res, 200, r);
       }
       if (req.method === 'GET' && ['/leaderboard', '/credits', '/stats'].includes(url.pathname)) {
         const rid = url.searchParams.get('ruleset');
@@ -416,7 +449,7 @@ export async function createNode({
   return {
     nodeId, addr, port: actualPort, identity,
     snapshot: currentSnapshot, matches: matchesNow, installRuleset, chain, settlement,
-    rulesets: () => buildHashes(),
+    rulesets: () => buildHashes(), peers: () => heartbeats, inbound, operator, roles, region, startedAt,
     async stop() { clearInterval(timer); await new Promise((r) => server.close(r)); },
   };
 }
