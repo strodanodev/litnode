@@ -447,8 +447,20 @@ function renderMatchmaking(g) {
       <div class="source">paired after ${(MM.waitedMs / 1000).toFixed(1)} s · snapshot root ${short(m.snapshotRoot ?? '', 12)}${c.sameSnapshot === false ? ' · eligible set moved since the draw' : ''}</div>`;
   el.innerHTML = panel('Find match', body, '', 'mm');
 }
+/** Matchmaking is a function of everyone's clock (2 s buckets). A node whose
+ *  clock disagrees with its bonded peers computes buckets nobody else has
+ *  and waits forever — seen live (a laptop 23 min behind). Refuse loudly. */
+function clockProblem() {
+  const bonded = S.peers.filter((p) => p.bonded && p.nodeId !== S.health?.nodeId);
+  const off = bonded.filter((p) => Math.abs(p.clockSkewS) > 4);
+  if (bonded.length && off.length === bonded.length) return `this node's clock is about ${Math.round(Math.abs(off[0].clockSkewS))} s ${off[0].clockSkewS > 0 ? 'behind' : 'ahead of'} the mesh — matchmaking cannot pair across clocks. Sync it (Windows: Settings › Time › Sync now, or an admin prompt: w32tm /resync), then try again.`;
+  if (!S.peers.some((p) => p.nodeId !== S.health?.nodeId)) return 'this node has not heard from any other node — it is alone on the mesh, so there is nobody to pair with. Check SEEDS in node.env and that the seed is reachable.';
+  return null;
+}
 async function findMatch(g) {
   if (!player.kp || !S.online || MM.state === 'queued') return;
+  const problem = clockProblem();
+  if (problem) { alert(problem); return; }
   const client = createClient({ nodeUrl: nodeUrl(), player: player.kp });
   Object.assign(MM, { state: 'queued', game: g, text: 'signing a queue entry…', match: null, check: null, host: null });
   render();
