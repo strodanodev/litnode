@@ -3,6 +3,67 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.0] — 2026-09-17
+
+Consolidation. One repository, one frontend, one node, one packing step.
+
+### Added
+- **Source repository.** The full tree (protocol, node, titles, contracts,
+  tools, eight test suites, BUILD-SPEC) is now the git history; the 0.3.0
+  commit is merged in as an ancestor. The portable zips are built from it
+  (`npm run pack`) and ship `cabinet/`.
+- **Find match in the cabinet.** Each mesh title has a *Find match* action:
+  sign a queue entry, wait for the pair, recompute placement from a snapshot
+  the page can hash, refuse a host the rule did not produce, launch the
+  title against the drawn host's relay with the descriptor in
+  `cabinet:init.match` (and `?ws=` for Agent Fighter). `cabinet/client.js`
+  is the former arcade lobby's client; `demo/client.test.mjs` drives it.
+- **Every node serves the cabinet at `/`.** The cabinet's files resolve at
+  the root after every API route; `/protocol/*` stays the node's modules.
+- **`demo/cabinet.test.mjs`** asserts by name and type every field the
+  deployed cabinet reads from `/health /peers /snapshot /leaderboard /stats
+  /deltas`, the CORS + Private-Network headers on the preflight, that the
+  cabinet is served at `/`, that `cabinet/protocol/` matches source, and
+  that the client-side rating trajectory ends where `/leaderboard` says.
+- **`tools/vendor-cabinet.mjs`** generates `cabinet/protocol/` (eight
+  modules) with a sha256 `MANIFEST.json`; `--check` fails on drift.
+- `protocol/derive.js` exports `applyDelta`, the per-delta fold step;
+  `derive()` loops over it. Output and `DERIVE_VERSION` unchanged.
+- `docs/WALLET-IDENTITY.md` — sign in with a wallet: one transaction mints
+  a soulbound litVM Games profile and binds the browser key to it; nodes
+  read `ownerOfKey` the way they read `standingOf`; a node badge NFT for
+  operators. Specified, not built.
+- `.gitattributes` pins LF everywhere (rulesets are hash-pinned bytes).
+
+### Changed
+- Node code in the public repo was the 12 Sep portable snapshot. It is
+  replaced by the source tree, which carries the 13 Sep fixes: placements
+  computed once, sealed and gossiped with disputes recorded; stake reads
+  merged rather than replaced; `/gossip` replies carrying deltas and
+  descriptors so a node behind NAT can witness; snapshot root over the
+  registry view; `WS_ADDR`; WebCrypto secure-context guard.
+- `/health` reports `startedAt` and `uptimeMs`; every response including
+  the `OPTIONS` preflight sends `Access-Control-Allow-Private-Network: true`
+  (both ported from 0.3.0).
+- One player key: `localStorage['litnode.player']`, migrated once from
+  `cabinet.identity`.
+- The cabinet's rating chart walks `applyDelta` instead of a hand copy of
+  the Elo fold.
+- SPEC.md rewritten where it described the snapshot: the node advertises a
+  relay (`wsAddr`) rather than lacking transport; known gaps and honest
+  zeroes are one list (§4). `docs/NODE-CABINET-SYNC.md` is now the contract
+  plus what is still open.
+- `contracts/deployed.testnet.json` is committed (public addresses) without
+  the local data path. Package renamed `litnode`.
+
+### Removed
+- **The rewards projection** (decision 17 Sep). There is no rewards
+  contract and a figure nothing can pay is a claim. Work counters (settled
+  as host, witnessed) stay: they are counted from deltas any node can
+  reproduce. Bond and wallet reads stay.
+- `arcade/` (merged into the cabinet), the root `start-node.cmd`
+  (`portable/` owns it), `config.js REWARDS`.
+
 ## [0.3.0] — 2026-09-17
 
 Cabinet launch. First public frontend for litnode.

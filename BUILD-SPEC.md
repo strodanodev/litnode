@@ -30,7 +30,8 @@ client spec v0.6 is the longer-range architecture; this is the build.
 | **Three-machine, two-operator mesh** (desktop + laptop bonded from the deployer wallet, ROG Ally bonded from a second wallet), one snapshot root on all three, two real matches co-signed by the Ally after it fetched the exact build by hash and replayed independently | **Done 13 Sep 2026** | live run; witness `9054aac9…` on both deltas |
 | A real Agent Fighter relay match (`mmtyf9tz57bbb-1`, 7,599 ticks, played 12 Sep 2026 through the tunnel) imported from the studio database and settled on the bonded node, replay reaching the relay's own recorded state hash | **Done** | `tools/af-import-ledger.mjs` + `demo/settle.test.mjs` |
 | EpochAnchor contract | **Deployed** at `0x09fBf6A5026b4E02eE9f78222117F97b19eE507A`; **first root anchored** 12 Sep 2026: epoch 497006, two matches, root `6726c997…16bfee`, tx `0x04c88732…25eab3` (block 50092761), `verifyInclusion` returned true on chain for `mmtyf9tz57bbb-1` | `tools/anchor-epoch.mjs` |
-| Arcade lobby (`arcade/index.html`) and isomorphic client (`arcade/client.js`): identity in browser storage, signed queue entries, poll for a pair, recompute placement from the snapshot and refuse a host the rule did not produce, ladders and settled matches from the node. Served by every node at `/` and deployable to any static host | **Built** | `demo/arcade.test.mjs`; live pair from the page on the three-machine mesh 13 Sep 2026 (3.0 s, chain beacon, client and node agree, witness = Ally) |
+| Cabinet (`cabinet/`) — the one frontend: profile, ladders, history, node panel, and *Find match* through the isomorphic client (`cabinet/client.js`): identity in browser storage, signed queue entries, poll for a pair, recompute placement from the snapshot and refuse a host the rule did not produce, launch against the drawn host's relay. Served by every node at `/`, deployed at lit-games-cabinet.vercel.app. The cabinet's read contract with the node is asserted field by field | **Built** | `demo/client.test.mjs`, `demo/cabinet.test.mjs`; live pair from the former lobby page on the three-machine mesh 13 Sep 2026 (3.0 s, chain beacon, client and node agree, witness = Ally). Merged 17 Sep 2026 |
+| Wallet-bound player profile (soulbound ERC-721, `ownerOfKey` read like `standingOf`), node badge NFT | Specified | `docs/WALLET-IDENTITY.md` |
 | Peer-to-peer gameplay transport | Specified | — |
 | SDK extraction, title template, conformance suite | Specified | — |
 
@@ -634,21 +635,47 @@ manifest completeness, bounded ranked mapping. A title that passes is listed.
 around the titles' own gameplay; it does not re-implement netcode. Agent
 Fighter's server becomes the `relay` role. Railway stays until item 3 lands.
 
+**Consolidated 17 Sep 2026** after the cabinet (`strodanodev/litnode`)
+shipped on the 12 Sep portable snapshot: the source tree is the git history,
+the cabinet is the one frontend and every node serves it, the read contract
+between them is a test, and the portable zips are packed from source. The
+frontend track below runs beside the node track; week numbers are relative
+to that consolidation.
+
+0. **Consolidate — done 17 Sep 2026.** Git history, cabinet merged, arcade
+   lobby folded into it, `demo/cabinet.test.mjs`, `tools/vendor-cabinet.mjs`,
+   rewards projection removed, docs made to agree. Remaining: a public https
+   seed as the cabinet's default `NODE_URL` (a tunnel in front of the
+   desktop's 7801 with `PUBLIC_ADDR` set).
 1. **Node daemon — done 13 Sep 2026 on three machines.** Identity, gossip,
    snapshot, fetch-by-hash, NodeStake reads, ledger intake from the relay,
    witness verify across machines and operators, epoch tree, and the first
    root anchored on Liteforge with an inclusion proof verified on chain.
    Remaining from this item: the latency and reconnect numbers in §15, which
    need the gameplay path (item 3) to exist on the mesh first.
-2. **Second in-house title (weeks 5–7).** Against the real contract. Manifest
-   declares participants, input schema, hidden info. Universality suite green
-   or the claim is reworded.
-3. **Peer-to-peer gameplay (weeks 8–11).** WebRTC in the client, nodes as
-   signalling and TURN fallback, both players sign the ledger, asynchronous
-   verification. Gate on retiring Railway.
-4. **Open-source launch (weeks 12–14).** Apache-2.0 for protocol, node, SDK.
-   Title template that runs in one command, conformance suite, one-command
-   node install, protocol RFC process, honest zeroes as a release artifact.
+1b. **Play through the cabinet (weeks 1–2).** Close the gap between mesh
+   placement and the relay's own matchmaking from both ends: Agent Fighter's
+   client consumes `cabinet:init.match` and joins the drawn relay under the
+   cabinet's player key; the relay (or `af-watch` as its intake) submits
+   ledgers keyed by player keys, and the client signs the chain head so
+   deltas settle `players`. Beside it, the wallet-bound profile
+   (`docs/WALLET-IDENTITY.md`): one transaction, soulbound ERC-721, nodes
+   read `ownerOfKey`, ladders fold by owner on request. Exit: a match
+   started with *Find match* appears in that player's record, co-signed by
+   another operator.
+2. **Second in-house title (weeks 3–5).** AFC: its engine is deterministic
+   and re-simulating, the `defineTitle` shape; bundle it. Pickle Brawl
+   online as an attested report from its server. Manifest declares
+   participants, input schema, hidden info. Universality suite green or the
+   claim is reworded.
+3. **Peer-to-peer gameplay (weeks 6–10).** WebRTC in `cabinet/client.js`,
+   nodes as signalling (`POST /signal`) and TURN fallback, both players sign
+   the ledger, asynchronous verification. Gate on retiring Railway.
+4. **Open-source launch (weeks 11–14).** Apache-2.0 for protocol, node, SDK.
+   The cabinet is the reference frontend; `sdk-client.js` + `client.js` are
+   the SDK; AFC's bundling recipe is the title template. Conformance suite,
+   one-command node install, protocol RFC process, honest zeroes (SPEC §4)
+   as a release artifact.
 5. **Retire Railway** when the mesh has carried production traffic through
    item 3 with measured downtime the team accepts.
 6. On-chain registry reads · obligatory replica sets · Wasm rulesets · deploy

@@ -27,22 +27,34 @@ editable in the footer (localStorage). Installable as a PWA.
     #/inventory     consumables, pets, tickets
     #/node          this node, run-a-node steps, peers
 
-## Node uptime & $litVM rewards
+## Find match
+
+On a title's page, *Find match* is the mesh: `client.js` signs a queue entry
+with the player key, polls `/match` for the pair, fetches `/snapshot`,
+recomputes `placement()` locally and compares. ACCEPT launches the title
+against the drawn host's `wsAddr` with the descriptor in `cabinet:init.match`
+(Agent Fighter also gets `?ws=`); REFUSE says why (the node named a host the
+rule did not produce, or the eligible set moved) and does not launch. The
+node is a directory, never an authority.
+
+## Node uptime & mesh work
 
 The highlighted band at the top of Home (and the Nodes page) shows:
 
     UPTIME    24 h ring + 10-minute strip, 7-day heatmap on the Nodes page —
               observed by this dashboard while open (localStorage, per node
-              URL). "Process up" is the node's own figure: /health now returns
-              startedAt + uptimeMs (node/litnode.js, additive).
+              URL). "Process up" is the node's own figure (/health startedAt,
+              uptimeMs).
     WORK      matches this node settled as host and witness co-signatures,
-              counted from the settled deltas. Real.
-    REWARDS   PROJECTED. There is no rewards contract on litVM yet; nothing
-              accrues on-chain. config.js REWARDS holds the rate card
-              (per hour online while bonded, per settled match, per
-              co-signature) — tune it and the whole UI follows. Bond amount and
-              operator wallet balance are read live from litVM (chain.js,
-              read-only, via the node's own staking/keccak modules).
+              counted from the settled deltas. Real: any node with the same
+              deltas counts the same.
+    ON CHAIN  bond amount, operator wallet balance, operator address — read
+              live from litVM (chain.js, read-only, calldata built with the
+              node's own staking/keccak modules).
+
+There is no reward figure. There is no rewards contract on litVM; nothing
+accrues; the bond is a cost of misbehaviour, not a yield. A number nothing
+can pay is a claim, so the cabinet does not show one.
 
 ## Deploy
 
@@ -51,10 +63,11 @@ static, no build). From this folder:
 
     vercel deploy --prod --yes
 
-The folder is self-contained: `protocol/` holds copies of the node's
-canonical/keys/keccak/staking modules (re-copy from `../protocol` when the
-node's protocol changes). `vercel.json` sets cache headers; `serve.mjs` and
-this README are excluded by `.vercelignore`.
+The folder is self-contained: `protocol/` is a generated copy of the eight
+protocol modules the cabinet runs (`npm run vendor:cabinet` from the repo
+root; `MANIFEST.json` pins each by sha256 and `demo/cabinet.test.mjs` fails
+on drift — never edit the copies). `vercel.json` sets cache headers;
+`serve.mjs` and this README are excluded by `.vercelignore`.
 
 Custom domain: `vercel domains add cabinet.litvm.games lit-games-cabinet`,
 then a CNAME `cabinet → cname.vercel-dns.com` at the litvm.games DNS.
@@ -101,7 +114,7 @@ settle through it. Display name and photo are local.
 
 ## Files
 
-    config.js       NODE_URL default + the game roster (the one file to edit at sync)
+    config.js       NODE_URL default, the game roster, chain addresses (the one file to edit)
     roster.js       fighters, item lines, pets, sample loadout; portraits hotlink
                     from the hosted Agent Fighter build
     app.js          views, router, node polling, derived profile, play overlay
@@ -110,13 +123,16 @@ settle through it. Display name and photo are local.
     chain.js        read-only litVM: NodeStake.standingOf, TestLITVM.balanceOf
     bg.js           backdrop painter (procedural sky + wireframe, or bg.jpg)
     index.html, style.css
-    sdk-client.js   drop into a game: connectCabinet() → onInit / exit
+    client.js       the isomorphic client: player key, signed queue entries,
+                    /match polling, verifyPlacement — also drives demo/client.test.mjs
+    sdk-client.js   drop into a game: connectCabinet() → onInit (with match) / exit
     serve.mjs       dev static server for this folder
-    protocol/       copies of the node's canonical/keys/keccak/staking modules
+    protocol/       generated copies of eight protocol modules + MANIFEST.json
     manifest.webmanifest, sw.js, icons/   PWA (SW is network-first; never caches API)
 
 ## Shell ↔ game messages (postMessage, version 1)
 
-    shell → game   { type:'cabinet:init', player:{id,guest,name}, node:{url,online}, game:{id,title} }
+    shell → game   { type:'cabinet:init', version:1, player:{id,guest,name}, node:{url,online}, game:{id,title},
+                     match?:{matchId,host,witness,wsAddr,beacon,participants} }   ← from a verified placement
     game → shell   { type:'cabinet:hello' }   ask for init again
                    { type:'cabinet:exit' }    back to the dashboard
