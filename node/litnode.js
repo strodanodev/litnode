@@ -131,6 +131,7 @@ export async function createNode({
   const queue = new Map();      // `${bucket}|${playerId}` → verified body
   const peersKnown = new Set(seeds);
   let stakes = null;            // nodeId → standing, when nodeStake configured
+  let lastBonded = null;        // the bonded set as last reported; stakes events fire on change only
   let addr = publicAddr;
 
   const myHeartbeat = () => seal(HEARTBEAT_TAG, {
@@ -215,7 +216,8 @@ export async function createNode({
           const next = { ...(stakes ?? {}), ...st };
           for (const k of Object.keys(next)) if (!heartbeats.has(k)) delete next[k];
           stakes = next;
-          emit('stakes', { read: Object.keys(st).length, bonded: Object.values(next).filter((x) => x.active).length });
+          const bondedNow = Object.keys(next).filter((k) => next[k].active).sort().join(',');
+          if (bondedNow !== lastBonded) { lastBonded = bondedNow; emit('stakes', { read: Object.keys(st).length, bonded: bondedNow ? bondedNow.split(',').length : 0 }); }
         }
       }
       await hydrateMissing(currentSnapshot());

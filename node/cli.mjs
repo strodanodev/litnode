@@ -25,7 +25,8 @@ const interactive = process.stdout.isTTY && !env.LITNODE_PLAIN;
 const tui = interactive ? createTui({ chainId: deployed.chainId ?? null }) : null;
 const stamp = () => `[${new Date().toISOString().slice(11, 19)}]`;
 // Plain mode: gossip is too chatty for a log file; everything else is one line.
-const plainEvent = (ev) => { if (ev.type !== 'gossip.in' && ev.type !== 'gossip.out' && ev.type !== 'log') console.log(`${stamp()} ${formatEvent(ev, false)}`); };
+const QUIET = new Set(['gossip.in', 'gossip.out', 'block', 'log']); // per-tick noise; the dashboard shows these, a log file should not
+const plainEvent = (ev) => { if (!QUIET.has(ev.type)) console.log(`${stamp()} ${formatEvent(ev, false)}`); };
 
 const node = await createNode({
   dataDir: env.DATA_DIR ?? join(root, 'data', env.OPERATOR ?? 'node'),
