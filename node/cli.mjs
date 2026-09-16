@@ -46,6 +46,14 @@ const node = await createNode({
   nodeStake: env.NODE_STAKE ?? deployed.NodeStake?.address ?? null,
   playerProfile: env.PLAYER_PROFILE ?? deployed.PlayerProfile?.address ?? null,
   updates: env.LITNODE_NO_UPDATE !== '1',            // hourly signed-manifest check; apply is always manual
+  // TUNNEL=quick | TUNNEL=named (with TUNNEL_NAME + TUNNEL_HOST): the node
+  // exposes itself through cloudflared and advertises the public URL.
+  // RELAY_PORT=8477: also front the title relay on this machine and advertise
+  // it as wsAddr (RELAY_TUNNEL_NAME/HOST for a named one). WS_ADDR wins if set.
+  tunnel: env.TUNNEL === 'quick' || env.TUNNEL === 'named' ? env.TUNNEL : null,
+  tunnelName: env.TUNNEL_NAME ?? null, tunnelHost: env.TUNNEL_HOST ?? null,
+  relayPort: env.RELAY_PORT ? Number(env.RELAY_PORT) : null,
+  relayTunnelName: env.RELAY_TUNNEL_NAME ?? null, relayTunnelHost: env.RELAY_TUNNEL_HOST ?? null,
   releaseUrl: env.RELEASE_URL || undefined,           // a mirror, for testing
   log: tui ? tui.log : (m) => console.log(`${stamp()} ${m}`),
   onEvent: tui ? tui.event : plainEvent,

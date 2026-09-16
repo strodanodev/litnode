@@ -19,6 +19,7 @@ import { placement } from '../protocol/placement.js';
 import { createChain } from './chain.js';
 import { createSettlement } from './settle.js';
 import { createUpdater, RESTART_EXIT } from './update.js';
+import { createTunnel } from './tunnel.js';
 
 // Every response is readable from any origin, and from an https page reaching
 // a loopback node (Chrome's Private Network Access asks on the preflight).
@@ -42,9 +43,13 @@ export const rulesetHash = (source) => h('ruleset', source);
 
 export async function createNode({
   dataDir, port = 0, host = '127.0.0.1', publicAddr = null,
-  operator = 'dev', roles = ['mesh', 'witness'], region = 'local', wsAddr = null,
+  operator = 'dev', roles = ['mesh', 'witness'], region = 'local', wsAddr: wsAddrIn = null,
   seeds = [], rulesets = [], rpc = null, offline = !rpc, nodeStake = null, playerProfile = null, chainFetch = globalThis.fetch,
   version = null, updates = true, releaseUrl = undefined, onRestart = null,
+  // Tunnels the node owns (node/tunnel.js): 'quick' | 'named' for this
+  // node's own port; relayPort fronts a title's relay on this machine and
+  // advertises it as wsAddr. tunnelBin is for tests.
+  tunnel = null, tunnelName = null, tunnelHost = null, relayPort = null, relayTunnelName = null, relayTunnelHost = null, tunnelBin = undefined,
   heartbeatMs = EPOCH_MS / 2, log = () => {}, onEvent = () => {},
 }) {
   // Every observable thing the node does goes through emit(): the TUI draws
@@ -147,6 +152,9 @@ export async function createNode({
   const queue = new Map();      // `${bucket}|${playerId}` → verified body
   const peersKnown = new Set(seeds);
   let stakes = null;            // nodeId → standing, when nodeStake configured
+  let wsAddr = wsAddrIn;        // the relay this node fronts; a relay tunnel sets it live
+  let lanAddr = null;           // what we listen on, kept for /health when a tunnel replaces addr
+  const tunnels = { node: null, relay: null };
   let lastBonded = null;        // the bonded set as last reported; stakes events fire on change only
   let addr = publicAddr;
 
@@ -360,7 +368,8 @@ export async function createNode({
       if (req.method === 'GET' && (url.pathname.startsWith('/cabinet/') || url.pathname.startsWith('/protocol/'))) { if (serveStatic(res, url.pathname)) return; return json(res, 404, { error: 'not found' }); }
       if (req.method === 'GET' && url.pathname === '/health') {
         const s = currentSnapshot();
-        return json(res, 200, { nodeId, operator, roles, region, addr, epoch: s.epoch, peers: s.peers.length, rulesets: buildHashes(), buildsHeld: builds.size, staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null, chain: chain.status(), profiles: profileState(), version, update: updater.status(), startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt,
+        return json(res, 200, { nodeId, operator, roles, region, addr, epoch: s.epoch, peers: s.peers.length, rulesets: buildHashes(), buildsHeld: builds.size, staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null, chain: chain.status(), profiles: profileState(), version, update: updater.status(),
+          wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt,
           // reachable: a peer has pushed gossip to us in the last 30 s. null = no peers known, so nothing to conclude.
           inbound: { peers: [...inbound.values()].filter((t) => Date.now() - t < 30_000).length, lastAt: inbound.size ? new Date(Math.max(...inbound.values())).toISOString() : null, reachable: peersKnown.size ? [...inbound.values()].some((t) => Date.now() - t < 30_000) : null } });
       }
@@ -506,6 +515,25 @@ export async function createNode({
   await new Promise((r) => server.listen(port, host, r));
   const actualPort = server.address().port;
   addr ??= `http://${host}:${actualPort}`;
+  lanAddr = addr;
+  // The node's own tunnel: when it comes up, its URL becomes the address we
+  // advertise; when it drops, we fall back to the LAN address. A relay tunnel
+  // does the same for wsAddr. Peers learn both from the next heartbeat.
+  try {
+    if (tunnel) {
+      tunnels.node = createTunnel({ port: actualPort, name: tunnel === 'named' ? tunnelName : null, hostname: tunnel === 'named' ? tunnelHost : null, log, bin: tunnelBin,
+        onUrl: (u) => { addr = u ?? lanAddr; emit('tunnel', { which: 'node', url: u }); } });
+    }
+    if (relayPort && !wsAddrIn) {
+      tunnels.relay = createTunnel({ port: relayPort, name: relayTunnelName, hostname: relayTunnelHost, log, bin: tunnelBin,
+        onUrl: (u) => { wsAddr = u ? u.replace(/^https:/, 'wss:') : null; emit('tunnel', { which: 'relay', url: wsAddr }); } });
+    }
+  } catch (e) {
+    // A misconfigured tunnel must not leave a half-started node listening.
+    tunnels.node?.stop();
+    await new Promise((r) => server.close(r));
+    throw e;
+  }
   timer = setInterval(tick, heartbeatMs);
   await tick();
   if (updates && version) { setTimeout(() => checkUpdates().catch(() => {}), 5_000); updateTimer = setInterval(() => checkUpdates().catch(() => {}), 60 * 60_000); }
@@ -515,7 +543,7 @@ export async function createNode({
     nodeId, addr, port: actualPort, identity,
     snapshot: currentSnapshot, matches: matchesNow, installRuleset, chain, settlement,
     rulesets: () => buildHashes(), peers: () => heartbeats, inbound, operator, roles, region, startedAt,
-    version, updater, restart,
-    async stop() { clearInterval(timer); clearInterval(updateTimer); await new Promise((r) => server.close(r)); },
+    version, updater, restart, tunnels, get wsAddr() { return wsAddr; },
+    async stop() { clearInterval(timer); clearInterval(updateTimer); tunnels.node?.stop(); tunnels.relay?.stop(); await new Promise((r) => server.close(r)); },
   };
 }

@@ -62,10 +62,20 @@ run it in, and nowhere else. Never write a private key into a file here.
 - **Operators** stay up. A node that lapses ages out of the draw in ~6 s and
   back in when it returns; nothing it settled is lost, because deltas and
   builds are kept on disk and served by hash.
-- **Public reachability** is a tunnel or reverse proxy in front of `PORT`
-  with `PUBLIC_ADDR` set to the https origin. Nodes behind NAT still work as
-  witnesses: gossip replies carry everything, so a node that can only reach
-  outward still learns what to verify.
+- **Public reachability** is one line: `TUNNEL=quick` in `node.env` and the
+  node runs its own Cloudflare tunnel, advertises the public https URL in
+  its heartbeat and falls back to the LAN address if it drops. Add
+  `RELAY_PORT=8477` and it fronts the Agent Fighter relay on this machine
+  too (`npm run server` in the AF checkout) and advertises it as `wsAddr`.
+  A quick tunnel's hostname changes every run — fine for everything that
+  learns addresses by gossip, not for the `SEEDS=` a new node types in or
+  the hosted cabinet's default. For a stable name, once on this machine:
+  `cloudflared tunnel login` → `cloudflared tunnel create litnode-seed` →
+  `cloudflared tunnel route dns litnode-seed node.<your-domain>` (the domain
+  must be on Cloudflare DNS), then `TUNNEL=named TUNNEL_NAME=litnode-seed
+  TUNNEL_HOST=node.<your-domain>`; same three commands with another name
+  for `RELAY_TUNNEL_NAME/HOST`. Nodes behind NAT still work as witnesses
+  without any tunnel: gossip replies carry everything.
 - **Clocks** must be synced. A node more than ~4 s behind is stale to
   everyone; `/peers` shows each peer's skew.
 - **Keys**: the node key is generated on first run and bonded once. The

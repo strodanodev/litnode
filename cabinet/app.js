@@ -528,6 +528,8 @@ function renderNode() {
   const status = h ? `<dl class="kv">
       <dt>node id</dt><dd title="${esc(h.nodeId)}">${esc(h.nodeId)}</dd><dt>operator</dt><dd>${esc(h.operator)}</dd><dt>roles</dt><dd>${esc(h.roles.join(', '))}</dd><dt>region</dt><dd>${esc(h.region)}</dd>
       <dt>address</dt><dd>${esc(h.addr)}</dd><dt>bonded</dt><dd>${h.bonded === null ? 'unknown (offline / no stake contract)' : h.bonded ? 'yes' : 'no — run tools/bond-node.mjs'}</dd>
+      <dt>tunnel</dt><dd>${h.tunnel?.node ? `${esc(h.tunnel.node.mode)} · ${esc(h.tunnel.node.state)}${h.tunnel.node.url ? ` · ${esc(h.tunnel.node.url)}` : ''}${h.tunnel.node.lastError ? ` · ${esc(h.tunnel.node.lastError)}` : ''}` : 'none — LAN address only'}</dd>
+      <dt>relay</dt><dd>${h.wsAddr ? `${esc(h.wsAddr)}${h.tunnel?.relay ? ` (${esc(h.tunnel.relay.state)})` : ''}` : 'none advertised'}</dd>
       <dt>version</dt><dd>${esc(h.version ?? '?')}${h.update?.available ? ` — <b>${esc(h.update.latest)} available</b>` : h.update?.checkedAt ? ' — up to date' : ''}${h.update?.lastError ? ` <span class="dim">(check failed: ${esc(h.update.lastError)})</span>` : ''}</dd>
       <dt>reachable</dt><dd>${h.inbound ? (h.inbound.reachable === null ? 'no peers known yet' : h.inbound.reachable ? `yes — ${h.inbound.peers} peer${h.inbound.peers === 1 ? '' : 's'} push gossip to this node` : `no peer has reached this node in 30 s — fine for a witness; a seed, LAN host or relay needs allow-firewall.cmd or a tunnel`) : '—'}</dd>
       <dt>epoch</dt><dd>${h.epoch}</dd><dt>chain</dt><dd>${h.chain.offline ? 'offline beacon' : `${esc(h.chain.rpc)} · block ${h.chain.head ?? '?'}`}${h.chain.lastError ? ` · ${esc(h.chain.lastError)}` : ''}</dd>

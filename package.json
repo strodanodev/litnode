@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "bundle:af": "node tools/bundle-ruleset.mjs",
-    "test": "node --test --test-concurrency=1 demo/protocol.test.mjs demo/staking.test.mjs demo/af-adapter.test.mjs demo/mesh.test.mjs demo/settle.test.mjs demo/attested.test.mjs demo/client.test.mjs demo/cabinet.test.mjs demo/profile.test.mjs demo/update.test.mjs",
+    "test": "node --test --test-concurrency=1 demo/protocol.test.mjs demo/staking.test.mjs demo/af-adapter.test.mjs demo/mesh.test.mjs demo/settle.test.mjs demo/attested.test.mjs demo/client.test.mjs demo/cabinet.test.mjs demo/profile.test.mjs demo/update.test.mjs demo/tunnel.test.mjs",
     "test:protocol": "node --test demo/protocol.test.mjs",
     "test:af": "node --test demo/af-adapter.test.mjs",
     "test:cabinet": "node --test demo/cabinet.test.mjs",
@@ -31,5 +31,5 @@
     "ethers": "^6.17.0",
     "solc": "^0.8.28"
   },
-  "version": "0.5.0"
+  "version": "0.5.1"
 }

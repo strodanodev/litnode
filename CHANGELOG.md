@@ -3,6 +3,24 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.1] — 2026-09-17
+
+### Added
+- **The node owns its tunnel.** `TUNNEL=quick` (no account) or
+  `TUNNEL=named` (+ `TUNNEL_NAME`, `TUNNEL_HOST`; stable hostname after a
+  one-time `cloudflared tunnel login / create / route dns`) makes the node
+  spawn cloudflared for its own port, learn the public URL, restart it if
+  it dies, and advertise it in its heartbeat — gossip is the broadcast, no
+  config edits anywhere. `RELAY_PORT=8477` fronts a title's relay on the
+  same machine through a second tunnel and advertises it as `wsAddr`
+  (`WS_ADDR` set by hand still wins). `/health.tunnel`, the dashboard
+  header and the cabinet's Nodes page show both. When a tunnel drops the
+  node falls back to its LAN address until it returns. `demo/tunnel.test.mjs`
+  (a stand-in cloudflared). Live on the desktop 17 Sep: node and relay
+  tunnels up in one second, reachable from the internet, in every peer's
+  snapshot.
+- A tunnel that fails to start no longer leaves a half-started node listening.
+
 ## [0.5.0] — 2026-09-17
 
 The node updates itself, and the first release nodes can update from.

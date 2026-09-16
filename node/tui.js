@@ -44,6 +44,7 @@ export function formatEvent(ev, color = true) {
     case 'stakes': return `${tag(G.stake, 'stakes', c.magenta)} ${ev.bonded}/${ev.read} bonded`;
     case 'ruleset': return `${tag(G.ruleset, 'ruleset', c.blue)} ${ev.rulesetId} @ ${hash(ev.buildHash, 16)}  ${ev.current ? 'current' : 'held'}  ${kb(ev.bytes)}`;
     case 'revoked': return `${tag(G.bad, 'revoked', c.yellow)} key ${hash(ev.playerId, 12)} revoked by its owner ${hash(ev.owner, 10)} — queue entries refused from now`;
+    case 'tunnel': return `${tag(G.ruleset, 'tunnel', c.magenta)} ${ev.which} ${ev.url ? `up at ${P(c.white, ev.url)} — in the next heartbeat` : P(c.red, 'down (falling back to the LAN address until it returns)')}`;
     case 'update': return `${tag(G.ruleset, 'update', c.yellow)} ${ev.latest} is available (running ${ev.version}) — press u to update and restart`;
     case 'restart': return `${tag(G.ruleset, 'restart', c.yellow)} restarting to run the new build`;
     case 'refused': return `${tag(G.bad, 'refused', c.red)} ${ev.what}${ev.matchId ? ` ${ev.matchId}` : ''}: ${ev.reason}`;
@@ -102,7 +103,10 @@ export function createTui({ chainId = null } = {}) {
     L.push(`${paint(c.cyan + c.bold, `${G.self} litnode`)} ${ver}  ${paint(c.white + c.bold, short(node.nodeId, 16))}  ${paint(c.bold, node.operator)}  ${paint(c.gray, node.roles.join(G.link))}  ${paint(c.gray, node.region)}  up ${hms(Date.now() - node.startedAt)}  ${bonded}`);
     const chain = ch.offline ? paint(c.yellow, 'offline beacon') : `${paint(c.magenta, `#${ch.head ?? '?'}`)}${chainId ? paint(c.gray, ` chain ${chainId}`) : ''}${ch.lastError ? paint(c.red, ` ${ch.lastError.slice(0, 30)}`) : ''}`;
     const reach = node.inbound.size === 0 && peers.length <= 1 ? paint(c.gray, 'no peers yet') : inb ? paint(c.green, `${inb} peer${inb === 1 ? '' : 's'} reach us`) : paint(c.yellow, 'nobody reaches us (fine for a witness)');
-    L.push(`  ${paint(c.gray, node.addr)}  ${chain}  epoch ${s.epoch}  hour root ${paint(c.gray, short(ep.root, 12))} (${ep.count})  ${deltas.length} settled  ${reach}`);
+    const tn = node.tunnels?.node?.status(), tr = node.tunnels?.relay?.status();
+    const tun = tn ? paint(tn.state === 'up' ? c.magenta : c.yellow, ` ${tn.mode} tunnel ${tn.state}`) : '';
+    const relay = node.wsAddr ? paint(c.magenta, ` relay ${short(node.wsAddr.replace(/^wss:\/\//, ''), 28)}${tr ? ` (${tr.state})` : ''}`) : '';
+    L.push(`  ${paint(c.gray, node.addr)}${tun}${relay}  ${chain}  epoch ${s.epoch}  hour root ${paint(c.gray, short(ep.root, 12))} (${ep.count})  ${deltas.length} settled  ${reach}`);
     // constellation: self and every peer heard, fresh or not
     const stars = [paint(c.cyan + c.bold, G.self)];
     for (const p of peers.filter((p) => p.nodeId !== node.nodeId).sort((a, b) => (a.operator < b.operator ? -1 : 1)))
