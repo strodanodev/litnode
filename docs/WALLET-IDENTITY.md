@@ -1,7 +1,14 @@
 # Sign in with a wallet — the litVM Games profile
 
-Status: **specified, not built.** Nothing in this file has a test yet.
-Proposed for sprint 1 (BUILD-SPEC §17, cabinet track).
+Status: **built, not deployed** (17 Sep 2026). `contracts/PlayerProfile.sol`
+and `contracts/NodeBadge.sol` compile; `protocol/profile.js` (reads, calldata,
+the fold by owner), the node's profile cache, `/profile`, the revoked-key
+refusal at `/queue` and `?by=owner` are exercised by `demo/profile.test.mjs`
+against a mocked chain; the cabinet's *Sign in with wallet* is wired
+(`cabinet/wallet.js`) and hidden until `CHAIN.PlayerProfile` is set. What is
+missing is the one thing a test cannot do: `npm run deploy:testnet` with the
+deployer key, then the address into `contracts/deployed.testnet.json` (the
+node reads it) and `cabinet/config.js` (the cabinet reads it).
 
 ## The idea, and the one constraint on it
 
@@ -174,18 +181,25 @@ verifiable, not because it was minted.
 
 ## Build order
 
-1. `contracts/PlayerProfile.sol` + `NodeBadge.sol`, compiled by
-   `tools/deploy-contracts.mjs`, a test that exercises `register / bindKey /
-   revokeKey / ownerOfKey` against the deployed testnet addresses the way
-   `demo/staking.test.mjs` exercises `standingOf`.
-2. `protocol/profile.js` + node reads + `/profile` + `by=owner` fold + the
-   revoked-key refusal, each with an assertion in `demo/settle.test.mjs`
-   or a new `demo/profile.test.mjs`.
-3. Cabinet sign-in and *Add this device*; `demo/cabinet.test.mjs` gains
-   `/profile` to its field list.
-4. `NodeBadge.claim` in the operator README and `tools/bond-node.mjs`.
-5. Later: `registerWithSig` + an operator relayer tool; AIR binding as a
-   second attestation on the same profile if the AIR partnership needs it.
+1. ~~`contracts/PlayerProfile.sol` + `NodeBadge.sol`~~ — written, compile
+   under the project's solc settings, added to `tools/deploy-contracts.mjs`.
+   `registerWithSig` is not in the contract yet (see 5).
+2. ~~`protocol/profile.js` + node reads + `/profile` + `by=owner` + the
+   revoked-key refusal~~ — `demo/profile.test.mjs` (3 tests) covers the
+   calldata layout, the decoders, the fold, and a node against a mocked
+   `PlayerProfile`.
+3. ~~Cabinet sign-in~~ — `cabinet/wallet.js`; `register` when the wallet has
+   no profile, `bindKey` when it does (*add this device*); the card shows the
+   profile name and wallet once bound. `demo/cabinet.test.mjs` asserts
+   `/profile` and `/health.profiles`.
+4. **Deploy** (operator, with `DEPLOYER_KEY`): `npm run deploy:testnet`
+   deploys both contracts idempotently; set `CHAIN.PlayerProfile` in
+   `cabinet/config.js`; redeploy the cabinet. Then exercise `register /
+   bindKey / revokeKey` once for real and record the tx in the CHANGELOG.
+5. `NodeBadge.claim` in the operator README and `tools/bond-node.mjs`;
+   `registerWithSig` + an operator relayer tool when gas is the measured
+   drop-off; AIR binding as a second attestation on the same profile if the
+   AIR partnership needs it.
 
 ## Honest zeroes for this design
 

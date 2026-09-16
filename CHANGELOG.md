@@ -8,6 +8,18 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 Consolidation. One repository, one frontend, one node, one packing step.
 
 ### Added
+- **Wallet-bound player profiles, built.** `contracts/PlayerProfile.sol`
+  (soulbound ERC-721: `register(key, name)` mints and binds in one
+  transaction; `bindKey` / `revokeKey` / `rename`; `ownerOfKey` is the read)
+  and `contracts/NodeBadge.sol` (`claim(nodeKey)` for an active bond,
+  `sync` burns when the bond lapses). `protocol/profile.js`: calls,
+  decoders, the calldata a wallet signs, and `applyProfiles` — the fold by
+  owner. Node: a profile cache read every tick like stakes, `/profile?player=`,
+  `/health.profiles`, `/leaderboard|stats|credits?by=owner`, and a revoked
+  key is refused at `/queue` (403). Cabinet: `wallet.js` + *Sign in with
+  wallet* on the profile card (MetaMask; no wallet library — the calldata
+  is the protocol's own). `demo/profile.test.mjs`. Not deployed: needs
+  `npm run deploy:testnet` and the address in `cabinet/config.js`.
 - **The daemon has a face.** `node/tui.js`: a zero-dependency ANSI
   dashboard — identity, bond, chain head, hour root, reachability, a peer
   constellation, mesh and titles panels, a gossip sparkline, a "wire" line

@@ -45,7 +45,7 @@ demo/       the test suites — npm test must be green before anything ships
 
 ```bash
 npm install            # only for the chain tools (ethers, solc); the node itself has no deps
-npm test               # 30 assertions across 8 suites, ~25 s
+npm test               # 33 assertions across 9 suites, ~30 s (files run one at a time on purpose)
 npm run node           # one node on :7801 with its dashboard; cabinet at http://localhost:7801/
 LITNODE_PLAIN=1 npm run node   # one line per event instead of the dashboard (what litnode.log gets)
 ```
