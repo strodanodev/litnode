@@ -67,10 +67,10 @@ player key kp (ed25519, localStorage)
 | Rewards, if ever, have nowhere to go | The profile owner is the payout address |
 | Sign-in inside the framed titles is blocked by their `frame-ancestors` | The cabinet owns identity and hands `player.id` to the title over the SDK; the title never signs in |
 
-## Contract — `PlayerProfile` (ERC-721, specified)
+## Contract — `PlayerProfile` (ERC-721, built)
 
 ```solidity
-// contracts/PlayerProfile.sol — NOT WRITTEN. Interface only.
+// The interface contracts/PlayerProfile.sol implements (registerWithSig excepted — later).
 interface IPlayerProfile /* is IERC721 */ {
     event KeyBound(uint256 indexed tokenId, bytes32 indexed key);
     event KeyRevoked(uint256 indexed tokenId, bytes32 indexed key);
