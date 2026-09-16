@@ -1,0 +1,14 @@
+{
+  "name": "litnode-portable",
+  "private": true,
+  "type": "module",
+  "version": "0.3.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "node": "node node/cli.mjs",
+    "keygen": "node tools/keygen.mjs",
+    "cabinet": "node cabinet/serve.mjs"
+  }
+}

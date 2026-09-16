@@ -1,0 +1,42 @@
+{
+  "TestLITVM": {
+    "address": "0x697aC520dFBe1B1830Bf22A77b54564F8ee21744",
+    "tx": "0x823f062de57d13fb45d3e87dfefac8c1b70edcfa13c0cfac76ec6b4e1f30afc1",
+    "block": 50088907,
+    "args": []
+  },
+  "NodeStake": {
+    "address": "0x11C984bE3ee572eb7280334501B57c82001F397F",
+    "tx": "0xe2047826bac831c7828a15f43e1c4089bf5a600330d421b821b72f1bd2b06bca",
+    "block": 50088942,
+    "args": [
+      "0x697aC520dFBe1B1830Bf22A77b54564F8ee21744",
+      "1000000000000000000",
+      "60",
+      "0xa6d840C28B3DF4f931F1ac2fB940c59B9e9DfdfE",
+      "0xa6d840C28B3DF4f931F1ac2fB940c59B9e9DfdfE"
+    ],
+    "minStake": "1000000000000000000",
+    "unbondingPeriod": 60
+  },
+  "ERC6699Registry": {
+    "address": "0x66cef65F9F3774989D5F4AFa1fF6a09541835145",
+    "tx": "0xadbab1ccd240be732a2444c5cce96c08747ffcd559f2f231eb4174dbf6639519",
+    "block": 50088959,
+    "args": []
+  },
+  "firstNode": {
+    "nodeId": "5b703f1288765c0ca3734ab0625df161121ef45a9eabafaaae539be1add95151",
+    "dataDir": "E:\\NPC\\AGENT 24 NODE\\data\\node-1",
+    "bonded": "1.0"
+  },
+  "chainId": 4441,
+  "rpc": "https://liteforge.rpc.caldera.xyz/http",
+  "deployedAt": "2026-09-12T14:47:23.539Z",
+  "EpochAnchor": {
+    "address": "0x09fBf6A5026b4E02eE9f78222117F97b19eE507A",
+    "tx": "0xe7063f6621f6460831c35217993d23143a42f620e23eac8f4a6e1b27c4abc352",
+    "block": 50091691,
+    "args": []
+  }
+}

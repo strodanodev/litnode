@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "cabinet", "runtimeExecutable": "node", "runtimeArgs": ["cabinet/serve.mjs"], "port": 5180 }
+  ]
+}

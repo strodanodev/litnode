@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>litnode arcade</title>
+  <meta name="theme-color" content="#06090f" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icons/icon-192.png" type="image/png" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <canvas id="bg" class="bg" aria-hidden="true"></canvas><div class="bg-shade" aria-hidden="true"></div>
+  <header class="topbar">
+    <a class="logo" href="#/"><span class="chrome">LIT GAMES</span><span class="logo-sub">Arcade</span></a>
+    <nav class="nav" id="nav">
+      <a href="#/" data-view="home">Home</a>
+      <a href="#/games" data-view="games">Arcade</a>
+      <a href="#/leaderboards" data-view="leaderboards">Ranks</a>
+      <a href="#/characters" data-view="characters">Agents</a>
+      <a href="#/inventory" data-view="inventory">Inventory</a>
+      <a href="#/node" data-view="node">Nodes</a>
+    </nav>
+    <div class="spacer"></div>
+    <a href="#/node" id="node-pill" class="node-pill off" title="litnode status"><span class="dot"></span><span id="node-text">NODE OFFLINE</span></a>
+    <a href="#/" class="me-chip" id="me-chip"><img id="me-avatar" alt="" /><span class="me-name" id="me-name">…</span><span class="me-level" id="me-level">LV 1</span></a>
+  </header>
+
+  <main class="content">
+    <section data-view="home" class="view home"></section>
+    <section data-view="games" class="view" hidden></section>
+    <section data-view="game" class="view" hidden></section>
+    <section data-view="leaderboards" class="view" hidden></section>
+    <section data-view="characters" class="view" hidden></section>
+    <section data-view="inventory" class="view" hidden></section>
+    <section data-view="node" class="view" hidden></section>
+  </main>
+
+  <footer class="foot">
+    <span>LIT GAMES · litnode</span> · node <span id="node-url"></span> · <button id="node-edit" class="link">change</button>
+    <span id="install-hint" hidden>· installable as an app</span>
+  </footer>
+
+  <!-- fullscreen play overlay -->
+  <div id="play" class="play" hidden>
+    <div class="bar">
+      <span id="play-title" class="play-title">—</span>
+      <span id="play-status" class="dim"></span>
+      <span class="spacer"></span>
+      <button id="play-tab" class="btn">↗ open in tab</button>
+      <button id="play-exit" class="btn exit">✕ exit</button>
+    </div>
+    <iframe id="game" title="game" allow="fullscreen *; gamepad *; autoplay *; pointer-lock *; xr-spatial-tracking *; clipboard-write *"></iframe>
+  </div>
+  <input type="file" id="avatar-file" accept="image/*" hidden />
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

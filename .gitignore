@@ -1,0 +1,13 @@
+# Node identities and ledgers — private keys live here, never commit
+data/
+
+# Stale nested duplicate of this whole folder (zip extraction artifact)
+/litnode-portable-2026-09-12/
+
+# Vercel project linkage (local machine ids)
+cabinet/.vercel/
+
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
