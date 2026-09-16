@@ -1,0 +1,17 @@
+{
+  "network": "litVM LiteForge",
+  "chainId": 4441,
+  "rpc": "https://liteforge.rpc.caldera.xyz/http",
+  "evmVersion": "shanghai",
+  "TestLITVM": { "faucetAmount": "1000 tLITVM", "faucetCooldown": "1 day" },
+  "NodeStake": {
+    "token": "<TestLITVM address after deploy>",
+    "minStake": "1000000000000000000",
+    "minStakeHuman": "1 tLITVM — proof-of-mechanism minimum; raise before any real operator onboarding",
+    "unbondingPeriod": 60,
+    "unbondingPeriodHuman": "60 seconds — long enough to observe the unbonding state in a demo, not a security parameter",
+    "slasher": "<deployer address on testnet>",
+    "treasury": "<deployer address on testnet>"
+  },
+  "note": "Testnet-only values. One faucet pull (1000 tLITVM) funds 1000 node bonds at this minimum."
+}

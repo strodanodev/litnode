@@ -1,0 +1,8 @@
+{
+  "rulesetId": "agent-fighter.v1",
+  "buildHash": "859e7215418db6473f0ceb1a88a1f51dc279db1974636c2262f547fcafca76da",
+  "engine": "af-core-8",
+  "afCommit": "67d734a",
+  "bytes": 92991,
+  "builtAt": "2026-09-12T15:02:40.415Z"
+}

@@ -1,0 +1,28 @@
+{
+  "name": "arcade-node",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bundle:af": "node tools/bundle-ruleset.mjs",
+    "test:af": "node --test demo/af-adapter.test.mjs",
+    "test": "node --test demo/protocol.test.mjs demo/staking.test.mjs demo/af-adapter.test.mjs demo/mesh.test.mjs demo/settle.test.mjs demo/attested.test.mjs demo/arcade.test.mjs",
+    "test:protocol": "node --test demo/protocol.test.mjs",
+    "deploy:testnet": "node tools/deploy-contracts.mjs",
+    "node": "node node/cli.mjs",
+    "import:af": "node tools/af-import-ledger.mjs",
+    "anchor": "node tools/anchor-epoch.mjs",
+    "bundle": "node tools/bundle-ruleset.mjs",
+    "pack": "node tools/pack.mjs --all",
+    "keygen": "node tools/keygen.mjs",
+    "bond": "node tools/bond-node.mjs",
+    "watch:af": "node tools/af-watch.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "ethers": "^6.17.0",
+    "solc": "^0.8.28"
+  }
+}

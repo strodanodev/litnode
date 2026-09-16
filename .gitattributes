@@ -1,0 +1,8 @@
+# One line ending everywhere. Rulesets are pinned by the hash of their bytes,
+# so a CRLF checkout would change every buildHash (BUILD-SPEC §4).
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.webp binary
+*.ico binary
+*.zip binary

@@ -1,0 +1,12 @@
+node_modules/
+# Node identities, cached builds, ledgers, deltas — private keys live here.
+data/
+.env
+*.log
+# Packed zips are build output: npm run pack
+dist/
+*.zip
+# Vercel project linkage (local machine ids)
+cabinet/.vercel/
+.DS_Store
+Thumbs.db
