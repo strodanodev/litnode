@@ -46,7 +46,8 @@ demo/       the test suites — npm test must be green before anything ships
 ```bash
 npm install            # only for the chain tools (ethers, solc); the node itself has no deps
 npm test               # 30 assertions across 8 suites, ~25 s
-npm run node           # one node on :7801 serving the cabinet at http://localhost:7801/
+npm run node           # one node on :7801 with its dashboard; cabinet at http://localhost:7801/
+LITNODE_PLAIN=1 npm run node   # one line per event instead of the dashboard (what litnode.log gets)
 ```
 
 Configure with environment variables: `OPERATOR`, `PORT`, `HOST`,
@@ -70,7 +71,10 @@ The cabinet alone, against any node: `npm run cabinet` → http://127.0.0.1:5180
 
 `npm run pack` writes `dist/litnode-portable-<date>.zip` (any node) and
 `dist/litnode-operator-<date>.zip` (adds `node.env`, a Windows scheduled
-task, the chain tools). [portable/README-OPERATOR.md](portable/README-OPERATOR.md)
+task, the chain tools). `npm run pack -- --runtime` also vendors the
+official Node.js win-x64 runtime (checksum-verified against nodejs.org)
+into `runtime/`, producing `-win-x64` zips that run on a machine with
+nothing installed — the standalone Windows download. [portable/README-OPERATOR.md](portable/README-OPERATOR.md)
 is the operator's runbook: bonding a key, public reachability, clocks,
 seeds. A node that is not bonded gossips and hydrates rulesets but is
 excluded from placement and cannot co-sign; `/health` says `bonded: false`.

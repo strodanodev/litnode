@@ -1,11 +1,22 @@
 @echo off
 setlocal EnableDelayedExpansion
-rem litnode portable launcher (Windows). Needs Node.js 20+ on PATH.
-rem Reads node.env (KEY=VALUE lines) beside this file when present, so an
-rem operator machine starts without prompts; otherwise asks two questions.
+rem litnode launcher (Windows). Uses runtime\node.exe when the zip ships one,
+rem otherwise Node.js 20+ from PATH. Reads node.env (KEY=VALUE lines) beside
+rem this file when present, so an operator machine starts without prompts;
+rem otherwise asks two questions.
+rem
+rem First run: start this interactively (double-click) BEFORE install-task.cmd.
+rem Windows shows its own "allow this app through the firewall" prompt the
+rem first time an interactive program listens; a scheduled task never gets
+rem that prompt. Or run allow-firewall.cmd once. Only nodes that peers must
+rem reach (a seed, a LAN host, a relay) need either.
 cd /d "%~dp0"
+chcp 65001 >nul
 
-where node >nul 2>nul || (echo Node.js 20+ is required. Install: winget install OpenJS.NodeJS.LTS & pause & exit /b 1)
+if exist "runtime\node.exe" (set "NODE=runtime\node.exe") else (
+  where node >nul 2>nul || (echo Node.js 20+ is required: winget install OpenJS.NodeJS.LTS  ^(or use the -win-x64 zip, which carries its own runtime^) & pause & exit /b 1)
+  set "NODE=node"
+)
 
 if exist node.env (
   for /f "usebackq eol=# tokens=1,* delims==" %%k in ("node.env") do (
@@ -34,8 +45,8 @@ if "%REGION%"=="" set REGION=lan
 
 echo.
 echo  litnode  operator=%OPERATOR%  addr=%PUBLIC_ADDR%  seeds=%SEEDS%  roles=%ROLES%
-echo  If peers cannot reach this machine, allow TCP %PORT% once (admin):
-echo    netsh advfirewall firewall add rule name="litnode %PORT%" dir=in action=allow protocol=TCP localport=%PORT%
+echo  dashboard: http://localhost:%PORT%/    keys: q quit  g gossip  l log  p pause
+echo  If peers must reach this machine and /health says reachable: false, run allow-firewall.cmd once.
 echo.
-node node\cli.mjs
+%NODE% node\cli.mjs
 if not "%LITNODE_NOPAUSE%"=="1" pause

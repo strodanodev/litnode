@@ -12,6 +12,7 @@
     "cabinet": "node cabinet/serve.mjs",
     "vendor:cabinet": "node tools/vendor-cabinet.mjs",
     "pack": "node tools/pack.mjs --all",
+    "pack:win": "node tools/pack.mjs --all --runtime",
     "keygen": "node tools/keygen.mjs",
     "bond": "node tools/bond-node.mjs",
     "import:af": "node tools/af-import-ledger.mjs",

@@ -8,6 +8,25 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 Consolidation. One repository, one frontend, one node, one packing step.
 
 ### Added
+- **The daemon has a face.** `node/tui.js`: a zero-dependency ANSI
+  dashboard — identity, bond, chain head, hour root, reachability, a peer
+  constellation, mesh and titles panels, a gossip sparkline, a "wire" line
+  with the newest real envelope signature each way, and a feed of queue
+  entries, placements, settlements, co-signatures, witness verdicts, blocks.
+  Every hash shown is real. Keys `q g l p`; `LITNODE_ASCII=1` for 7-bit
+  terminals. Under a scheduled task or pipe (`LITNODE_PLAIN=1`) the node
+  prints one line per event instead.
+- `createNode({ onEvent })` — every observable step emits an event;
+  `/health.inbound {peers, lastAt, reachable}` says whether any peer has
+  pushed gossip to this node in the last 30 s.
+- **Standalone Windows download.** `npm run pack -- --runtime` vendors the
+  official Node.js win-x64 runtime (checksum-verified against nodejs.org
+  `SHASUMS256.txt`) into `runtime/`; the `-win-x64` zips run with nothing
+  installed. `start-node.cmd` prefers `runtime\node.exe`.
+- `allow-firewall.cmd`: one UAC click adds a *program* rule for this
+  folder's runtime on private/domain networks — only for nodes peers must
+  reach (seed, LAN host, relay); a witness behind NAT needs no rule. The
+  READMEs say who needs it and why the first start must be interactive.
 - **Source repository.** The full tree (protocol, node, titles, contracts,
   tools, eight test suites, BUILD-SPEC) is now the git history; the 0.3.0
   commit is merged in as an ancestor. The portable zips are built from it

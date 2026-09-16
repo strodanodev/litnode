@@ -465,6 +465,7 @@ function renderNode() {
   const status = h ? `<dl class="kv">
       <dt>node id</dt><dd title="${esc(h.nodeId)}">${esc(h.nodeId)}</dd><dt>operator</dt><dd>${esc(h.operator)}</dd><dt>roles</dt><dd>${esc(h.roles.join(', '))}</dd><dt>region</dt><dd>${esc(h.region)}</dd>
       <dt>address</dt><dd>${esc(h.addr)}</dd><dt>bonded</dt><dd>${h.bonded === null ? 'unknown (offline / no stake contract)' : h.bonded ? 'yes' : 'no — run tools/bond-node.mjs'}</dd>
+      <dt>reachable</dt><dd>${h.inbound ? (h.inbound.reachable === null ? 'no peers known yet' : h.inbound.reachable ? `yes — ${h.inbound.peers} peer${h.inbound.peers === 1 ? '' : 's'} push gossip to this node` : `no peer has reached this node in 30 s — fine for a witness; a seed, LAN host or relay needs allow-firewall.cmd or a tunnel`) : '—'}</dd>
       <dt>epoch</dt><dd>${h.epoch}</dd><dt>chain</dt><dd>${h.chain.offline ? 'offline beacon' : `${esc(h.chain.rpc)} · block ${h.chain.head ?? '?'}`}${h.chain.lastError ? ` · ${esc(h.chain.lastError)}` : ''}</dd>
       <dt>rulesets</dt><dd>${Object.entries(h.rulesets).map(([k, v]) => `${esc(k)} @ ${v.slice(0, 10)}`).join(', ')}</dd><dt>builds held</dt><dd>${h.buildsHeld}</dd>
     </dl>` : `<div class="empty">No node at <span class="mono">${esc(nodeUrl())}</span>. Start one below, or <button class="link" id="node-edit2">point the cabinet at another node</button>.</div>`;

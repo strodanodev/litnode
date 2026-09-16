@@ -1,19 +1,28 @@
-# litnode — portable test build
+# litnode — portable build
 
-One folder, no install step, no dependencies beyond Node.js 20+. Runs the
-arcade node: gossip, placement, pairing, settlement, witness, epoch tree.
+One folder, nothing to install. The `-win-x64` zip carries its own Node.js
+runtime in `runtime/` (the official build, checksum-verified when packed);
+the plain zip needs Node.js 20+ on PATH. Every node runs the same daemon —
+mesh, placement, pairing, settlement, witness, epoch tree — and serves the
+LIT GAMES cabinet at `http://localhost:7801/`.
 
 ## On each machine
 
-1. Install Node.js 20 or newer if missing: `winget install OpenJS.NodeJS.LTS`
-2. Unzip this folder anywhere. Double-click `start-node.cmd`.
-3. Answer two prompts: an operator name (`laptop`, `rog-ally`) and the seed
+1. Unzip this folder anywhere. Double-click `start-node.cmd`.
+2. Answer two prompts: an operator name (`laptop`, `rog-ally`) and the seed
    URL of a node that is already running (blank on the first machine).
-4. Allow inbound TCP 7801 once, from an admin prompt, if peers cannot reach it:
-   `netsh advfirewall firewall add rule name="litnode 7801" dir=in action=allow protocol=TCP localport=7801`
+3. The dashboard opens in the terminal: peers, titles, live gossip with real
+   signatures, placements, settlements. Keys: `q` quit, `g` show every
+   gossip envelope, `l` log, `p` pause. `http://localhost:7801/` is the
+   cabinet.
 
-The first line the node prints is its `nodeId`. Health is at
-`http://<lan-ip>:7801/health`.
+That is all for a volunteer or witness. **Firewall:** Windows blocks only
+inbound connections, and a node that reaches outward needs none — gossip
+replies carry everything it must verify. Only a node other machines must
+connect *to* (a seed, a LAN host, a relay) needs a rule, and for that the
+first interactive start shows Windows' own "allow this app" prompt; or run
+`allow-firewall.cmd` once (one UAC click, a rule for this folder's runtime
+on private networks only). `/health` says `inbound.reachable` either way.
 
 ## Bond the node (once per machine)
 

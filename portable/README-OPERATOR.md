@@ -20,15 +20,23 @@ witnesses. Two nodes from one wallet are one operator.
 
 ## Set up
 
-1. Node.js 20+: `winget install OpenJS.NodeJS.LTS`
-2. Unzip. Copy `node.env.example` to `node.env`, set `OPERATOR`, `SEEDS`,
-   and `PUBLIC_ADDR` if this machine has a public address.
-3. `start-node.cmd` once to generate the identity and confirm health at
-   `http://localhost:7801/health`. Note the `nodeId`.
+1. Unzip. The `-win-x64` zip carries its runtime in `runtime/`; the plain
+   zip needs Node.js 20+ (`winget install OpenJS.NodeJS.LTS`).
+2. Copy `node.env.example` to `node.env`, set `OPERATOR`, `SEEDS`, and
+   `PUBLIC_ADDR` if this machine has a public address.
+3. **Start it interactively first**: `start-node.cmd`. This generates the
+   identity, shows the dashboard, and — because it is an interactive
+   program listening on every interface — triggers Windows' own firewall
+   prompt, which a scheduled task never gets. Click Allow, or run
+   `allow-firewall.cmd` once instead. Note the `nodeId`; confirm
+   `http://localhost:7801/health` shows `inbound.reachable: true` once a
+   peer is pointed at you.
 4. Bond it (see below), then from an **admin** prompt: `install-task.cmd`.
-   The node now starts at logon and restarts if it dies. Log: `litnode.log`.
-5. Firewall, once, admin:
-   `netsh advfirewall firewall add rule name="litnode 7801" dir=in action=allow protocol=TCP localport=7801`
+   The node now starts at logon and restarts if it dies, writing one line
+   per event to `litnode.log` (no dashboard: there is no terminal).
+
+An operator behind a Cloudflare tunnel needs no firewall rule at all — the
+tunnel dials out. The rule is for LAN meshes and port-forwarded hosts.
 
 ## Chain tooling (needs `npm install` in this folder once — pulls ethers)
 

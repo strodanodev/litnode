@@ -647,6 +647,13 @@ to that consolidation.
    rewards projection removed, docs made to agree. Remaining: a public https
    seed as the cabinet's default `NODE_URL` (a tunnel in front of the
    desktop's 7801 with `PUBLIC_ADDR` set).
+0c. **Standalone Windows build — done 17 Sep 2026.** `pack --runtime`
+   vendors the checksum-verified official Node runtime; `allow-firewall.cmd`
+   adds a program rule with one UAC click; `/health.inbound.reachable`
+   replaces guessing. Deferred to item 4: a single signed `.exe` (Node SEA
+   with a CJS bundle — spike needed for `import()` of rulesets from disk),
+   an Inno Setup installer, and code signing (Azure Trusted Signing) —
+   SmartScreen, not the firewall, is the barrier a stranger hits first.
 1. **Node daemon — done 13 Sep 2026 on three machines.** Identity, gossip,
    snapshot, fetch-by-hash, NodeStake reads, ledger intake from the relay,
    witness verify across machines and operators, epoch tree, and the first

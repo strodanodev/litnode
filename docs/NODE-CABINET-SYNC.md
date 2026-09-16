@@ -35,7 +35,7 @@ every name below.
 
 | Endpoint | Fields read by name |
 |---|---|
-| `GET /health` | `nodeId operator roles region addr epoch peers rulesets{rulesetId: buildHash} buildsHeld staking bonded chain.{offline,rpc,head,lastError} startedAt uptimeMs` |
+| `GET /health` | `nodeId operator roles region addr epoch peers rulesets{rulesetId: buildHash} buildsHeld staking bonded chain.{offline,rpc,head,lastError} startedAt uptimeMs inbound.{peers,lastAt,reachable}` |
 | `GET /peers` | `peers[].{nodeId operator addr region roles fresh bonded clockSkewS rulesets}` |
 | `GET /snapshot` | `epoch peers[] manifests{rulesetId: {buildHash, services, …}} root staking` — the fold uses `manifests[rid].services`; placement verification uses `peers` and `root` |
 | `GET /leaderboard?ruleset=` | `rulesetId deriveVersion digest skipped leaderboard[].{rank player rating}` |

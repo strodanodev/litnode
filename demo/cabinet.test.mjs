@@ -77,7 +77,8 @@ test('cabinet contract: fields by name, cabinet served at /, vendored protocol i
 
   // /health — SYNC §1.3
   const health = await json('/health');
-  hasFields(health, { nodeId: 'string', operator: 'string', roles: 'array', region: 'string', addr: 'string', epoch: 'number', peers: 'number', rulesets: 'object', buildsHeld: 'number', staking: 'string', bonded: 'any', 'chain.offline': 'boolean', 'chain.rpc': 'string', 'chain.head': 'any', 'chain.lastError': 'any', startedAt: 'string', uptimeMs: 'number' }, '/health');
+  hasFields(health, { nodeId: 'string', operator: 'string', roles: 'array', region: 'string', addr: 'string', epoch: 'number', peers: 'number', rulesets: 'object', buildsHeld: 'number', staking: 'string', bonded: 'any', 'chain.offline': 'boolean', 'chain.rpc': 'string', 'chain.head': 'any', 'chain.lastError': 'any', startedAt: 'string', uptimeMs: 'number', 'inbound.peers': 'number', 'inbound.reachable': 'any' }, '/health');
+  assert.equal(health.inbound.reachable, null, 'no peers known → reachability is unknown, not false');
   assert.equal(health.rulesets['agent-fighter.v1'], manifest.buildHash);
   assert.ok(health.uptimeMs >= 0 && !Number.isNaN(Date.parse(health.startedAt)));
 
