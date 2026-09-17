@@ -27,7 +27,7 @@ export const RELEASE_URL = 'https://github.com/strodanodev/litnode/releases/late
 export const RESTART_EXIT = 75; // start-node.cmd relaunches on this code
 
 /** What gets replaced by an update. Everything else in the folder is the operator's. */
-export const CODE = ['node', 'protocol', 'cabinet', 'rulesets', 'tools', 'contracts', 'titles', 'start-node.cmd', 'run-node.cmd', 'install-task.cmd', 'allow-firewall.cmd', 'update.cmd', 'node.env.example', 'README.md', 'package.json'];
+export const CODE = ['node', 'protocol', 'cabinet', 'rulesets', 'tools', 'contracts', 'titles', 'start-node.cmd', 'run-node.cmd', 'run-af-relay.cmd', 'run-af-watch.cmd', 'install-task.cmd', 'allow-firewall.cmd', 'update.cmd', 'node.env.example', 'README.md', 'package.json'];
 
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 const tar = process.platform === 'win32' ? 'C:\\Windows\\System32\\tar.exe' : 'tar';
