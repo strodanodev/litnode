@@ -3,6 +3,21 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.2] — 2026-09-17
+
+Live: the desktop delegated its announcer, announced its tunnel URL on
+NodeDirectory (tx `0x18f38c91…`), and `arcade.litvm.games` — in a browser
+with no node — read the chain, found it, and reached it.
+
+### Fixed
+- An address change that arrives while an announce is in flight (two
+  tunnels up in the same second) is retried in 2.5 min instead of waiting
+  for the 10-minute cycle.
+- `set-announcer` uses the protocol's own signer with single, retried
+  JSON-RPC calls (Liteforge's gateway 502s intermittently and a batching
+  client quits on the first); accepts the key with or without `0x`.
+- Profile reads skip `af:<name>` participants.
+
 ## [0.6.1] — 2026-09-17
 
 Deployed to Liteforge (chain 4441): PlayerProfile `0x790824e6ea7aF658742bcefEe915Ca40CA210886`, NodeBadge `0xDAdd39D3fA134d0A30770356D47d733fF0Fc9A21`,

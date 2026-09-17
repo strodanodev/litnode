@@ -177,7 +177,17 @@ export async function createNode({
     chainSeeds = liveSeeds(entries, st);
     for (const s of chainSeeds) if (s.nodeId !== nodeId && s.url) peersKnown.add(s.url);
   };
-  const announceNow = () => { if (announcer && announce) announcer.sync(addr, wsAddr ?? '').then((r) => { if (r === 'sent' || r === 'error' || r === 'not-delegated' || r === 'unfunded') log(`announce: ${r}${announcer.status().lastError ? ` — ${announcer.status().lastError}` : ''}`); }).catch(() => {}); };
+  let announceRetry = null;
+  const announceNow = () => {
+    if (!announcer || !announce) return;
+    announcer.sync(addr, wsAddr ?? '').then((r) => {
+      if (r === 'sent' || r === 'error' || r === 'not-delegated' || r === 'unfunded') log(`announce: ${r}${announcer.status().lastError ? ` — ${announcer.status().lastError}` : ''}`);
+      // A change that arrived while a send was in flight, or inside the
+      // rate-limit window (two tunnels coming up in the same second), is
+      // tried again shortly rather than on the next 10-minute cycle.
+      if (r === 'skip' || r === 'rate-limited' || r === 'error') { clearTimeout(announceRetry); announceRetry = setTimeout(announceNow, 2.5 * 60_000); }
+    }).catch(() => {});
+  };
   let lastBonded = null;        // the bonded set as last reported; stakes events fire on change only
   let addr = publicAddr;
 
@@ -585,6 +595,6 @@ export async function createNode({
     snapshot: currentSnapshot, matches: matchesNow, installRuleset, chain, settlement,
     rulesets: () => buildHashes(), peers: () => heartbeats, inbound, operator, roles, region, startedAt,
     version, updater, restart, tunnels, upnp: upnpCtl, get wsAddr() { return wsAddr; }, get announcer() { return announcer; }, seeds: () => chainSeeds,
-    async stop() { clearInterval(timer); clearInterval(updateTimer); clearInterval(directoryTimer); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); await new Promise((r) => server.close(r)); },
+    async stop() { clearInterval(timer); clearInterval(updateTimer); clearInterval(directoryTimer); clearTimeout(announceRetry); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); await new Promise((r) => server.close(r)); },
   };
 }
