@@ -3,6 +3,12 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.1] — 2026-09-17
+
+Deployed to Liteforge (chain 4441): PlayerProfile `0x790824e6ea7aF658742bcefEe915Ca40CA210886`, NodeBadge `0xDAdd39D3fA134d0A30770356D47d733fF0Fc9A21`,
+NodeDirectory `0xf63AA4590fDCa66fD9FA3005C588E9deb09767b4`. Addresses in `contracts/deployed.testnet.json`
+(nodes) and `cabinet/config.js` (the arcade page).
+
 ## [0.6.0] — 2026-09-17
 
 The decentralized bootstrap: the seed list lives on the chain.

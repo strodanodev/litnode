@@ -78,11 +78,11 @@ export const CHAIN = {
   EpochAnchor: '0x09fBf6A5026b4E02eE9f78222117F97b19eE507A',
   /** Set after `npm run deploy:testnet` writes it to contracts/deployed.testnet.json.
    *  null = "Sign in with wallet" stays hidden; keys are players (docs/WALLET-IDENTITY.md). */
-  PlayerProfile: null,
-  NodeBadge: null,
+  PlayerProfile: '0x790824e6ea7aF658742bcefEe915Ca40CA210886',
+  NodeBadge: '0xDAdd39D3fA134d0A30770356D47d733fF0Fc9A21',
   /** The seed list on chain. Set after deploy; then a visitor with no node
    *  reads the mesh through the freshest bonded seed (docs: decentralized bootstrap). */
-  NodeDirectory: null,
+  NodeDirectory: '0xf63AA4590fDCa66fD9FA3005C588E9deb09767b4',
   explorer: 'https://liteforge.explorer.caldera.xyz',
   token: 'tLITVM',
 };

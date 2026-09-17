@@ -31,11 +31,33 @@
   },
   "chainId": 4441,
   "rpc": "https://liteforge.rpc.caldera.xyz/http",
-  "deployedAt": "2026-09-12T14:47:23.539Z",
+  "deployedAt": "2026-09-17T00:45:43.682Z",
   "EpochAnchor": {
     "address": "0x09fBf6A5026b4E02eE9f78222117F97b19eE507A",
     "tx": "0xe7063f6621f6460831c35217993d23143a42f620e23eac8f4a6e1b27c4abc352",
     "block": 50091691,
     "args": []
+  },
+  "PlayerProfile": {
+    "address": "0x790824e6ea7aF658742bcefEe915Ca40CA210886",
+    "tx": "0xe07ef7cfbae556b8f9d294114550376590b628dee093d0fbabfeecf37fe627d1",
+    "block": 51608640,
+    "args": []
+  },
+  "NodeBadge": {
+    "address": "0xDAdd39D3fA134d0A30770356D47d733fF0Fc9A21",
+    "tx": "0x4c3a7c899bc4a92da1783e2d7bff8a85e558a72c487beeae0b28f5da32412907",
+    "block": 51608689,
+    "args": [
+      "0x11C984bE3ee572eb7280334501B57c82001F397F"
+    ]
+  },
+  "NodeDirectory": {
+    "address": "0xf63AA4590fDCa66fD9FA3005C588E9deb09767b4",
+    "tx": "0x834f728a08117f14f0bc18f93a87e8c7c03766a8e179550e95e7852f88fe9e9e",
+    "block": 51608717,
+    "args": [
+      "0x11C984bE3ee572eb7280334501B57c82001F397F"
+    ]
   }
 }
