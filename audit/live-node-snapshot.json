@@ -1,0 +1,11 @@
+{
+  "observedAt": "2026-09-17T11:59:53.3197440Z",
+  "version": "0.6.5",
+  "nodeId": "5b703f1288765c0ca3734ab0625df161121ef45a9eabafaaae539be1add95151",
+  "bonded": true,
+  "peers": 1,
+  "peerVersions": [
+    "0.6.5"
+  ],
+  "selfIncluded": true
+}

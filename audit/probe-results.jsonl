@@ -1,0 +1,5 @@
+{"probe":"purity rejection happens after execution","rejected":true,"markerExecuted":true}
+{"probe":"bracket access to randomness passes","accepted":true,"checks":27}
+{"probe":"empty unsigned match accepted as relay","attestation":"relay","ticks":0,"leaderboardRows":2}
+{"probe":"witness accepts host-signed altered scores","accepted":true,"reason":null}
+{"note":"Temporary audit identities only; no live node writes or chain transactions."}

@@ -41,25 +41,39 @@ One file. Five functions and a manifest:
 | `display` | how the arcade lists you: `{ title, url, description?, cover?, accent?, controls? }` |
 
 A game the node **cannot** replay (floating-point physics, a proprietary
-engine) is an *attested* title: `defineAttestedTitle({ validate, scores, … })`.
-Your own attestor signs an outcome report; the node validates it against your
-rules and settles it labelled `attested`. Pickle Brawl is the reference, and
-the ladder shows the label. Prefer replayable when you can — it is the
+engine) is an *attested* title: `defineAttestedTitle({ validate, scores,
+attestors: [<court pubkeys>], … })`. Your own court signs an outcome report;
+the node accepts it only from a court the manifest (or the operator's
+`COURTS`) authorizes, validates it against your rules in the sandbox and
+settles it labelled `attested`. Pickle Brawl is the reference, and the
+ladder shows the label. Prefer replayable when you can — it is the
 difference between *verified* and *trusted*.
 
 ## The rules of recognition
 
 Every one of these is checked by code, not by us.
 
-**1. Conformance** — `sdk/conformance.mjs`. The same suite runs in your
-terminal, in `bundle:title`, and inside every node's `installRuleset` before
-it loads a build. A build that fails is refused by every node that sees it,
-whoever advertises it. The checks: one ES module with no imports; no
-`Math.random`, `Date`, `performance.now`, `crypto`, `fetch`, timers, storage;
-a manifest with a well-formed `rulesetId` (`name.v1`), kind, modes ⊆
-{ranked, casual}, tick rate, participants, input schema; and two replays of
-seeded inputs from scratch reaching the same `serialize()` root. `display` is
-a warning: hosting works without it, listing does not.
+**1. Conformance, in a sandbox** — `sdk/conformance.mjs`. The same suite
+runs in your terminal, in `bundle:title`, and inside every node's
+`installRuleset` before it loads a build. Two stages: STATIC (reads the
+text, executes nothing: one ES module with no imports, a default export, a
+purity lint for `Math.random`, `Date`, `fetch`, timers, storage) and SANDBOX
+(everything that executes — manifest, two replays of seeded inputs from
+scratch to the same `serialize()` root, `view()`, `validate({})` — runs in
+`node/sandbox.js`: a separate `node --permission` process with an empty
+environment, a heap ceiling and a deadline, inside a V8 context that has
+NO `Date`, `Intl`, `Math.random`, `process`, `fetch` or `require` at all).
+The lint catches mistakes early; the sandbox is the boundary: a title that
+reaches for the world by any spelling fails at run time, and a title that
+spins or allocates without bound is killed without touching the node.
+`display` is a warning: hosting works without it, listing does not.
+
+**1b. A publisher's signature** — nodes load a build from a PEER only when
+`{rulesetId, buildHash}` is signed by a key in their `TRUSTED_PUBLISHERS`
+(`npm run sign:build -- rulesets/<id>.js`; the default trusted key is the
+litVM release key). An operator's own `RULESETS` load regardless, and an
+operator may run `TITLE_TRUST=open`. This is the honest state of a sandbox
+without a track record: capability-restricted, not proven escape-free.
 
 **2. Bytes pinned by hash** — `buildHash = H('ruleset', bytes)`. Nodes
 advertise the hash, fetch each other's builds by it, and refuse a body that
@@ -81,13 +95,19 @@ live: nothing charges anything yet, and when micro-transactions arrive they
 will be leaves and contract calls under the same roots — not a toll on the
 node and not something a ruleset implements.
 
-**5. Agents are ERC-6699 tokens** — `ERC6699Registry`. Characters come in
-with four `uint16` core stats and a soul-manifest hash; your title declares a
-`defineBalance` mapping and never reads raw. Ranked is sterile (equipment
-stripped, mapping bounded); the hydration manifest hashes into the delta, and
-a witness that hydrates differently reaches a different root. Your assets are
-recognised across titles exactly to the extent they are these tokens and this
-mapping. An asset that lives only in your database is yours alone.
+**5. Agents are characters in the registry** — `ERC6699Registry` v2, this
+project's PROPOSED "ERC-6699" interface (no such number is assigned in the
+official ERC index; do not describe it as a standard). Characters come in
+with four `uint16` core stats, a soul-manifest hash, a config hash and a
+stats nonce; only a MINTER forges and only a PROGRESSOR changes stats. A
+ranked match reads them from the chain at the placement's block — never
+from the submission — and the player key's profile owner must own or
+control the token. Your title declares a `defineBalance` mapping and never
+reads raw; ranked is sterile (equipment stripped, mapping bounded); the
+hydration manifest hashes into the result commitment, and a witness that
+reads a different character reaches a different commitment. Your assets are
+recognised across titles exactly to the extent they are these tokens and
+this mapping. An asset that lives only in your database is yours alone.
 
 **6. Players are keys** — an ed25519 public key signs every queue entry and
 every ledger head. Bound to a wallet through `PlayerProfile` (soulbound), it
@@ -111,7 +131,13 @@ be litVM Games.
 Said plainly, so the SDK does not imply otherwise:
 
 - No fees, revenue share or micro-transactions are implemented. The contracts
-  on Liteforge are unaudited testnet deployments.
+  on Liteforge are unaudited testnet deployments — and, today, the v1 set;
+  the v2 registry and anchor in this source are not deployed yet
+  (`contracts/MIGRATION.md`), so registry hydration reads nothing live.
+- A ranked result is OFFICIAL only when the mesh placed it, both players (or
+  an authorized court) signed it, an independent bonded witness reached the
+  same commitment, and nobody disputes it. Agent Fighter's own client does
+  not sign yet, so its relay-attested results are labelled and unofficial.
 - `ctx.agents` is hydrated by the node from the registry for Agent Fighter's
   path; a new title receives the same shape, but the registry has no write
   path for progression yet (BUILD-SPEC §8).

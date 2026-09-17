@@ -1,0 +1,63 @@
+{"engine":"af-core-8","ticks":6479,"replayMs":3.3,"perTickSignatures":12958,"perTickVerifyMs":919,"perLedgerVerifyMs":41.6,"ratioPerTickToReplay":282}
+✔ pure-JS sha256 agrees with node:crypto (1.3542ms)
+✔ artifact is self-contained and its buildHash matches the manifest (4.2085ms)
+✔ stats map into the engine's bounded aura band (0.2802ms)
+✔ a full match completes and replays to the same root (38.0883ms)
+✔ different hydration reaches a different root from the same inputs (28.2821ms)
+✔ ranked and casual hydration manifests of the same agents differ (0.6587ms)
+✔ measure: replay cost vs per-tick signature verification (1366.9691ms)
+✔ rulebook validation (0.5754ms)
+✔ attested: court-signed report settles, witness co-signs attestation-only, doubles team Elo (608.1142ms)
+✔ cabinet contract: fields by name, cabinet served at /, vendored protocol in sync, trajectory == ladder (467.4518ms)
+✔ arcade: lobby served, identity persists, queue → pair → client verifies placement (3739.1194ms)
+✔ shipped rulesets conform (Agent Fighter replayable, Pickle Brawl attested) (34.279ms)
+✔ create-title → bundle → conformant artifact with display (64.1883ms)
+✔ a title that reads the world fails conformance and the node refuses it (63.6859ms)
+✔ directory: calldata and reads match ethers (5.966ms)
+✔ directory: liveSeeds keeps bonded, fresh entries, newest first (0.4878ms)
+✔ directory: a node reads seeds from chain, announces itself once delegated and funded, and not again while current (102.6309ms)
+✔ evm: addresses and public keys match ethers (89.084ms)
+✔ evm: RFC 6979 signatures equal ethers (deterministic, low-s, recovery bit) (124.5854ms)
+✔ evm: RLP matches ethers for the shapes a transaction uses (0.5365ms)
+✔ evm: a signed legacy transaction is what ethers would send (52.4303ms)
+✔ evm: ABI helpers round-trip through ethers (3.0421ms)
+✔ mesh: gossip converges, ruleset spreads by hash, publisher dies, title survives (13223.9105ms)
+✔ profile: ownerOfKey call and result, string decode, register calldata (3.4811ms)
+✔ profile: applyProfiles folds two keys of one owner into one ladder row; a self-match stays keyed (1.01ms)
+✔ profile: node reads bindings, refuses a revoked key, answers /profile, folds the ladder by owner (1128.6949ms)
+{"anchorSelector":"0xbc978154","specSaid":"0x7e8a0a8b","agree":false}
+✔ keccak256 matches the known vectors (1.7576ms)
+✔ anchorEpoch selector is derived, and the spec constant is checked against it (0.6574ms)
+✔ ed25519 sign/verify, purpose tags bind, envelopes open (6.0046ms)
+✔ hash-chained log: gaps and reorders are rejected, two signatures settle (6.2618ms)
+✔ placement: one node and fifty are the same code path; client refuses other hosts (1.767ms)
+✔ placement: eligibility, publisher affinity by node key, region affinity (0.4525ms)
+✔ pairing: closed buckets only, no self-pair, same result from any node (0.325ms)
+✔ beacon: first block after bucket end; local fallback is labelled (0.1424ms)
+✔ snapshot: signed heartbeats, freshness, majority build wins, root is stable (2.7219ms)
+✔ epoch tree: proofs verify, tampered leaves do not, empty is defined (0.7389ms)
+✔ derived services: order-independent, idempotent, ranked needs a co-signer when asked (0.9331ms)
+✔ witness re-hydrates from the registry and refuses an inflated manifest (0.5858ms)
+✔ canonical is key-order independent (0.3378ms)
+✔ settle: signed ledger → delta → witness co-sign → ladder → epoch proof; tamper refused (847.2847ms)
+{"matchId":"mmtyf9tz57bbb-1","ticks":7595,"engineHash":3704120196,"expected":3704120196,"scores":{"af:CONTACT.STRODANO:0":1,"af:CONTACT.JOHNSEDA:1":2}}
+{"matchId":"mmtyf9tz57bbb-2","ticks":2918,"engineHash":1140948484,"expected":1140948484,"scores":{"af:CONTACT.STRODANO:0":0,"af:CONTACT.JOHNSEDA:1":2}}
+✔ settle: a real Agent Fighter relay ledger reproduces the relay's own result (132.2048ms)
+✔ standingOf call is well-formed (1.6113ms)
+✔ standingOf result decodes (0.1262ms)
+✔ chain standing replaces self-asserted operator and standing; unstaked nodes drop (1.3233ms)
+✔ tunnel: quick tunnel announces, restarts after a crash with a new hostname (5563.1391ms)
+✔ tunnel: the node advertises the tunnel URL and the relay as wsAddr; peers learn both by gossip (273.7463ms)
+✔ update: version compare and zip choice (1.2307ms)
+✔ update: unsigned or wrongly signed manifests are refused; a good one applies code and spares data (39.4036ms)
+✔ update: the node reports it on /health and /update, and refuses to apply what is not newer (47.1662ms)
+✔ upnp: SOAP mapping, external IP, refusal surfaced, CGNAT detected (21.0512ms)
+✔ upnp: the node reports it on /health.upnp and names CGNAT as the reason it cannot be reached (21.1186ms)
+ℹ tests 51
+ℹ suites 0
+ℹ pass 51
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 214499.93

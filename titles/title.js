@@ -54,13 +54,17 @@ export function defineAttestedTitle({
   rulesetId, modes = ['ranked', 'casual'], participants = [2], teams = 2,
   balance = null, hostPolicy = { affinity: 'open' }, standingFloor = 0,
   services = {}, validate, scores, equipment = 'studio', display = null,
+  // Which courts may sign reports for this title (ed25519 pubkeys, hex). A
+  // node ALSO accepts courts its operator configures (COURTS); a report
+  // from any other key is refused however valid its signature.
+  attestors = [],
 }) {
   for (const [name, fn] of Object.entries({ validate, scores }))
     if (typeof fn !== 'function') throw new Error(`defineAttestedTitle: ${name} is required`);
   return {
     manifest: {
       kind: 'attested',
-      rulesetId, modes, participants, teams, standingFloor, hostPolicy, equipment, display,
+      rulesetId, modes, participants, teams, standingFloor, hostPolicy, equipment, display, attestors,
       balanceVersion: balance?.version ?? null,
       services: {
         leaderboard: services.leaderboard ?? null,

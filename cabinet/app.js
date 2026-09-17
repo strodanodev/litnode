@@ -152,7 +152,7 @@ function history(rid, who = player.id) {
     if (!mine) continue;
     const res = sa === 0.5 ? 'draw' : (mine === 'A') === (sa === 1) ? 'win' : 'loss';
     const opp = (mine === 'A' ? B : A).filter((p) => p !== who);
-    out.push({ matchId: d.matchId, when: d.settledAt, res, opp, ticks: d.ticks ?? 0, rating: tables.rating[who] ?? 1200, mode: d.mode, cosigned: (d.cosigners?.length ?? 0) > 0 });
+    out.push({ matchId: d.matchId, when: d.settledAt, res, opp, ticks: d.ticks ?? 0, rating: tables.rating[who] ?? 1200, mode: d.mode, cosigned: (d.cosigners?.length ?? 0) > 0, verification: d.verification ?? (d.cosigners?.length ? 'verified' : 'unverified'), official: !!d.official, attestation: d.attestation });
   }
   return out;
 }
@@ -238,6 +238,8 @@ function nodePanel({ compact = true } = {}) {
 const panel = (title, body, more = '', cls = '') => `<section class="panel ${cls}"><div class="panel-h"><h3>${title}</h3>${more}</div><div class="panel-b">${body}</div></section>`;
 const moreLink = (href, label = 'view all') => `<a class="more" href="${href}">${label} ›</a>`;
 const gameTag = () => '<span class="tag live">Live</span>';
+/** What backs a result, in one word: verified (players signed + independent witness agreed), disputed, or unverified — and whether it counts. */
+const verifyTag = (d) => d.verification === 'verified' ? `<span class="tag live" title="players signed, an independent witness reached the same result${d.official ? '; counts toward the official ladder' : ''}">verified${d.official ? '' : ' · unofficial'}</span>` : d.verification === 'disputed' ? '<span class="tag court" title="a witness recomputed a different result">disputed</span>' : `<span class="tag" title="${esc(d.attestation ?? '')}: not independently verified; not on the official ladder">unverified</span>`;
 const statusTag = (g) => g.status === 'attested' ? '<span class="tag court">Court</span>' : g.status === 'external' ? '<span class="tag hosted">Hosted</span>' : g.status === 'mesh' ? '<span class="tag hosted">Mesh</span>' : '';
 const tagRow = (g) => `<div class="chips">${(g.tags ?? []).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}${statusTag(g)}</div>`;
 /** Rank badge: the number inside bracket ticks. */
@@ -381,7 +383,7 @@ function boardTable(rid, limit, q = '') {
   const me = myBoardRow(rid);
   const tr = (r) => { const s = st[r.player] ?? {}; return `<tr class="${r.player === player.id ? 'me' : ''}"><td class="rank ${r.rank <= 3 ? 'top' : ''}">#${r.rank}</td><td><div class="pl"><img src="${r.player === player.id ? player.avatar : identicon(r.player, 40)}" alt=""/>${r.player === player.id ? esc(player.name) : short(r.player, 12)}</div></td><td class="num">${r.rating}</td><td class="num">${s.matches ?? 0}</td><td class="num">${s.wins ?? 0}</td><td class="num">${pct(s.wins ?? 0, s.matches ?? 0)}%</td></tr>`; };
   if (!S.online) return nodeHint();
-  if (!rows.length) return '<div class="empty">No settled matches on this title yet.</div>';
+  if (!rows.length) return '<div class="empty">No verified ranked matches on this title yet. The official ladder counts placed, player-signed, witness-verified results only; every settled match still shows in your record, labelled.</div>';
   const extra = me && !list.some((r) => r.player === player.id) ? `<tr><td colspan="6" class="dim" style="text-align:center">…</td></tr>${tr(me)}` : '';
   return `<table><thead><tr><th>Rank</th><th>Player</th><th class="num">Rating</th><th class="num">Matches</th><th class="num">Wins</th><th class="num">Win %</th></tr></thead><tbody>${list.map(tr).join('')}${extra}</tbody></table>`;
 }
@@ -455,7 +457,7 @@ function renderGame(g) {
         ${panel('Leaderboard', g.rulesetId ? boardTable(g.rulesetId, 10) : '<div class="empty">This title is not on the mesh yet — its ruleset lands with the node sync.</div>', g.rulesetId ? moreLink('#/leaderboards') : '')}
         <div style="height:16px"></div>
         ${panel('Your record', me || hist.length ? `<div class="stats4" style="margin:0 0 12px"><div class="stat"><div class="k">Rank</div><div class="v">${me ? `#${me.rank}` : '—'}</div></div><div class="stat"><div class="k">Rating</div><div class="v">${me?.rating ?? 1200}</div></div><div class="stat"><div class="k">Matches</div><div class="v">${S.stats[g.rulesetId]?.[player.id]?.matches ?? 0}</div></div><div class="stat"><div class="k">Wins</div><div class="v">${S.stats[g.rulesetId]?.[player.id]?.wins ?? 0}</div></div></div>
-          <table><thead><tr><th>Result</th><th>Opponent</th><th class="num">Length</th><th class="num">Rating</th><th>When</th></tr></thead><tbody>${hist.map((h) => `<tr><td class="res ${h.res[0]}">${h.res.toUpperCase()}</td><td>${h.opp.map((o) => short(o, 10)).join(', ') || '—'}</td><td class="num">${Math.floor(h.ticks / 3600)}:${String(Math.floor((h.ticks / 60) % 60)).padStart(2, '0')}</td><td class="num">${h.rating}</td><td class="dim">${h.when ? new Date(h.when).toLocaleDateString() : '—'}${h.cosigned ? ' ✓' : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="dim">No matches yet.</td></tr>'}</tbody></table>` : `<div class="empty">${S.online ? 'No settled matches under your key yet. Play one — it shows up here once the mesh settles it.' : 'Start a node to load your record.'}</div>`)}
+          <table><thead><tr><th>Result</th><th>Opponent</th><th class="num">Length</th><th class="num">Rating</th><th>When</th></tr></thead><tbody>${hist.map((h) => `<tr><td class="res ${h.res[0]}">${h.res.toUpperCase()}</td><td>${h.opp.map((o) => short(o, 10)).join(', ') || '—'}</td><td class="num">${Math.floor(h.ticks / 3600)}:${String(Math.floor((h.ticks / 60) % 60)).padStart(2, '0')}</td><td class="num">${h.rating}</td><td class="dim">${h.when ? new Date(h.when).toLocaleDateString() : '—'} ${verifyTag(h)}</td></tr>`).join('') || '<tr><td colspan="5" class="dim">No matches yet.</td></tr>'}</tbody></table>` : `<div class="empty">${S.online ? 'No settled matches under your key yet. Play one — it shows up here once the mesh settles it.' : 'Start a node to load your record.'}</div>`)}
       </div>
     </div>`;
   if (g.rulesetId) renderMatchmaking(g);

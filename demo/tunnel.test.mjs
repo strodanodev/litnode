@@ -50,7 +50,7 @@ test('tunnel: the node advertises the tunnel URL and the relay as wsAddr; peers 
   const b = await createNode({ dataDir: join(tmp, 'b'), offline: true, heartbeatMs: 200, operator: 'peer', roles: ['mesh', 'witness'], seeds: [a.addr], updates: false });
   t.after(async () => { await a.stop().catch(() => {}); await b.stop().catch(() => {}); rmSync(tmp, { recursive: true, force: true }); });
   const health = async () => (await fetch(`${a.addr}/health`)).json();
-  assert.ok(await until(async () => (await health()).tunnel.node.state === 'up'), 'node tunnel up');
+  assert.ok(await until(async () => { const h = await health(); return h.tunnel.node.state === 'up' && h.tunnel.relay?.state === 'up'; }), 'node and relay tunnels up');
   const h = await health();
   assert.equal(h.addr, `https://fake-${a.port}-g0.trycloudflare.com`, 'the advertised address IS the tunnel');
   assert.equal(h.lanAddr, a.addr);

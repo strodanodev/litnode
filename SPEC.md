@@ -57,23 +57,58 @@ node's own protocol modules.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/health` | identity, roles, region, addr, epoch, peer count, ruleset build hashes, `bonded`, chain status, `startedAt` + `uptimeMs` (process uptime) |
-| GET | `/snapshot` | bonded, fresh peers + one resolved manifest per ruleset + root over the registry view (membership, roles, region, standing, builds — not epochs or addresses) — **cabinet reads this** |
-| GET | `/peers` | everyone heard from (bonded or not), with `fresh` and `clockSkewS` — used to onboard a new machine |
-| GET | `/ruleset/:rulesetId[?build=]` | the ruleset source (current, or a specific held build by hash) |
+| GET | `/health` | identity, roles, region, addr, `protocol`, epoch, peer count, `incompatible` count, ruleset build hashes, `refused` count, `bonded`, chain status, `sandbox` (limits, runs, kills), `trust` (policy, publishers, relay keys, courts), `registry`, `startedAt` + `uptimeMs` |
+| GET | `/whoami?nonce=` | proof of possession: `{nodeId, nonce, addr, at, sig}` signed by the node key — what a directory reader checks before it treats a URL as this node |
+| GET | `/snapshot[?envelopes=1]` | bonded, fresh, protocol-compatible peers + one resolved manifest per ruleset + root over the registry view; with `envelopes=1` also the signed heartbeats it was built from, so a client re-verifies and recomputes — **cabinet reads this** |
+| GET | `/peers` | everyone heard from (bonded or not), with `fresh`, `clockSkewS`, `protocol`; plus `incompatible[]` (heard on another protocol version, excluded) |
+| GET | `/titles` | every title this node or a fresh peer hosts, from gossiped manifests (`display`, `publisher`, hosts, bonded hosts) |
+| GET | `/ruleset/:rulesetId[?build=]` | the ruleset source (current, or a specific held build by hash); headers `x-build-hash`, and `x-build-publisher` / `x-build-sig` when the build carries a publisher attestation |
 | POST | `/gossip` | peer-to-peer heartbeat + queue + delta-advert exchange |
 | POST | `/queue` | signed queue entry `{playerId, rulesetId, mode, bucket, tokenId?, region?}` |
 | GET | `/match[?playerId=]` | frozen placement descriptors: computed once per match, sealed by the computing node, gossiped; a peer that drew differently is recorded in `disputes[]` rather than flipping the host |
-| POST | `/ledger` | submit a finished match (replayable ledger or attested report) → settles, returns the signed delta |
-| GET | `/ledger/:matchId` | the raw submission a delta was settled from |
-| GET | `/delta/:matchId` | one settled delta |
-| GET | `/deltas[?ruleset=]` | every settled delta, optionally filtered — **cabinet reads this** |
-| POST | `/cosign` | witness co-signature on a delta |
-| GET | `/leaderboard?ruleset=` | Elo-derived leaderboard — **cabinet reads this** |
-| GET | `/credits?ruleset=[&currency=&player=]` | derived credit balances |
-| GET | `/stats?ruleset=[&player=]` | matches/wins/ticks per player — **cabinet reads this** |
-| GET | `/epoch[?epoch=]` | hourly Merkle tree over settled deltas + `anchorEpoch` calldata |
-| GET | `/proof/:matchId` | inclusion proof for one match in its epoch tree |
+| POST | `/ledger` | submit a finished match (replayable ledger or attested report). Bound to the mesh's placement descriptor; ranked requires it, a finished log, and player signatures or an authenticated relay. Returns the signed delta with `resultHash`, `verification`, `official` |
+| GET | `/ledger/:matchId` | the raw submission a delta was settled from, plus the placement `descriptor` envelope |
+| GET | `/delta/:matchId` | one settled delta, decorated with `verification` (verified / disputed / unverified) and `official` |
+| GET | `/deltas[?ruleset=&scope=official]` | every settled delta (labelled), or official only — **cabinet reads this** |
+| POST | `/cosign` | witness co-signature over `{matchId, resultHash}` — the whole result, not one hash inside it |
+| POST | `/dispute` | a witness that recomputed a different result files it, signed; the delta is `disputed` until agreement outnumbers disputes |
+| GET | `/leaderboard?ruleset=[&scope=all]` | Elo ladder over OFFICIAL results by default (ranked, placed, verified, undisputed); `scope=all` folds every settled delta — **cabinet reads this** |
+| GET | `/credits?ruleset=[&currency=&player=&scope=]` | derived credit balances |
+| GET | `/stats?ruleset=[&player=&scope=]` | matches/wins/ticks per player — **cabinet reads this** |
+| GET | `/epoch[?epoch=]` | the hour's batch: `open` (live) or `finalized` (frozen 15 min after the hour), leaves with `verified` and cosigners-at-freeze, root, EpochAnchor v2 `propose` calldata |
+| GET | `/proof/:matchId` | inclusion proof for one match with `status` (finalized / open), `verified`, `cosignersAtFreeze` vs `cosignersNow` — inclusion and verification are distinct claims |
+| GET/POST | `/update` | release status; POST (loopback only) applies, or `{rollback:true}` restores `.previous/` |
+
+**Title code never runs in the node process.** `node/sandbox.js` runs every
+replay, manifest read and report validation in a separate `node --permission`
+process with an empty environment, a heap ceiling (`SANDBOX_MEMORY_MB`) and a
+deadline (`SANDBOX_TIMEOUT_MS`); inside it a V8 context with ECMAScript
+intrinsics only (no `Date`, `Intl`, `Math.random`, `process`, `fetch`,
+`require`; code generation from strings off; JSON-only data transfer).
+A title that spins is killed at the deadline; one that allocates without
+bound aborts; neither touches the daemon. A V8 escape is out of scope, which
+is why peer builds load only with a publisher attestation under the default
+`TITLE_TRUST=trusted`.
+
+**Settlement binds to the placement.** `POST /ledger` for a ranked match must
+name a `matchId` the mesh placed (the sealed descriptor: participants,
+ruleset, build, mode, host, beacon and its block, protocol version); the seed
+is `H(beacon, matchId)`; this node must be the descriptor's host. Unplaced
+casual submissions settle labelled `placed:false` and are never official.
+`resultHash` (`protocol/result.js`) commits to every field a ranking or a
+settlement consumes; a witness recomputes all of them — descriptor binding,
+its own registry reads at the pinned block, its own sandboxed replay, player
+or relay signatures — and signs `{matchId, resultHash}` only when its
+commitment is byte-identical, else it files a signed dispute.
+
+**Provenance labels** on a delta's `attestation`: `players` (both keys signed
+the chain head over the build and hydration; re-verified by every witness),
+`relay` (a relay key in the host's `RELAY_KEYS`, advertised in its heartbeat,
+signed the log head; its `expected` record matched the replay), `host` (only
+this node's word; casual only), `attested` (an authorized court — the title
+manifest's `attestors` or the node's `COURTS` — signed the report). Official
+standings take `players` / `attested` results that are ranked, placed,
+witnessed by at least one independent node and not disputed.
 
 **litnode does not implement netcode, and does not need to.** The `relay`
 role is the title's own match server, advertised by the node that fronts it
@@ -89,7 +124,13 @@ signalling is the V1 target (roadmap item 3).
 ### 2.2 Ruleset title interface (`rulesets/*.v1.js`)
 
 A ruleset is a single bundled ESM file with no imports; `buildHash =
-sha256(source bytes)`. Two shapes:
+H('ruleset', source bytes)`. It is admitted only after `sdk/conformance.mjs`:
+a STATIC stage (executes nothing — artifact shape and a purity lint) and a
+SANDBOX stage (manifest, contract functions, two replays from scratch to the
+same root, `view()`; attested titles: `validate({})` rejects). A build from a
+peer also needs `sig = sign('build', {rulesetId, buildHash}, publisherKey)`
+under a key in `TRUSTED_PUBLISHERS` (`tools/sign-build.mjs`; default: the
+litVM release key) unless `TITLE_TRUST=open`. Two shapes:
 
 - **`defineTitle({...})`** (replayable) — `init(seed, participants, ctx)`,
   `step(state, inputs)`, `done(state)`, `serialize(state)`, `view(state)`,
@@ -114,7 +155,12 @@ envelopes; refuses to run outside a secure context and says why), `keccak.js`
 `pairing.js`, `placement.js`, `beacon.js`, `log.js` (hash-chained ledger),
 `epoch.js` (Merkle tree), `derive.js` (Elo/credits/stats fold; `applyDelta`
 is the exported per-delta step the cabinet walks for its rating chart),
-`erc6699.js` / `hydration.js` (agent stat hydration), `snapshot.js`.
+`erc6699.js` / `hydration.js` / `registry.js` (character hydration: the
+proposed ERC-6699 shape, and block-pinned reads of ERC6699Registry v2 with
+the owner/controller check `mayPlay`), `snapshot.js`, `result.js` (the result
+commitment and the verified / disputed / unverified policy), `challenge.js`
+(proof of possession), `version.js` (`PROTOCOL_VERSION`, carried in every
+heartbeat and descriptor; peers on another version are excluded).
 
 `cabinet/protocol/` is a **generated** copy of the eight modules the cabinet
 runs (`npm run vendor:cabinet`), pinned by sha256 in
@@ -124,17 +170,33 @@ runs (`npm run vendor:cabinet`), pinned by sha256 in
 
 RPC `https://liteforge.rpc.caldera.xyz/http`, CORS `*`. Contracts in
 `contracts/deployed.testnet.json`: `NodeStake` (bond/standing), `TestLITVM`
-(the test token), `ERC6699Registry`, `EpochAnchor` (hourly root anchor —
-the node prepares calldata via `/epoch`; nothing sends the transaction
-automatically). The node only ever reads; nothing here signs a chain tx
-except `tools/bond-node.mjs`, run manually by the deployer.
+(the test token), `ERC6699Registry`, `EpochAnchor`, `PlayerProfile`,
+`NodeBadge`, `NodeDirectory`. The node only ever reads (standings, profiles,
+directory, and — with `ERC6699` set — characters at a pinned block); the only
+chain key a node holds is the delegated announcer for NodeDirectory.
+
+**Deployed today (v1, 12–17 Sep 2026) vs. in this source (v2):** the source
+carries `EpochAnchor` v2 (propose by bonded operators, finalize at quorum),
+`ERC6699Registry` v2 (minter/progressor roles, stats nonce, config hash, item
+ownership on equip) and `NodeStake` with `transferOperator`. Liteforge still
+runs v1 of all three: anyone may anchor the first root of an epoch, anyone
+may forge a character, and the exposed deployer address holds NodeStake's
+slasher/treasury and the desktop node's operator binding
+(`audit/authority-51790431.json`). `npm run deploy:testnet -- --fresh` from a
+NEW wallet deploys the v2 set and archives the old addresses; until then the
+node treats registry hydration as unavailable (`registry: unset`) and
+`tools/anchor-epoch.mjs` refuses to anchor to v1. See `contracts/MIGRATION.md`.
+
+"ERC-6699" here is this project's PROPOSED interface (whitepaper Article
+VI). No such number appears in the official ERC index at the time of
+writing; nothing in this repo should be read as an adopted standard.
 
 ## 3. Cabinet (`cabinet/`)
 
 Static site, zero dependencies, zero build step. Every node serves it at
 `/`; `node cabinet/serve.mjs` serves it alone (→ `http://127.0.0.1:5180/`);
 and the folder deploys as-is to any static host — currently Vercel at
-https://lit-games-cabinet.vercel.app. Origin is not authorization
+https://arcade.litvm.games. Origin is not authorization
 (BUILD-SPEC §12): the same page from any of those origins holds the same
 kind of key and gets the same answers from a node.
 
@@ -212,8 +274,15 @@ One list, kept here. BUILD-SPEC §16 has the reasoning behind each.
   the chain head. The witness path for player-signed ledgers is exercised
   in tests only.
 - **The relay bridge is a laptop process.** `tools/af-watch.mjs` moves
-  ledgers from the studio database to a node; it should become the `relay`
-  role's own intake.
+  ledgers from the studio database to a node, now signing each with its
+  relay key (`RELAY_KEYS` on the node); it should become the `relay` role's
+  own intake. Its results are `relay`-attested — authenticated, not
+  player-verified, and therefore not official until the AF client signs.
+- **One gameplay relay, one operator.** A second independently operated
+  relay, and a demonstration of play continuing with the publisher's relay
+  and services down, have not been done. `tools/custody.mjs` and
+  `demo/custody.test.mjs` cover records surviving a host shutdown; they do
+  not cover gameplay.
 - **No peer-to-peer transport.** Play goes through the title's relay; nodes
   place, verify and settle. WebRTC with nodes as signalling is roadmap item 3
   and the gate on retiring Railway.
@@ -223,20 +292,34 @@ One list, kept here. BUILD-SPEC §16 has the reasoning behind each.
 - **No rewards, no economics.** Credits reconcile against nothing.
 - **Delta gossip is by advertisement, not replication.** A host gone before
   a witness saw its delta leaves one signature; no obligatory custody.
-- **One witness, no disagreement path.** Differing roots are logged.
-- **Ruleset execution is an unsandboxed `import()`** of mesh-delivered JS.
-  Fine while only bonded operators run nodes; Wasm with a pinned runtime
-  before registration is permissionless.
+- **Disagreement is recorded, not adjudicated.** A witness that recomputes a
+  different result files a signed dispute; the delta is `disputed` and off
+  the official ladder while disputes ≥ agreeing co-signatures. Nothing
+  slashes anyone yet; the slasher key is the exposed deployer's.
+- **Official standings need an independent witness.** A single-operator
+  mesh produces no official result by construction.
+- **The title sandbox is a process boundary, not a formal jail.** Permission
+  model + scrubbed V8 context + JSON-only transfer + limits; a V8 bug is out
+  of scope. Hence `TITLE_TRUST=trusted` by default: peer builds need a
+  trusted publisher's signature. Permissionless title intake stays gated on
+  a track record of the sandbox (and ideally Wasm with a pinned runtime).
 - **The beacon is not secure against the sequencer**, by litVM's own docs.
-- **Contracts are deployed on testnet, unaudited**, with one slasher key
-  held by the deployer wallet; rotate before anyone outside the team bonds.
-- **Discovery is on chain, not deployed.** `NodeDirectory` is written and
-  tested (node announces with a delegated key; readers filter by bond and
-  freshness) but not yet on Liteforge; until `npm run deploy:testnet`, a
-  fresh install still needs `SEEDS=` and the hosted page serves only
-  visitors with a node.
-- **Player identity is a browser key.** Binding it to a wallet-owned profile
-  is designed in `docs/WALLET-IDENTITY.md` and not built.
+- **Contracts on testnet are v1 and unaudited; the deployer key is
+  exposed.** What it still controls is listed by `npm run authority`. The v2
+  set (this source) is compiled and tested against mocks, not deployed; the
+  migration (new wallet, `--fresh`, re-bond, re-delegate) is a user action —
+  `contracts/MIGRATION.md`.
+- **Registry hydration is wired but reads nothing on Liteforge** until
+  ERC6699Registry v2 is deployed and `ERC6699` is set; until then every
+  hydration is labelled `fixture`/`external` and a ranked result can be
+  verified only in the sense "both nodes replayed the same claimed
+  characters".
+- **Discovery is on chain** (`NodeDirectory`, deployed 17 Sep). Readers now
+  check proof of possession (`/whoami`) before treating a URL as the node it
+  claims. The bonded set a browser folds into placement is still the node's
+  read of NodeStake (`stakesFrom: 'node'`).
+- **Player identity is a browser key**, bindable to a wallet-owned
+  `PlayerProfile` (deployed; no registrations yet).
 - **A hosted cabinet cannot read a LAN node** (`https` → `http://192.168…`
   is blocked mixed content); loopback works with Chrome's one-time prompt.
   Production reaches a public https seed.

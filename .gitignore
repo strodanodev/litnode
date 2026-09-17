@@ -10,3 +10,8 @@ dist/
 cabinet/.vercel/
 .DS_Store
 Thumbs.db
+
+# audit scratch (the auditor's temp settlement stores and raw runner output; the review itself is tracked)
+audit/probe-data-*/
+audit-test-output.txt
+.agents/

@@ -3,6 +3,84 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.8.0] — 2026-09-17 — the build-audit remediation
+
+Protocol version **2**. Nodes on 0.7.x and earlier are heard, listed as
+incompatible, and excluded from placement and witnessing; update every node.
+
+### Security
+- **Title code never runs in the node process.** `node/sandbox.js` +
+  `node/sandbox-child.mjs`: every manifest read, conformance replay,
+  settlement replay, witness replay and attested-report validation runs in
+  a separate `node --permission` process with an empty environment, a heap
+  ceiling and a deadline, inside a V8 context with ECMAScript intrinsics
+  only (no `Date`, `Intl`, `WeakRef`, `Math.random`, `process`, `fetch`,
+  `require`; code generation from strings off; JSON-only data transfer).
+  A spinning title is killed at the deadline; a hungry one aborts.
+- **Conformance is two-staged**: STATIC (executes nothing; the purity regex
+  is a lint, not the boundary) then SANDBOX. `installRuleset` refuses
+  statically before handing bytes to any runtime, remembers refusals, and
+  under `TITLE_TRUST=trusted` (default) loads a peer's build only with a
+  publisher attestation (`tools/sign-build.mjs`, `TRUSTED_PUBLISHERS`).
+  The audit's bracket-access bypass and pre-rejection execution are
+  regressions in `demo/audit.test.mjs`.
+- **Results are bound and committed.** A ranked submission must name a
+  placement the mesh signed (participants, ruleset, build, mode, host,
+  beacon + block, protocol); seed = `H(beacon, matchId)`; the log must be
+  finished; provenance must be both players' signatures or an
+  authenticated relay key (`RELAY_KEYS`). Every delta carries `resultHash`
+  over the complete outcome; a witness recomputes every field itself and
+  co-signs `{matchId, resultHash}` only on a byte-identical commitment —
+  otherwise it files a signed dispute (`POST /dispute`). Attested titles
+  require an authorized court (`attestors` in the manifest or `COURTS`).
+- **Official standings** (default `/leaderboard`, `/deltas?scope=official`)
+  take ranked, placed, player-signed or court-attested, independently
+  witnessed, undisputed results. Everything else still settles, labelled
+  (`verification`: verified / disputed / unverified; `official`).
+- **Hydration reads the registry**, not the submission, when `ERC6699` is
+  set: ERC6699Registry v2 at the placement's block, and the player key's
+  profile owner must own or control the token. Submitted stats are
+  labelled `fixture` and refused in ranked.
+- **Epochs freeze** 15 minutes after the hour (`data/epochs`); leaves commit
+  to `resultHash`, the witness set as of the freeze and `verified`; proofs
+  report `finalized`/`open`. Inclusion and verification are distinct claims.
+- **Discovery proves possession**: `GET /whoami?nonce=` signs the reader's
+  nonce; nodes and the hosted cabinet admit a directory URL only after it
+  proves the key its entry names. `GET /snapshot?envelopes=1` lets the
+  client re-verify every heartbeat and recompute the root; the client also
+  checks a chain beacon against the block the descriptor names.
+- **Releases**: channels (`RELEASE_CHANNEL=canary` → `release-canary.json`),
+  a protocol floor, one-step rollback (`update.cmd --rollback`,
+  `POST /update {rollback}`), release-key rotation carried in a signed
+  manifest (`--rotate-to`, `--retire`; persisted per node).
+
+### Contracts (source; NOT deployed — `contracts/MIGRATION.md`)
+- `EpochAnchor` v2: `propose(epoch, root, nodeKey)` by the operator of a
+  bonded node only; final at `quorum` distinct operators; conflicts visible.
+- `ERC6699Registry` v2: minter/progressor roles, `statsNonce`,
+  `characterConfigHash`, `manifestNonce`, item ownership on `equip`,
+  explicit ownership. Described as this project's PROPOSED interface.
+- `NodeStake`: `transferOperator`.
+
+### Tools
+- `npm run authority` — read-only snapshot of every on-chain authority and
+  what the exposed deployer address still holds (`audit/authority-<block>.json`).
+- `npm run deploy:testnet -- --fresh --quorum 2` — the v2 set from a new wallet.
+- `npm run anchor` proposes frozen batches to v2 only.
+- `npm run custody -- export|import|verify` — durable match evidence.
+- `tools/af-watch.mjs` signs each submission with its relay key.
+
+### Tests
+- New: `audit`, `hydration`, `discovery`, `custody` suites; `settle` rebuilt
+  around the placed flow with every audit probe as a refusal or a dispute;
+  `update` covers channels, protocol floor, rotation, rollback.
+- `stop()` closes keep-alive connections, so the runner no longer hangs.
+
+### Docs
+- `docs/RUNBOOK.md`, `contracts/MIGRATION.md`, `audit/remediation.md`;
+  SPEC/README/HOST-YOUR-TITLE reconciled with what is built, deployed and
+  demonstrated.
+
 ## [0.7.0] — 2026-09-17
 
 ### Added

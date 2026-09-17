@@ -12,6 +12,14 @@ produce.
 This is the source repository. The portable zips an operator unzips are
 built from it (`npm run pack`); nothing ships that is not here.
 
+**What this is today:** a testnet arcade-node prototype with chain-based
+discovery, signed updates, sandboxed title execution and replayable,
+witness-verified match records, working toward community hosting and
+portable game characters. It is not a production service, pays no rewards,
+and its publisher-independence claim is not yet demonstrated — see
+[SPEC.md §4](SPEC.md#4-known-gaps-and-honest-zeroes) and
+[audit/remediation.md](audit/remediation.md).
+
 - [BUILD-SPEC.md](BUILD-SPEC.md) — the build plan: what is built, what is
   specified, what reports zero, and the test that proves each claim
 - [SPEC.md](SPEC.md) — as-built reference: node API, ruleset interface,
@@ -22,6 +30,13 @@ built from it (`npm run pack`); nothing ships that is not here.
   wallet: one transaction binds the player key to a litVM profile
 - [docs/HOST-YOUR-TITLE.md](docs/HOST-YOUR-TITLE.md) — put your own game on
   the mesh: the SDK, the conformance suite, and the rules of recognition
+- [docs/RUNBOOK.md](docs/RUNBOOK.md) — operator runbook: configuration,
+  disputes, evidence custody, staged releases and rollback, rotating every key
+- [contracts/MIGRATION.md](contracts/MIGRATION.md) — the testnet v1 → v2
+  contract migration (the exposed deployer key, quorum anchoring, registry roles)
+- [audit/litnode-build-review.md](audit/litnode-build-review.md) — the 17 Sep
+  build audit, and [audit/remediation.md](audit/remediation.md) — what changed
+  for it, what passed, what is deployed, what remains
 - [CHANGELOG.md](CHANGELOG.md)
 
 Live cabinet: **https://arcade.litvm.games**
@@ -32,7 +47,8 @@ Live cabinet: **https://arcade.litvm.games**
 protocol/   pure, isomorphic, dependency-free — hashing, keys, log, placement,
             pairing, beacon, snapshot, epoch tree, derive, staking reads
 node/       the daemon: identity, gossip, snapshot, fetch-by-hash, pairing,
-            placement, settlement, witness, epoch, and it serves cabinet/ at /
+            placement, settlement, witness, epoch, and it serves cabinet/ at /;
+            sandbox.js + sandbox-child.mjs — where title code runs, never here
 cabinet/    the frontend (static, no build step); cabinet/protocol/ is a
             generated copy of the modules it runs — npm run vendor:cabinet
 sdk/        what a game developer imports: defineTitle, defineBalance,
@@ -49,7 +65,7 @@ demo/       the test suites — npm test must be green before anything ships
 
 ```bash
 npm install            # only for the chain tools (ethers, solc); the node itself has no deps
-npm test               # 33 assertions across 9 suites, ~30 s (files run one at a time on purpose)
+npm test               # 19 suites, files run one at a time on purpose (~4 min; every replay is a sandbox process)
 npm run node           # one node on :7801 with its dashboard; cabinet at http://localhost:7801/
 LITNODE_PLAIN=1 npm run node   # one line per event instead of the dashboard (what litnode.log gets)
 ```
@@ -58,7 +74,11 @@ Configure with environment variables: `OPERATOR`, `PORT`, `HOST`,
 `PUBLIC_ADDR`, `SEEDS` (comma list), `ROLES` (`mesh,host,witness,settler`),
 `RULESETS`, `REGION`, `WS_ADDR` (the relay this node fronts), `RPC`,
 `NODE_STAKE`, `OFFLINE=1` (local beacon, no stake reads). Defaults for the
-chain come from `contracts/deployed.testnet.json`.
+chain come from `contracts/deployed.testnet.json`. Trust and limits:
+`TITLE_TRUST` (`trusted` — peer builds need a signature by a key in
+`TRUSTED_PUBLISHERS`; or `open`), `SANDBOX_TIMEOUT_MS` / `SANDBOX_MEMORY_MB`,
+`RELAY_KEYS`, `COURTS`, `ERC6699`, `RELEASE_CHANNEL` — all in
+[docs/RUNBOOK.md](docs/RUNBOOK.md).
 
 A mesh is more of the same, pointed at each other; only the first node is
 given the ruleset file, the others fetch it by hash:
@@ -94,31 +114,37 @@ publishes to GitHub Releases.
 Chain tools read the signing key from the environment and nowhere else:
 
 ```
-set DEPLOYER_KEY=0x...
+set DEPLOYER_KEY=0x...                          (or OPERATOR_KEY for anchoring)
+npm run authority                               read-only: who holds what on chain, and what the exposed key still holds
 npm run bond -- <nodeId>                        bond another machine's node
 npm run import:af -- <matchId> --post http://127.0.0.1:7801
-npm run watch:af                                settle new Agent Fighter ledgers as they land
-npm run anchor -- http://127.0.0.1:7801         broadcast this hour's root, verify one proof on chain
+npm run watch:af                                settle new Agent Fighter ledgers as they land (signs with its relay key)
+npm run anchor -- http://127.0.0.1:7801 <hour>  propose a FROZEN hour's root to EpochAnchor v2; final at quorum
+npm run custody -- export data/<op> out.tar     builds + ledgers + deltas + frozen epochs, verifiable anywhere
+npm run sign:build -- rulesets/<id>.js          vouch for a build as its publisher
 ```
 
 ## Titles
 
 | Title | Kind | Ruleset | State |
 |---|---|---|---|
-| Agent Fighter | replayable (`@af/core` af-core-8, bundled) | `agent-fighter.v1` | real matches settled, co-signed, anchored |
-| Pickle Brawl | attested (court-signed report) | `pickle-brawl.v1` | adapter built; no live court has reported yet |
+| Agent Fighter | replayable (`@af/core` af-core-8, bundled) | `agent-fighter.v1` | real relay matches settled and co-signed (relay-attested: not official until the client signs); one v1 anchor on 12 Sep |
+| Pickle Brawl | attested (court-signed report) | `pickle-brawl.v1` | adapter built; no authorized court configured, none has reported |
+| TUG (sample) | replayable (the SDK template) | `tug.v1` | the harness's worked example; not hosted on the desktop |
 | Robot Fighting Championship (AFC) | — | — | in the cabinet; ruleset is roadmap item 2 |
 
 ## Endpoints
 
 ```
-GET  /               the cabinet            GET  /snapshot     bonded fresh peers, manifests, root
-GET  /health         identity, bond, chain  GET  /peers        everyone heard, freshness, clock skew
-POST /queue          signed queue entry     GET  /match        frozen placement descriptors
-POST /gossip         peer exchange          GET  /ruleset/:id[?build=]
-POST /ledger         settle a match         GET  /ledger/:id · /delta/:id · /deltas
-POST /cosign         witness signature      GET  /leaderboard · /credits · /stats
-GET  /epoch[?epoch=] hour's tree + calldata GET  /proof/:matchId
+GET  /               the cabinet            GET  /snapshot[?envelopes=1]  peers, manifests, root (+ signed heartbeats)
+GET  /health         identity, bond, chain, GET  /peers        everyone heard, freshness, skew, incompatible
+                     sandbox, trust         GET  /whoami?nonce= proof of possession of the node key
+POST /queue          signed queue entry     GET  /match        frozen placement descriptors (protocol, build, beacon block)
+POST /gossip         peer exchange          GET  /ruleset/:id[?build=] · /titles
+POST /ledger         settle a placed match  GET  /ledger/:id · /delta/:id · /deltas[?scope=official]
+POST /cosign         witness signature      POST /dispute      witness disagreement, signed
+GET  /leaderboard    OFFICIAL ladder        GET  /credits · /stats     (&scope=all for everything, labelled)
+GET  /epoch[?epoch=] open or frozen batch   GET  /proof/:matchId  status finalized/open, verified, cosigners at freeze
 ```
 
 ## Honest zeroes
