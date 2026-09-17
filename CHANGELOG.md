@@ -3,6 +3,17 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.3] — 2026-09-17
+
+### Added
+- **Everything production runs as a scheduled task.** With `AF_ROOT` in
+  `node.env`, `install-task.cmd` registers `litnode-relay` (the Agent
+  Fighter match server, `.env` loaded, fronted by the node's `RELAY_PORT`
+  tunnel) and `litnode-watch` (`tools/af-watch.mjs`) beside `litnode`,
+  each restarting if it dies. The wrappers replace an orphaned earlier
+  instance instead of failing on the port. The operator zip ships
+  `af-watch.mjs`, `set-announcer.mjs` and the wrappers.
+
 ## [0.6.2] — 2026-09-17
 
 Live: the desktop delegated its announcer, announced its tunnel URL on
