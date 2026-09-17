@@ -115,6 +115,13 @@ test('placement: eligibility, publisher affinity by node key, region affinity', 
   assert.equal(claimant.host.nodeId, 'ap1', 'claiming the operator string buys nothing');
   const reg = placement({ ...base, regions: ['eu', 'eu'] });
   assert.equal(reg.host.region, 'eu');
+  // a host that fronts a relay wins over one that does not, whatever the seed says;
+  // with no relay anywhere the draw is unchanged (placed, not playable — honestly)
+  const relayed = nodes.map((n) => (n.nodeId === 'eu2' ? { ...n, wsAddr: 'wss://relay.example' } : n));
+  for (const matchId of ['m', 'm2', 'm3', 'm4']) assert.equal(placement({ ...base, nodes: relayed, matchId }).host.nodeId, 'eu2', 'relay host first');
+  assert.equal(placement({ ...base, nodes: relayed, matchId: 'm' }).order.length, 3, 'relay-first never removes the fallback');
+  const regionVsRelay = placement({ ...base, nodes: relayed.map((n) => (n.nodeId === 'ap1' ? { ...n, wsAddr: 'wss://ap.example' } : n)), regions: ['eu', 'eu'] });
+  assert.equal(regionVsRelay.host.nodeId, 'eu2', 'among relay hosts, region still decides');
 });
 
 // ---------------------------------------------------------------- pairing

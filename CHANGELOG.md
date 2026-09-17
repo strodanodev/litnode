@@ -3,6 +3,18 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.5] — 2026-09-17
+
+### Changed
+- **Placement prefers hosts that front a relay.** Seen live: the draw
+  picked a laptop with no relay while the desktop had one — placed, not
+  playable. Hosts advertising `wsAddr` now form the outermost stable
+  partition (after region and publisher affinity), so the seeded order
+  still decides among relay hosts and the open fallback stays when nobody
+  has one. Same code in node and browser; nodes and cabinets on older
+  builds will disagree with this one until updated (the cabinet then says
+  so and refuses to launch), so update all nodes together.
+
 ## [0.6.4] — 2026-09-17
 
 ### Fixed

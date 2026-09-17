@@ -5,7 +5,9 @@
  *     self-asserted operator string;
  *   - region-aware: nodes in a participant's region come first (stable), so a
  *     reproducible draw is also a playable one;
- *   - witness must be under a different operator AND a different node key.
+ *   - witness must be under a different operator AND a different node key;
+ *   - hosts that advertise a relay (wsAddr) come first (stable), because a
+ *     match on a relay-less host cannot be played until P2P lands.
  *
  *  Standing and operator are still self-asserted in this build (§16) — that
  *  is what "known operators only" means until the registry is on chain. */
@@ -40,6 +42,12 @@ export function placement({ nodes, manifest, rulesetId, matchId, beacon, regions
   if (wanted.size) order = [...order.filter((n) => wanted.has(n.region)), ...order.filter((n) => !wanted.has(n.region))];
   const pub = new Set(manifest.hostPolicy?.affinity === 'operator' ? manifest.hostPolicy.publisherNodes ?? [] : []);
   if (pub.size) order = [...order.filter((n) => pub.has(n.nodeId)), ...order.filter((n) => !pub.has(n.nodeId))];
+  // Outermost: a host that fronts a relay (wsAddr) before one that does not.
+  // Until play is peer-to-peer, a match on a relay-less host is placed but
+  // not playable (seen live: the draw picked a laptop with no relay while
+  // the desktop had one). Stable, so the seeded order still decides among
+  // relay hosts, and the open fallback remains when nobody has one.
+  if (order.some((n) => n.wsAddr)) order = [...order.filter((n) => n.wsAddr), ...order.filter((n) => !n.wsAddr)];
 
   const host = order[0] ?? null;
   // The witness draw is seeded too: the first entry in ranked order that holds
