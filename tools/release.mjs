@@ -59,10 +59,11 @@ if (Object.keys(files).length < 2) { console.error('expected at least a portable
 const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
 const section = changelog.split(/^## /m)[1] ?? '';
 const notes = notesArg ?? section.split('\n').slice(1).join('\n').trim().slice(0, 4000);
-const body = { version: pkg.version, date: new Date().toISOString(), notes, files };
+const { PROTOCOL_VERSION } = await import('../protocol/version.js');
+const body = { version: pkg.version, date: new Date().toISOString(), notes, files, channel, protocol: PROTOCOL_VERSION, ...(rotateTo ? { rotateTo } : {}), ...(retire.length ? { retire } : {}) };
 const env = await seal(RELEASE_TAG, body, key);
-writeFileSync(join(dist, 'release.json'), JSON.stringify(env, null, 2) + '\n');
-console.log(`signed dist/release.json — ${Object.keys(files).length} files, key ${key.publicKey.slice(0, 12)}…`);
+writeFileSync(join(dist, manifestName), JSON.stringify(env, null, 2) + '\n');
+console.log(`signed dist/${manifestName} — ${Object.keys(files).length} files, channel ${channel}, protocol ${PROTOCOL_VERSION}, key ${key.publicKey.slice(0, 12)}…${rotateTo ? ` · rotates to ${rotateTo.slice(0, 12)}…` : ''}`);
 for (const [f, m] of Object.entries(files)) console.log(`  ${f}  ${(m.size / 1024 / 1024).toFixed(1)} MB  ${m.sha256.slice(0, 16)}…`);
 if (dry) process.exit(0);
 
@@ -73,6 +74,6 @@ if (exists) {
   console.log(`release ${tag} exists — replacing its assets`);
   execFileSync('gh', ['release', 'upload', tag, ...assets, '--clobber'], { stdio: 'inherit' });
 } else {
-  execFileSync('gh', ['release', 'create', tag, ...assets, '--title', `litnode ${tag}`, '--notes', notes || `litnode ${tag}`, '--latest'], { stdio: 'inherit' });
+  execFileSync('gh', ['release', 'create', tag, ...assets, '--title', `litnode ${tag}${channel === 'stable' ? '' : ` (${channel})`}`, '--notes', notes || `litnode ${tag}`, ...(channel === 'stable' ? ['--latest'] : ['--prerelease'])], { stdio: 'inherit' });
 }
-console.log(`\npublished ${tag}: nodes see it at https://github.com/strodanodev/litnode/releases/latest/download/release.json`);
+console.log(`\npublished ${tag}: ${channel} nodes see it at https://github.com/strodanodev/litnode/releases/latest/download/${manifestName}`);
