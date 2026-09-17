@@ -218,7 +218,11 @@ const rankBadge = (n, color) => {
 const TIERS = [[40, 'Pantheon'], [30, 'Titan'], [20, 'Olympian'], [10, 'Contender'], [1, 'Initiate']];
 const tierOf = (level) => TIERS.find(([min]) => level >= min)[1];
 const styleTag = (s) => `<span class="style" style="--sc:${STYLES[s]?.color ?? '#999'}">${esc(STYLES[s]?.label ?? s)}</span>`;
-const nodeHint = () => (S.online ? '' : !S.checked ? '<div class="empty">Connecting to the node…</div>' : `<div class="empty">Node offline — <a class="link" href="#/node">start a node</a> to see mesh data.</div>`);
+// The hosted page is a front door: this browser talks to the mesh through a
+// node on THIS machine (https → http://localhost is allowed). No node → say
+// how to get one; the signed release is the download.
+const RELEASES = 'https://github.com/strodanodev/litnode/releases/latest';
+const nodeHint = () => (S.online ? '' : !S.checked ? '<div class="empty">Connecting to the node…</div>' : `<div class="empty">No node on this machine. The arcade reads the mesh through your own node — <a class="link" href="${RELEASES}" target="_blank" rel="noopener">get litnode</a> (Windows, nothing to install), run <span class="mono">start-node.cmd</span>, reload. <a class="link" href="#/node">Details ›</a></div>`);
 
 /** The wallet row under the key: bound → who owns it; unbound → sign in. */
 function walletLine() {
@@ -558,11 +562,12 @@ function renderNode() {
           <tr><td>Hours observed up</td><td class="num">${fmtTok(hoursOnline(S.uptime, 7 * 24 * 6))} h</td><td class="dim">this dashboard, while open — not a mesh figure</td></tr>
         </tbody></table><div class="source">There is no rewards contract on litVM; nothing accrues. Bond and wallet figures are read live from ${esc(CHAIN.name)} (chain ${CHAIN.chainId}); NodeStake ${CHAIN.NodeStake.slice(0, 10)}…</div>`, '', 's6')}
       ${panel('This node', status, h?.update?.available ? (isLoopbackNode() ? '<button class="btn sm primary" id="update-btn">Update node</button>' : '<span class="dim">update from the node\'s own machine</span>') : '', 's6')}
-      ${panel('Run a node', `<ol class="steps">
-          <li>Install Node.js 20+ if missing: <span class="mono">winget install OpenJS.NodeJS.LTS</span></li>
-          <li>Double-click <span class="mono">start-node.cmd</span> in the litnode folder. Give it an operator name and a seed URL.</li>
-          <li>Allow inbound TCP 7801 once (admin prompt):</li></ol><pre class="cmd">netsh advfirewall firewall add rule name="litnode 7801" dir=in action=allow protocol=TCP localport=7801</pre>
-          <ol class="steps" start="4"><li>Bond it from the deployer machine: <span class="mono">node tools/bond-node.mjs &lt;nodeId&gt;</span>. Health flips to <span class="mono">bonded: true</span> in ~10 s.</li></ol>`, '', 's6')}
+      ${panel('Run a node', `<p>The arcade is a peer network: this page talks to the mesh through a node on <b>your</b> machine, the way a torrent client is the peer. Every node verifies and witnesses matches for everyone.</p><ol class="steps">
+          <li><a class="link" href="${RELEASES}" target="_blank" rel="noopener">Download the latest release</a> — the <span class="mono">-win-x64</span> zip carries its own runtime; nothing to install. Releases are signed; the node checks the signature on every update.</li>
+          <li>Unzip anywhere. Double-click <span class="mono">start-node.cmd</span>. Give it a name and the seed URL of a node that is already running.</li>
+          <li>Reload this page: the header turns green and your key appears on the ladders once you play. Keep the window open — it is your peer.</li>
+          <li>Only if others must reach you (a seed, a LAN host): <span class="mono">allow-firewall.cmd</span> once. A node that only reaches outward needs nothing.</li>
+          <li>To host and witness ranked matches, bond the node's key from the operator wallet: <span class="mono">npm run bond -- &lt;nodeId&gt;</span>. Until then it plays and verifies as a guest peer.</li></ol>`, '', 's6')}
       ${panel('Peers', peers, '', 's12')}
     </div>`;
   $('node-edit2')?.addEventListener('click', editNode);
