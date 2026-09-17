@@ -58,9 +58,7 @@ async function send({ to, data = '0x', value = 0n }) {
   throw new Error(`tx ${hash} not mined in 60 s`);
 }
 
-process.on('unhandledRejection', (e) => { console.error(`
-✗ ${e.message ?? e}${/execution reverted|revert/i.test(String(e.message)) ? '
-  (a revert here usually means DEPLOYER_KEY is not the wallet that bonded this node)' : ''}`); process.exit(1); });
+process.on('unhandledRejection', (e) => { const m = String(e?.message ?? e); console.error('✗ ' + m + (/revert/i.test(m) ? ' (a revert here usually means DEPLOYER_KEY is not the wallet that bonded this node)' : '')); process.exit(1); });
 console.log(`operator ${from} · ${fmt(await rpc('eth_getBalance', [from, 'latest']))} zkLTC · NodeDirectory ${dir}`);
 const cur = decodeAddress(await rpc('eth_call', [announcerOfCall(dir, nodeId), 'latest']));
 if (cur.toLowerCase() === announcer.toLowerCase()) console.log(`announcer already ${announcer}`);
