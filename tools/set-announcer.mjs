@@ -58,12 +58,13 @@ async function send({ to, data = '0x', value = 0n }) {
   throw new Error(`tx ${hash} not mined in 60 s`);
 }
 
-process.on('unhandledRejection', (e) => { const m = String(e?.message ?? e); console.error('✗ ' + m + (/revert/i.test(m) ? ' (a revert here usually means DEPLOYER_KEY is not the wallet that bonded this node)' : '')); process.exit(1); });
-console.log(`operator ${from} · ${fmt(await rpc('eth_getBalance', [from, 'latest']))} zkLTC · NodeDirectory ${dir}`);
-const cur = decodeAddress(await rpc('eth_call', [announcerOfCall(dir, nodeId), 'latest']));
-if (cur.toLowerCase() === announcer.toLowerCase()) console.log(`announcer already ${announcer}`);
-else { const h = await send({ to: dir, data: setAnnouncerCalldata(nodeId, announcer) }); console.log(`delegated ${announcer} for node ${nodeId.slice(0, 12)}… (tx ${h})`); }
-if (fund) { const h = await send({ to: announcer, value: wei(fund) }); console.log(`sent ${fund} zkLTC to ${announcer} (tx ${h})`); }
-console.log(`announcer balance ${fmt(await rpc('eth_getBalance', [announcer, 'latest']))} zkLTC`);
-const e = decodeEntry(await rpc('eth_call', [entryOfCall(dir, nodeId), 'latest']));
-console.log(`current entry: ${e.url || '(none yet — the node announces on its next directory cycle)'} ${e.wsAddr || ''} ${e.updatedAt ? new Date(e.updatedAt * 1000).toISOString() : ''}`);
+try {
+  console.log(`operator ${from} · ${fmt(await rpc('eth_getBalance', [from, 'latest']))} zkLTC · NodeDirectory ${dir}`);
+  const cur = decodeAddress(await rpc('eth_call', [announcerOfCall(dir, nodeId), 'latest']));
+  if (cur.toLowerCase() === announcer.toLowerCase()) console.log(`announcer already ${announcer}`);
+  else { const h = await send({ to: dir, data: setAnnouncerCalldata(nodeId, announcer) }); console.log(`delegated ${announcer} for node ${nodeId.slice(0, 12)}… (tx ${h})`); }
+  if (fund) { const h = await send({ to: announcer, value: wei(fund) }); console.log(`sent ${fund} zkLTC to ${announcer} (tx ${h})`); }
+  console.log(`announcer balance ${fmt(await rpc('eth_getBalance', [announcer, 'latest']))} zkLTC`);
+  const e = decodeEntry(await rpc('eth_call', [entryOfCall(dir, nodeId), 'latest']));
+  console.log(`current entry: ${e.url || '(none yet — the node announces on its next directory cycle)'} ${e.wsAddr || ''} ${e.updatedAt ? new Date(e.updatedAt * 1000).toISOString() : ''}`);
+} catch (e) { const m = String(e?.message ?? e); console.error('✗ ' + m + (/revert/i.test(m) ? ' (a revert here usually means DEPLOYER_KEY is not the wallet that bonded this node)' : '')); process.exit(1); }
