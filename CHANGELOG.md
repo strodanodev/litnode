@@ -3,6 +3,23 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.2] — 2026-09-17
+
+### Added
+- **UPnP** (`UPNP=1`): the node asks the router to forward its port (and
+  `RELAY_PORT`) and advertises the public IP — what a torrent client does,
+  no third party. `/health.upnp` reports the gateway, the public IP, what
+  was mapped, and **`cgnat: true`** when the router's WAN address is in
+  100.64/10: the ISP shares its public IP, so no mapping can make the node
+  reachable and only an outbound tunnel can. Found live on the desktop's
+  line (hop 2 = 100.86.0.1, no IPv6). `demo/upnp.test.mjs` against a fake
+  gateway.
+- The hosted cabinet is a front door: an https page may talk to
+  `http://localhost`, so `arcade.litvm.games` reads the mesh through the
+  visitor's own node; with no node it links the signed release. The
+  cabinet refuses to queue, with the reason, when its node's clock is off
+  the mesh or it has no peers.
+
 ## [0.5.1] — 2026-09-17
 
 ### Added

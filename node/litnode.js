@@ -20,6 +20,7 @@ import { createChain } from './chain.js';
 import { createSettlement } from './settle.js';
 import { createUpdater, RESTART_EXIT } from './update.js';
 import { createTunnel } from './tunnel.js';
+import { keepMapped } from './upnp.js';
 
 // Every response is readable from any origin, and from an https page reaching
 // a loopback node (Chrome's Private Network Access asks on the preflight).
@@ -50,6 +51,9 @@ export async function createNode({
   // node's own port; relayPort fronts a title's relay on this machine and
   // advertises it as wsAddr. tunnelBin is for tests.
   tunnel = null, tunnelName = null, tunnelHost = null, relayPort = null, relayTunnelName = null, relayTunnelHost = null, tunnelBin = undefined,
+  // UPnP: ask the router to forward our port (and the relay's) — what a
+  // torrent client does. Reports CGNAT when the ISP makes it pointless.
+  upnp = false, upnpGateway = null,
   heartbeatMs = EPOCH_MS / 2, log = () => {}, onEvent = () => {},
 }) {
   // Every observable thing the node does goes through emit(): the TUI draws
@@ -155,6 +159,7 @@ export async function createNode({
   let wsAddr = wsAddrIn;        // the relay this node fronts; a relay tunnel sets it live
   let lanAddr = null;           // what we listen on, kept for /health when a tunnel replaces addr
   const tunnels = { node: null, relay: null };
+  let upnpCtl = null;
   let lastBonded = null;        // the bonded set as last reported; stakes events fire on change only
   let addr = publicAddr;
 
@@ -369,7 +374,7 @@ export async function createNode({
       if (req.method === 'GET' && url.pathname === '/health') {
         const s = currentSnapshot();
         return json(res, 200, { nodeId, operator, roles, region, addr, epoch: s.epoch, peers: s.peers.length, rulesets: buildHashes(), buildsHeld: builds.size, staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null, chain: chain.status(), profiles: profileState(), version, update: updater.status(),
-          wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt,
+          wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, upnp: upnpCtl?.status() ?? null, startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt,
           // reachable: a peer has pushed gossip to us in the last 30 s. null = no peers known, so nothing to conclude.
           inbound: { peers: [...inbound.values()].filter((t) => Date.now() - t < 30_000).length, lastAt: inbound.size ? new Date(Math.max(...inbound.values())).toISOString() : null, reachable: peersKnown.size ? [...inbound.values()].some((t) => Date.now() - t < 30_000) : null } });
       }
@@ -516,6 +521,12 @@ export async function createNode({
   const actualPort = server.address().port;
   addr ??= `http://${host}:${actualPort}`;
   lanAddr = addr;
+  if (upnp) {
+    const ports = [{ external: actualPort, internal: actualPort, label: 'node' }];
+    if (relayPort) ports.push({ external: relayPort, internal: relayPort, label: 'relay' });
+    upnpCtl = keepMapped(ports, { log, gateway: upnpGateway });
+    upnpCtl.ready.then(() => { const s = upnpCtl.status(); emit('upnp', s); if (s.mapped.length && !tunnel && s.publicIp && !s.cgnat) { addr = `http://${s.publicIp}:${actualPort}`; log(`advertising ${addr} (UPnP)`); } });
+  }
   // The node's own tunnel: when it comes up, its URL becomes the address we
   // advertise; when it drops, we fall back to the LAN address. A relay tunnel
   // does the same for wsAddr. Peers learn both from the next heartbeat.
@@ -543,7 +554,7 @@ export async function createNode({
     nodeId, addr, port: actualPort, identity,
     snapshot: currentSnapshot, matches: matchesNow, installRuleset, chain, settlement,
     rulesets: () => buildHashes(), peers: () => heartbeats, inbound, operator, roles, region, startedAt,
-    version, updater, restart, tunnels, get wsAddr() { return wsAddr; },
-    async stop() { clearInterval(timer); clearInterval(updateTimer); tunnels.node?.stop(); tunnels.relay?.stop(); await new Promise((r) => server.close(r)); },
+    version, updater, restart, tunnels, upnp: upnpCtl, get wsAddr() { return wsAddr; },
+    async stop() { clearInterval(timer); clearInterval(updateTimer); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); await new Promise((r) => server.close(r)); },
   };
 }

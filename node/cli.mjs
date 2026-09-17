@@ -55,6 +55,7 @@ const node = await createNode({
   relayPort: env.RELAY_PORT ? Number(env.RELAY_PORT) : null,
   relayTunnelName: env.RELAY_TUNNEL_NAME ?? null, relayTunnelHost: env.RELAY_TUNNEL_HOST ?? null,
   releaseUrl: env.RELEASE_URL || undefined,           // a mirror, for testing
+  upnp: env.UPNP === '1',                             // ask the router to forward PORT (and RELAY_PORT); reports CGNAT
   log: tui ? tui.log : (m) => console.log(`${stamp()} ${m}`),
   onEvent: tui ? tui.event : plainEvent,
 });
