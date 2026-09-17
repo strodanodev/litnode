@@ -4,5 +4,8 @@
   "engine": null,
   "afCommit": null,
   "bytes": 4528,
-  "builtAt": "2026-09-12T15:02:40.428Z"
+  "builtAt": "2026-09-12T15:02:40.428Z",
+  "publisher": "4d8759b0dab63817f0984a6eec1ec0d6ac4933a9c0aeb26a0de2d61755e08150",
+  "sig": "32a6fef7750cded6466e6f467ead0ae706baddfc974ed84aac6a3acab4697e5d52480c557b97315491b29fc087b9f58200df7f06c330ab87a98ba2b48278810b",
+  "signedAt": "2026-09-17T13:09:42.673Z"
 }

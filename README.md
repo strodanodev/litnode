@@ -20,9 +20,11 @@ built from it (`npm run pack`); nothing ships that is not here.
   between the cabinet and the node, and what is still open between them
 - [docs/WALLET-IDENTITY.md](docs/WALLET-IDENTITY.md) — sign in with a
   wallet: one transaction binds the player key to a litVM profile
+- [docs/HOST-YOUR-TITLE.md](docs/HOST-YOUR-TITLE.md) — put your own game on
+  the mesh: the SDK, the conformance suite, and the rules of recognition
 - [CHANGELOG.md](CHANGELOG.md)
 
-Live cabinet: **https://lit-games-cabinet.vercel.app**
+Live cabinet: **https://arcade.litvm.games**
 
 ## Layout
 
@@ -33,10 +35,12 @@ node/       the daemon: identity, gossip, snapshot, fetch-by-hash, pairing,
             placement, settlement, witness, epoch, and it serves cabinet/ at /
 cabinet/    the frontend (static, no build step); cabinet/protocol/ is a
             generated copy of the modules it runs — npm run vendor:cabinet
+sdk/        what a game developer imports: defineTitle, defineBalance,
+            seededRandom; the conformance suite; the template title
 titles/     defineTitle / defineAttestedTitle and the in-house adapters
 rulesets/   bundled single-file rulesets, pinned by buildHash
 contracts/  NodeStake, TestLITVM, ERC6699Registry, EpochAnchor + testnet addresses
-tools/      bundle, pack, vendor, bond, import/watch Agent Fighter ledgers, anchor
+tools/      create-title, bundle-title, pack, vendor, bond, release, announcer, anchor
 portable/   what goes in the zips: start-node.cmd, node.env, operator README
 demo/       the test suites — npm test must be green before anything ships
 ```

@@ -59,7 +59,7 @@ for (const kind of kinds) {
   rmSync(stage, { recursive: true, force: true });
   mkdirSync(stage, { recursive: true });
 
-  for (const d of ['node', 'protocol', 'rulesets', 'cabinet']) cpSync(join(root, d), join(stage, d), { recursive: true });
+  for (const d of ['node', 'protocol', 'sdk', 'titles', 'rulesets', 'cabinet']) cpSync(join(root, d), join(stage, d), { recursive: true });
   mkdirSync(join(stage, 'contracts'), { recursive: true });
   for (const f of ['deployed.testnet.json', 'deploy.testnet.json']) if (existsSync(join(root, 'contracts', f))) cpSync(join(root, 'contracts', f), join(stage, 'contracts', f));
   mkdirSync(join(stage, 'tools'), { recursive: true });

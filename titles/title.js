@@ -20,6 +20,9 @@ export function defineTitle({
   participants = 2, inputSchema = 'bitfield-per-tick', hiddenInfo = false,
   balance, hostPolicy = { affinity: 'open' }, replicas = 3, standingFloor = 0, exclusive = false,
   init, step, done, scores, serialize, view, services = {},
+  // How the arcade lists the title: { title, url, description?, cover?, accent? }.
+  // url is where the game runs; the cabinet launches it with cabinet:init.
+  display = null,
 }) {
   for (const [name, fn] of Object.entries({ init, step, done, scores, serialize, view }))
     if (typeof fn !== 'function') throw new Error(`defineTitle: ${name} is required`);
@@ -28,7 +31,7 @@ export function defineTitle({
     manifest: {
       kind: 'replayable',
       rulesetId, tickRate, maxTicks, modes, participants, inputSchema, hiddenInfo,
-      replicas, standingFloor, hostPolicy, exclusive,
+      replicas, standingFloor, hostPolicy, exclusive, display,
       balanceVersion: balance?.version ?? null,
       services: {
         leaderboard: services.leaderboard ?? null,
@@ -50,14 +53,14 @@ export function defineTitle({
 export function defineAttestedTitle({
   rulesetId, modes = ['ranked', 'casual'], participants = [2], teams = 2,
   balance = null, hostPolicy = { affinity: 'open' }, standingFloor = 0,
-  services = {}, validate, scores, equipment = 'studio',
+  services = {}, validate, scores, equipment = 'studio', display = null,
 }) {
   for (const [name, fn] of Object.entries({ validate, scores }))
     if (typeof fn !== 'function') throw new Error(`defineAttestedTitle: ${name} is required`);
   return {
     manifest: {
       kind: 'attested',
-      rulesetId, modes, participants, teams, standingFloor, hostPolicy, equipment,
+      rulesetId, modes, participants, teams, standingFloor, hostPolicy, equipment, display,
       balanceVersion: balance?.version ?? null,
       services: {
         leaderboard: services.leaderboard ?? null,

@@ -62,6 +62,21 @@ const node = await createNode({
   nodeDirectory: env.NODE_DIRECTORY ?? deployed.NodeDirectory?.address ?? null,
   chainId: deployed.chainId ?? 4441,
   announce: env.ANNOUNCE !== '0',
+  // ERC6699Registry v2: characters for ranked play come from here at the
+  // placement's block. Unset (or a v1 address) → hydration is labelled.
+  erc6699: env.ERC6699 ?? deployed.ERC6699RegistryV2?.address ?? null,
+  // Title sandbox limits (node/sandbox.js). Every replay is a separate
+  // permission-restricted process; these are its deadline and heap ceiling.
+  sandboxTimeoutMs: Number(env.SANDBOX_TIMEOUT_MS ?? 10_000), sandboxMemoryMb: Number(env.SANDBOX_MEMORY_MB ?? 256),
+  // TITLE_TRUST=trusted (default): builds from peers load only when signed
+  // by a key in TRUSTED_PUBLISHERS (default: the litVM release key).
+  // TITLE_TRUST=open: any conformant build — the sandbox is the boundary.
+  titleTrust: env.TITLE_TRUST === 'open' ? 'open' : 'trusted',
+  trustedPublishers: list(env.TRUSTED_PUBLISHERS).length ? list(env.TRUSTED_PUBLISHERS) : undefined,
+  // COURTS=pickle-brawl.v1:<pubkey>[,<pubkey>];<rulesetId>:… — authorized attestors per attested title.
+  courts: Object.fromEntries((env.COURTS ?? '').split(';').map((x) => x.trim()).filter(Boolean).map((x) => { const [rid, keys] = x.split(':'); return [rid, list(keys)]; })),
+  // RELAY_KEYS=<pubkey>,… — relays whose signed submissions this host settles as 'relay' provenance (tools/af-watch.mjs prints its key).
+  relayKeys: list(env.RELAY_KEYS),
   log: tui ? tui.log : (m) => console.log(`${stamp()} ${m}`),
   onEvent: tui ? tui.event : plainEvent,
 });

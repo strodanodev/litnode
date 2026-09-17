@@ -33,10 +33,10 @@ async function playSigned(matchId, kps) {
   const ai = [engine.createAi(0, 60, 11), engine.createAi(1, 60, 99)];
   const log = createLog();
   while (!title.done(s)) { const fr = [engine.aiPoll(ai[0], s), engine.aiPoll(ai[1], s)]; log.append(fr); title.step(s, { [P[0]]: fr[0], [P[1]]: fr[1] }); }
-  const hm = hydrationManifest({ agents: [agents[P[0]], agents[P[1]]], mode: 'ranked', balanceVersion: balance.version });
+  const hm = hydrationManifest({ agents: [agents[P[0]], agents[P[1]]], mode: 'casual', balanceVersion: balance.version });
   const body = ledgerBody({ matchId, ticks: log.length, head: log.head, buildHash: manifest.buildHash, hydrationHash: hm.manifestHash });
   const signatures = Object.fromEntries(await Promise.all(kps.map(async (k) => [k.publicKey, await signLedger(body, k)])));
-  return { matchId, rulesetId: 'agent-fighter.v1', buildHash: manifest.buildHash, mode: 'ranked', participants: P, entries: log.entries(), signatures, hydration: { agents } };
+  return { matchId, rulesetId: 'agent-fighter.v1', buildHash: manifest.buildHash, mode: 'casual', participants: P, entries: log.entries(), signatures, hydration: { agents } };
 }
 
 /** assert every (name → typeof) in `shape` is present on `obj`. */
@@ -95,13 +95,16 @@ test('cabinet contract: fields by name, cabinet served at /, vendored protocol i
   hasFields(snap, { epoch: 'number', peers: 'array', manifests: 'object', root: 'string', staking: 'string' }, '/snapshot');
   hasFields(snap.manifests['agent-fighter.v1'], { buildHash: 'string', services: 'object' }, '/snapshot.manifests');
 
-  // /leaderboard
-  const lb = await json('/leaderboard?ruleset=agent-fighter.v1');
-  hasFields(lb, { rulesetId: 'string', deriveVersion: 'number', digest: 'string', skipped: 'array', leaderboard: 'array' }, '/leaderboard');
+  // /leaderboard — official by default (ranked, placed, verified): this unplaced casual fixture is not on it
+  const official = await json('/leaderboard?ruleset=agent-fighter.v1');
+  hasFields(official, { rulesetId: 'string', scope: 'string', deriveVersion: 'number', digest: 'string', skipped: 'array', leaderboard: 'array' }, '/leaderboard');
+  assert.equal(official.scope, 'official'); assert.equal(official.leaderboard.length, 0, 'an unplaced, unwitnessed casual result is not an official standing');
+  const lb = await json('/leaderboard?ruleset=agent-fighter.v1&scope=all');
+  assert.equal(lb.scope, 'all');
   hasFields(lb.leaderboard[0], { rank: 'number', player: 'string', rating: 'number' }, '/leaderboard[0]');
 
   // /stats — keyed by playerId
-  const st = await json('/stats?ruleset=agent-fighter.v1');
+  const st = await json('/stats?ruleset=agent-fighter.v1&scope=all');
   hasFields(st[kps[0].publicKey], { matches: 'number', wins: 'number', ticks: 'number' }, '/stats[player]');
 
   // /seeds — the bootstrap list this node last read from NodeDirectory (unset in this offline node)
@@ -116,7 +119,9 @@ test('cabinet contract: fields by name, cabinet served at /, vendored protocol i
   // /deltas — what the history table and the rating chart are built from
   const ds = await json('/deltas?ruleset=agent-fighter.v1');
   hasFields(ds, { deltas: 'array' }, '/deltas');
-  hasFields(ds.deltas[0], { matchId: 'string', rulesetId: 'string', buildHash: 'string', mode: 'string', participants: 'array', scores: 'object', ticks: 'number', hostId: 'string', cosigners: 'array', settledAt: 'string', epoch: 'number', attestation: 'string' }, '/deltas[0]');
+  hasFields(ds.deltas[0], { matchId: 'string', rulesetId: 'string', buildHash: 'string', mode: 'string', participants: 'array', scores: 'object', ticks: 'number', hostId: 'string', cosigners: 'array', disputes: 'array', settledAt: 'string', epoch: 'number', attestation: 'string', placed: 'boolean', resultHash: 'string', hydrationSource: 'string', verification: 'string', official: 'boolean', protocol: 'number' }, '/deltas[0]');
+  assert.equal(ds.deltas[0].verification, 'unverified'); assert.equal(ds.deltas[0].placed, false);
+  assert.equal((await json('/deltas?ruleset=agent-fighter.v1&scope=official')).deltas.length, 0);
 
   // the cabinet's rating trajectory (applyDelta step by step) ends where /leaderboard says
   const tables = { rating: {}, credits: {}, stats: {} };

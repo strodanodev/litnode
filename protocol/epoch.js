@@ -7,13 +7,25 @@ import { selector } from './keccak.js';
 export const EPOCH_HOUR_MS = 3_600_000;
 export const hourOf = (ms) => Math.floor(ms / EPOCH_HOUR_MS);
 
-/** A leaf commits to everything a match settled: the ruleset build, the
- *  state root, the hydration, the scores, who hosted and who co-signed. */
-export const leafOf = (d) => h('leaf', {
+/** A leaf commits to everything a match settled — through the result
+ *  commitment (protocol/result.js: build, root, hydration, scores, seed,
+ *  attestation, host…) — plus the witness set and the verification status
+ *  AS OF THE FREEZE. A co-signature that arrives after the hour is frozen
+ *  lands on the delta but never changes the leaf, so a historical proof
+ *  stays reproducible from the frozen batch alone (BUILD-SPEC §11, audit
+ *  finding 4). `verified` is what a reader uses to tell "included in a
+ *  committed batch" from "independently verified competitive result". */
+export const leafOf = (d, { cosigners = d.cosigners ?? [], verified = d.verified ?? false } = {}) => h('leaf', {
   matchId: d.matchId, rulesetId: d.rulesetId, buildHash: d.buildHash,
+  resultHash: d.resultHash ?? null,
   finalStateRoot: d.finalStateRoot, hydrationHash: d.hydrationHash,
-  scores: d.scores, hostId: d.hostId, cosigners: [...(d.cosigners ?? [])].sort(),
+  scores: d.scores, hostId: d.hostId, cosigners: [...cosigners].sort(), verified: !!verified,
 });
+
+/** How long after the hour ends a batch stays open for late co-signatures
+ *  before the node freezes it. */
+export const FREEZE_GRACE_MS = 15 * 60_000;
+export const freezeAt = (hour) => (hour + 1) * EPOCH_HOUR_MS + FREEZE_GRACE_MS;
 
 const pairHash = (a, b) => sha256Hex(`${a}${b}`);
 
@@ -52,9 +64,20 @@ export function verifyProof(leaf, path, root) {
   return cur === root;
 }
 
-/** anchorEpoch(uint64 epoch, bytes32 root) calldata. The selector is derived
- *  with keccak here rather than copied, so the spec's constant is checked
- *  by the test rather than trusted. */
+/** EpochAnchor v2: propose(uint64 epoch, bytes32 root, bytes32 nodeKey),
+ *  callable only by the operator of the bonded `nodeKey`; the root finalizes
+ *  when `quorum` distinct operators proposed it. The selector is derived
+ *  with keccak here rather than copied, so the constant is checked by the
+ *  test rather than trusted. */
+export const PROPOSE_SIG = 'propose(uint64,bytes32,bytes32)';
+export const proposeSelector = () => selector(PROPOSE_SIG);
+export function proposeCalldata(epochHour, rootHex, nodeKeyHex) {
+  const root = rootHex.replace(/^0x/, ''), key = nodeKeyHex.replace(/^0x/, '');
+  if (root.length !== 64) throw new Error('root must be 32 bytes');
+  if (key.length !== 64) throw new Error('nodeKey must be 32 bytes');
+  return proposeSelector() + BigInt(epochHour).toString(16).padStart(64, '0') + root + key;
+}
+/** v1 (any caller, first root wins) — kept so an old anchor can still be decoded; do not use for new anchors. */
 export const ANCHOR_SIG = 'anchorEpoch(uint64,bytes32)';
 export const anchorSelector = () => selector(ANCHOR_SIG);
 export function anchorCalldata(epochHour, rootHex) {

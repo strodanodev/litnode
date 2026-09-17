@@ -4,8 +4,9 @@ import { beaconFromBlocks, blockOf, localBeacon } from '../protocol/beacon.js';
 import { standingCall, decodeStanding } from '../protocol/staking.js';
 import { ownerOfKeyCall, decodeOwner, nameOfCall, decodeString } from '../protocol/profile.js';
 import { keysCall, decodeKeys, entryOfCall, decodeEntry } from '../protocol/directory.js';
+import { readAgent } from '../protocol/registry.js';
 
-export function createChain({ rpc, offline = false, nodeStake = null, playerProfile = null, nodeDirectory = null, fetchImpl = globalThis.fetch }) {
+export function createChain({ rpc, offline = false, nodeStake = null, playerProfile = null, nodeDirectory = null, erc6699 = null, fetchImpl = globalThis.fetch }) {
   let id = 0;
   const blocks = [];
   let lastError = null;
@@ -67,6 +68,15 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
     try { return decodeString(await call('eth_call', [nameOfCall(playerProfile, tokenId), 'latest'])); } catch { return null; }
   };
 
+  /** ERC6699Registry (v2) at a PINNED block: the character as the chain had
+   *  it when the match was placed. Same reads on every node → same agent.
+   *  A registry that cannot serve the block (pruned) throws; the caller
+   *  refuses rather than hydrating from the submission. */
+  const agentAt = async (tokenId, blockTag = 'latest') => {
+    if (!erc6699 || offline) return null;
+    return readAgent((payload, tag) => call('eth_call', [payload, tag]), erc6699, tokenId, blockTag);
+  };
+
   /** NodeDirectory: every announced key → entry. Missing contract → null. */
   const directory = async () => {
     if (!nodeDirectory || offline) return null;
@@ -79,7 +89,7 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
   };
 
   return {
-    pollBlock, beaconFor, standings, profiles, profileName, directory, rpc: call,
-    status: () => ({ rpc, offline, nodeStake, playerProfile, nodeDirectory, blocks: blocks.length, head: blocks.at(-1)?.number ?? null, lastError }),
+    pollBlock, beaconFor, standings, profiles, profileName, directory, agentAt, rpc: call,
+    status: () => ({ rpc, offline, nodeStake, playerProfile, nodeDirectory, erc6699, blocks: blocks.length, head: blocks.at(-1)?.number ?? null, lastError }),
   };
 }

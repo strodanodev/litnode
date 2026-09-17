@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSy
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { h } from '../protocol/canonical.js';
-import { generateKeypair, seal, opened } from '../protocol/keys.js';
+import { generateKeypair, seal, opened, verify } from '../protocol/keys.js';
 import { snapshot as buildSnapshot, verifyHeartbeats, HEARTBEAT_TAG, epochOf, EPOCH_MS } from '../protocol/snapshot.js';
 import { applyStakes } from '../protocol/staking.js';
 import { pair, QUEUE_TAG, bucketOf } from '../protocol/pairing.js';
@@ -23,6 +23,12 @@ import { createTunnel } from './tunnel.js';
 import { keepMapped } from './upnp.js';
 import { createAnnouncer } from './announce.js';
 import { liveSeeds } from '../protocol/directory.js';
+import { check as conformance, staticCheck } from '../sdk/conformance.mjs';
+import { createSandbox } from './sandbox.js';
+import { RELEASE_PUBKEY } from './update.js';
+import { PROTOCOL_VERSION } from '../protocol/version.js';
+import { answerChallenge, checkChallenge, newNonce, NONCE_RE } from '../protocol/challenge.js';
+import { descriptorHash as descriptorHashOf } from './settle.js';
 
 // Every response is readable from any origin, and from an https page reaching
 // a loopback node (Chrome's Private Network Access asks on the preflight).
@@ -59,6 +65,24 @@ export async function createNode({
   // NodeDirectory: read the live seed list from the chain (bootstrap) and,
   // with a delegated announcer key, publish our own addresses there.
   nodeDirectory = null, chainId = null, announce = true,
+  // ERC6699Registry (this project's proposed interface): characters for
+  // ranked play are read from here at the placement's block, never from
+  // the submission. Unset → hydration is labelled fixture/external.
+  erc6699 = null,
+  // Title sandbox (node/sandbox.js): every replay runs in a separate,
+  // permission-restricted process with these limits.
+  sandboxTimeoutMs = 10_000, sandboxMemoryMb = 256,
+  // Which builds this node will load from PEERS. 'trusted' (default): only
+  // builds whose {rulesetId, buildHash} attestation is signed by a key in
+  // trustedPublishers (default: the litVM release key). 'open': any build
+  // that passes conformance — the sandbox is then the only boundary.
+  // Builds named in RULESETS (local files) are the operator's own choice
+  // and always load.
+  titleTrust = 'trusted', trustedPublishers = [RELEASE_PUBKEY],
+  // Courts this operator authorizes for attested titles: rulesetId → [pubkeys].
+  courts = {},
+  // Relay keys whose signed submissions this host accepts as 'relay' provenance.
+  relayKeys = [],
   heartbeatMs = EPOCH_MS / 2, log = () => {}, onEvent = () => {},
 }) {
   // Every observable thing the node does goes through emit(): the TUI draws
@@ -85,7 +109,9 @@ export async function createNode({
   if (!existsSync(idPath)) writeFileSync(idPath, JSON.stringify(identity, null, 2) + '\n');
   const nodeId = identity.publicKey;
 
-  const chain = createChain({ rpc: rpc ?? 'offline', offline, nodeStake, playerProfile, nodeDirectory, fetchImpl: chainFetch });
+  const chain = createChain({ rpc: rpc ?? 'offline', offline, nodeStake, playerProfile, nodeDirectory, erc6699, fetchImpl: chainFetch });
+  const sandbox = createSandbox({ timeoutMs: sandboxTimeoutMs, memoryMb: sandboxMemoryMb, log });
+  if (!sandbox.flag) throw new Error('this Node runtime has no permission model (--permission); litnode refuses to host titles without the sandbox');
 
   // ---------------------------------------------------------------- player profiles
   // key → { owner, tokenId, active, at }. Read like stakes: every tick, for
@@ -109,49 +135,93 @@ export async function createNode({
   };
 
   // ---------------------------------------------------------------- rulesets
-  const loaded = new Map(); // rulesetId → CURRENT build { buildHash, source, title, mod } (advertised)
+  const loaded = new Map(); // rulesetId → CURRENT build (advertised)
   // Every build this node has ever held, by hash. A delta names the build it
   // was settled with; a witness must replay in THAT build, not the newest.
   // Nothing is ever evicted: an old delta stays verifiable for as long as
   // one node kept the bytes (BUILD-SPEC §4).
-  const builds = new Map(); // buildHash → { rulesetId, buildHash, source, title, mod }
-  const importSource = async (source, buildHash) => {
-    // .mjs so the cache dir needs no package.json to be treated as ESM.
-    const file = join(dataDir, 'rulesets', `${buildHash}.mjs`);
-    if (!existsSync(file)) writeFileSync(file, source);
-    const mod = await import(pathToFileURL(file).href);
-    const title = mod.default;
-    if (!title?.manifest?.rulesetId) throw new Error('ruleset has no default defineTitle export');
-    return { title, mod };
-  };
-  /** Install a ruleset ONLY if its bytes hash to the pinned value. */
-  const installRuleset = async (source, expectedHash, { current = true } = {}) => {
+  //
+  // A build is { rulesetId, buildHash, source, manifest, kind, publisher,
+  // sig, origin }. There is NO title object: title code never runs in this
+  // process. Manifest and replays come out of the sandbox.
+  const builds = new Map();
+  const BUILD_TAG = 'build';
+  /** Who vouches for a build: sig = sign('build', { rulesetId, buildHash }, publisherKey). */
+  const buildAttested = async (rulesetId, buildHash, att) => !!att?.publisher && !!att?.sig && trustedPublishers.includes(att.publisher) && (await verify(BUILD_TAG, { rulesetId, buildHash }, att.sig, att.publisher));
+  /** Install a ruleset ONLY if its bytes hash to the pinned value, it passes
+   *  the STATIC stage (nothing has executed anywhere yet), it passes the
+   *  SANDBOX stage (executed only inside node/sandbox.js), and — for a build
+   *  that did not come from this operator's own RULESETS — the trust policy
+   *  admits it. A refusal executes no title code in this process; a refused
+   *  build is remembered so peers cannot make us re-run the suite forever. */
+  const refused = new Map(); // buildHash → reason
+  const installRuleset = async (source, expectedHash, { current = true, origin = 'peer', attestation = null } = {}) => {
     const actual = rulesetHash(source);
     if (expectedHash && actual !== expectedHash) throw new Error(`ruleset hash mismatch: expected ${expectedHash.slice(0, 12)} got ${actual.slice(0, 12)}`);
-    if (builds.has(actual)) { if (current) loaded.set(builds.get(actual).rulesetId, builds.get(actual)); return builds.get(actual).title; }
-    const { title, mod } = await importSource(source, actual);
-    const entry = { rulesetId: title.manifest.rulesetId, buildHash: actual, source, title, mod };
+    if (builds.has(actual)) { const b = builds.get(actual); if (current) loaded.set(b.rulesetId, b); return b; }
+    if (refused.has(actual)) throw new Error(`ruleset ${actual.slice(0, 12)} refused earlier: ${refused.get(actual)}`);
+    const st = staticCheck(source);
+    if (!st.ok) {
+      const failed = st.checks.filter((c) => !c.ok && !c.warn).map((c) => `${c.name}${c.detail ? ` (${c.detail})` : ''}`);
+      refused.set(actual, failed.join('; ')); emit('ruleset-refused', { buildHash: actual, stage: 'static', failed });
+      throw new Error(`ruleset ${actual.slice(0, 12)} refused (static, nothing executed): ${failed.join('; ')}`);
+    }
+    const conf = await conformance(source, { ticks: 120, sandbox, timeoutMs: sandboxTimeoutMs * 3 });
+    if (!conf.ok) {
+      const failed = conf.checks.filter((c) => !c.ok && !c.warn).map((c) => `${c.name}${c.detail ? ` (${c.detail})` : ''}`);
+      refused.set(actual, failed.join('; ')); emit('ruleset-refused', { buildHash: actual, stage: conf.stage, failed });
+      throw new Error(`ruleset ${actual.slice(0, 12)} refused (${conf.stage}): ${failed.join('; ')}`);
+    }
+    const manifest = conf.manifest;
+    const trusted = origin === 'local' || titleTrust === 'open' || (await buildAttested(manifest.rulesetId, actual, attestation));
+    if (!trusted) { emit('ruleset-refused', { buildHash: actual, stage: 'trust', failed: ['no attestation from a trusted publisher'] }); throw new Error(`ruleset ${manifest.rulesetId} @ ${actual.slice(0, 12)} refused: not signed by a trusted publisher (TITLE_TRUST=trusted)`); }
+    const entry = { rulesetId: manifest.rulesetId, buildHash: actual, source, manifest: { ...manifest, buildHash: actual }, kind: manifest.kind, publisher: attestation?.publisher ?? null, sig: attestation?.sig ?? null, origin };
+    const file = join(dataDir, 'rulesets', `${actual}.mjs`);
+    if (!existsSync(file)) { writeFileSync(file, source); writeFileSync(join(dataDir, 'rulesets', `${actual}.json`), JSON.stringify({ rulesetId: entry.rulesetId, buildHash: actual, publisher: entry.publisher, sig: entry.sig, origin })); }
     builds.set(actual, entry);
-    if (current) loaded.set(title.manifest.rulesetId, entry);
-    log(`ruleset ${title.manifest.rulesetId} @ ${actual.slice(0, 12)} ${current ? 'loaded' : 'held (not current)'}`);
-    emit('ruleset', { rulesetId: title.manifest.rulesetId, buildHash: actual, current, bytes: source.length });
-    return title;
+    if (current) loaded.set(manifest.rulesetId, entry);
+    log(`ruleset ${manifest.rulesetId} @ ${actual.slice(0, 12)} ${current ? 'loaded' : 'held (not current)'} · ${origin}${entry.publisher ? ` · publisher ${entry.publisher.slice(0, 12)}` : ''} · sandbox ${conf.checks.length} checks`);
+    emit('ruleset', { rulesetId: manifest.rulesetId, buildHash: actual, current, bytes: source.length, origin });
+    return entry;
   };
-  // Re-hold every build cached on disk from earlier runs, then make the
-  // configured rulesets current.
+  // Re-hold every build cached on disk from earlier runs (re-checked, never
+  // trusted for having been here), then make the configured rulesets current.
   for (const f of readdirSync(join(dataDir, 'rulesets')).filter((f) => f.endsWith('.mjs'))) {
-    try { await installRuleset(readFileSync(join(dataDir, 'rulesets', f), 'utf8'), f.slice(0, -4), { current: false }); }
-    catch (e) { log(`cached build ${f}: ${e.message}`); }
+    try {
+      const side = join(dataDir, 'rulesets', `${f.slice(0, -4)}.json`);
+      const meta = existsSync(side) ? JSON.parse(readFileSync(side, 'utf8')) : {};
+      await installRuleset(readFileSync(join(dataDir, 'rulesets', f), 'utf8'), f.slice(0, -4), { current: false, origin: meta.origin ?? 'cache', attestation: meta.publisher ? { publisher: meta.publisher, sig: meta.sig } : null });
+    } catch (e) { log(`cached build ${f}: ${e.message}`); }
   }
-  for (const p of rulesets) await installRuleset(readFileSync(p, 'utf8'), null);
+  for (const p of rulesets) {
+    // A sidecar rulesets/<id>.json (tools/bundle-title.mjs, tools/sign-build.mjs) carries the publisher attestation to advertise.
+    const side = p.replace(/\.js$/, '.json');
+    const meta = existsSync(side) ? JSON.parse(readFileSync(side, 'utf8')) : {};
+    await installRuleset(readFileSync(p, 'utf8'), null, { origin: 'local', attestation: meta.publisher ? { publisher: meta.publisher, sig: meta.sig } : null });
+  }
 
-  const settlement = createSettlement({ dataDir, nodeId, identity, loaded, builds, log });
+  const registry = erc6699 && !offline ? {
+    configured: true,
+    readAgent: (tokenId, block) => chain.agentAt(tokenId, block),
+    profile: async (playerKey) => { await refreshProfiles([playerKey]).catch(() => {}); return profileCache.get(playerKey) ?? null; },
+  } : null;
+  const settlement = createSettlement({
+    dataDir, nodeId, identity, loaded, builds, sandbox, log, registry, courts, relayKeys,
+    descriptorFor: (matchId) => { const e = matchBook.get(matchId); return e ? { descriptor: e.descriptor, envelope: e.envelope } : null; },
+    verifyDescriptor: async (env) => {
+      const d = env?.body;
+      if (!d?.matchId || d.computedBy !== env.signer || !(await opened(MATCH_TAG, env))) return null;
+      if (stakes && !stakes[d.computedBy]?.active) return null;
+      return d;
+    },
+    hostRelayKeys: (hostId) => heartbeats.get(hostId)?.relayKeys ?? [],
+  });
   const canSettle = roles.some((r) => ['host', 'settler', 'relay'].includes(r));
   const isWitness = roles.includes('witness');
   const witnessed = new Set(); // matchIds this node already answered
 
   const buildHashes = () => Object.fromEntries([...loaded].map(([id, r]) => [id, r.buildHash]));
-  const manifests = () => Object.fromEntries([...loaded].map(([id, r]) => [id, { ...r.title.manifest, buildHash: r.buildHash }]));
+  const manifests = () => Object.fromEntries([...loaded].map(([id, r]) => [id, { ...r.manifest, buildHash: r.buildHash, publisher: r.publisher, buildSig: r.sig }]));
 
   // ---------------------------------------------------------------- registry state
   const heartbeats = new Map(); // nodeId → latest verified body
@@ -175,7 +245,25 @@ export async function createNode({
     if (!entries) return;
     const st = await chain.standings(Object.keys(entries)) ?? {};
     chainSeeds = liveSeeds(entries, st);
-    for (const s of chainSeeds) if (s.nodeId !== nodeId && s.url) peersKnown.add(s.url);
+    for (const s of chainSeeds) if (s.nodeId !== nodeId && s.url) void admitSeed(s);
+  };
+  // A directory entry is a CLAIM that key K is at URL U. Before U becomes a
+  // peer we send a nonce to U/whoami and check K signed it (audit finding
+  // 8); a URL that cannot is logged and never gossiped to.
+  const seedChecks = new Map(); // url → { nodeId, ok, at }
+  const admitSeed = async (s) => {
+    const prev = seedChecks.get(s.url);
+    if (prev && prev.nodeId === s.nodeId && Date.now() - prev.at < 60 * 60_000) { if (prev.ok) peersKnown.add(s.url); return prev.ok; }
+    let ok = false, reason = null;
+    try {
+      const nonce = newNonce();
+      const r = await fetch(`${s.url}/whoami?nonce=${nonce}`, { signal: AbortSignal.timeout(8000) });
+      const c = await checkChallenge(await r.json(), { expectNodeId: s.nodeId, nonce });
+      ok = c.ok; reason = c.reason ?? null;
+    } catch (e) { reason = e.message; }
+    seedChecks.set(s.url, { nodeId: s.nodeId, ok, at: Date.now() });
+    if (ok) peersKnown.add(s.url); else { peersKnown.delete(s.url); log(`seed ${s.url} did not prove key ${s.nodeId.slice(0, 12)} (${reason}); ignored`); emit('seed-refused', { url: s.url, nodeId: s.nodeId, reason }); }
+    return ok;
   };
   let announceRetry = null;
   const announceNow = () => {
@@ -192,12 +280,22 @@ export async function createNode({
   let addr = publicAddr;
 
   const myHeartbeat = () => seal(HEARTBEAT_TAG, {
-    nodeId, operator, roles, region, addr, wsAddr, standing: 0, version,
+    nodeId, operator, roles, region, addr, wsAddr, standing: 0, version, protocol: PROTOCOL_VERSION, relayKeys,
     buildHashes: buildHashes(), manifests: manifests(), epoch: epochOf(Date.now()),
   }, identity);
 
+  // Peers on another protocol version are heard and listed, never placed,
+  // never witnesses: old and new rules must not meet inside one match.
+  const incompatible = new Map(); // nodeId → { version, protocol, at }
   const mergeHeartbeats = async (envelopes) => {
     for (const b of await verifyHeartbeats(envelopes ?? [])) {
+      if (b.nodeId !== nodeId && (b.protocol ?? 1) !== PROTOCOL_VERSION) {
+        if (!incompatible.has(b.nodeId)) { log(`peer ${b.nodeId.slice(0, 12)} speaks protocol ${b.protocol ?? 1} (${b.version ?? '?'}), ours is ${PROTOCOL_VERSION}: excluded`); emit('incompatible', { nodeId: b.nodeId, protocol: b.protocol ?? 1, version: b.version ?? null }); }
+        incompatible.set(b.nodeId, { version: b.version ?? null, protocol: b.protocol ?? 1, at: Date.now() });
+        heartbeats.delete(b.nodeId);
+        continue;
+      }
+      incompatible.delete(b.nodeId);
       const cur = heartbeats.get(b.nodeId);
       if (!cur || b.epoch >= cur.epoch) heartbeats.set(b.nodeId, b);
       if (b.addr && b.nodeId !== nodeId) peersKnown.add(b.addr);
@@ -228,9 +326,10 @@ export async function createNode({
       const holders = s.peers.filter((p) => p.buildHashes?.[rid] === m.buildHash && p.addr && p.nodeId !== nodeId);
       for (const p of holders) {
         try {
-          const r = await fetch(`${p.addr}/ruleset/${encodeURIComponent(rid)}`);
+          const r = await fetch(`${p.addr}/ruleset/${encodeURIComponent(rid)}?build=${m.buildHash}`);
           if (!r.ok) continue;
-          await installRuleset(await r.text(), m.buildHash);
+          const att = r.headers.get('x-build-publisher') ? { publisher: r.headers.get('x-build-publisher'), sig: r.headers.get('x-build-sig') } : (m.publisher ? { publisher: m.publisher, sig: m.buildSig } : null);
+          await installRuleset(await r.text(), m.buildHash, { origin: 'peer', attestation: att });
           break;
         } catch (e) { log(`hydrate ${rid} from ${p.addr}: ${e.message}`); }
       }
@@ -279,6 +378,7 @@ export async function createNode({
       }
       await hydrateMissing(currentSnapshot());
       await refreshProfiles([...queue.values()].map((b) => b.playerId).concat(settlement.list().flatMap((d) => d.participants)));
+      settlement.maybeFreeze();
     } catch (e) { log(`tick: ${e.message}`); }
   };
   const envelopeCache = new Map(); // nodeId → latest envelope (for forwarding)
@@ -314,14 +414,21 @@ export async function createNode({
       if (ad.buildHash && !builds.has(ad.buildHash)) {
         const r = await fetch(`${ad.addr}/ruleset/${encodeURIComponent(ad.rulesetId)}?build=${ad.buildHash}`);
         if (!r.ok) throw new Error(`host does not serve build ${ad.buildHash.slice(0, 12)}`);
-        await installRuleset(await r.text(), ad.buildHash, { current: false });
+        const att = r.headers.get('x-build-publisher') ? { publisher: r.headers.get('x-build-publisher'), sig: r.headers.get('x-build-sig') } : null;
+        await installRuleset(await r.text(), ad.buildHash, { current: false, origin: 'peer', attestation: att });
       }
       const [delta, ledger] = await Promise.all([
         fetch(`${ad.addr}/delta/${encodeURIComponent(ad.matchId)}`).then((r) => r.json()),
         fetch(`${ad.addr}/ledger/${encodeURIComponent(ad.matchId)}`).then((r) => r.json()),
       ]);
       const res = await settlement.cosign(delta, ledger);
-      if (!res.ok) { log(`witness ${ad.matchId}: DISAGREE (${res.reason})`); emit('witness', { matchId: ad.matchId, ok: false, reason: res.reason, ours: res.ours, theirs: res.theirs }); return; }
+      if (!res.ok) {
+        log(`witness ${ad.matchId}: DISAGREE (${res.reason})`); emit('witness', { matchId: ad.matchId, ok: false, reason: res.reason, ours: res.ours, theirs: res.theirs });
+        // A recomputed-different result is a signed dispute on the host's
+        // record; a failure to check at all (build missing, malformed) is not.
+        if (res.dispute) await fetch(`${ad.addr}/dispute`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(res.dispute) }).catch(() => {});
+        return;
+      }
       await fetch(`${ad.addr}/cosign`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(res) });
       log(`witness ${ad.matchId}: co-signed`);
       emit('witness', { matchId: ad.matchId, ok: true, hostId: ad.hostId, root: delta.finalStateRoot, sig: res.sig });
@@ -342,7 +449,8 @@ export async function createNode({
   const describe = (m, s) => {
     const manifest = s.manifests[m.rulesetId];
     const place = manifest ? placement({ nodes: s.peers, manifest, rulesetId: m.rulesetId, matchId: m.matchId, beacon: m.beacon, regions: m.regions }) : null;
-    return { ...m, beaconSource: chain.beaconFor(m.bucket)?.source, snapshotRoot: s.root, snapshotEpoch: s.epoch, computedBy: nodeId, computedAt: Date.now(),
+    const bc = chain.beaconFor(m.bucket);
+    return { ...m, protocol: PROTOCOL_VERSION, buildHash: manifest?.buildHash ?? null, beaconSource: bc?.source, beaconBlock: bc?.block ?? null, snapshotRoot: s.root, snapshotEpoch: s.epoch, computedBy: nodeId, computedAt: Date.now(),
       host: place?.host?.nodeId ?? null, witness: place?.witness?.nodeId ?? null, order: place?.order.map((n) => n.nodeId) ?? [] };
   };
   const matchesNow = () => {
@@ -364,6 +472,7 @@ export async function createNode({
   const absorbMatch = async (env) => {
     const d = env?.body;
     if (!d?.matchId || !d.host || d.computedBy !== env.signer || !(await opened(MATCH_TAG, env))) return;
+    if ((d.protocol ?? 1) !== PROTOCOL_VERSION) return; // another protocol's placement is not ours to adopt
     if (stakes && !stakes[d.computedBy]?.active) return; // only bonded peers' descriptors count
     const mine = matchBook.get(d.matchId);
     if (!mine) { matchBook.set(d.matchId, { descriptor: { ...d, disputes: undefined }, envelope: env, disputes: [] }); return; }
@@ -399,15 +508,37 @@ export async function createNode({
       if (req.method === 'OPTIONS') return json(res, 204, {});
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) { if (serveStatic(res, 'cabinet/index.html')) return; }
       if (req.method === 'GET' && (url.pathname.startsWith('/cabinet/') || url.pathname.startsWith('/protocol/'))) { if (serveStatic(res, url.pathname)) return; return json(res, 404, { error: 'not found' }); }
+      // Proof of possession: sign the reader's nonce with the node key, so a
+      // URL from the directory can be checked against the key it claims.
+      if (req.method === 'GET' && url.pathname === '/whoami') {
+        const nonce = url.searchParams.get('nonce') ?? '';
+        if (!NONCE_RE.test(nonce)) return json(res, 400, { error: 'nonce=<16..64 hex> required' });
+        return json(res, 200, await answerChallenge({ nodeId, nonce, addr }, identity.privateKey));
+      }
       if (req.method === 'GET' && url.pathname === '/health') {
         const s = currentSnapshot();
-        return json(res, 200, { nodeId, operator, roles, region, addr, epoch: s.epoch, peers: s.peers.length, rulesets: buildHashes(), buildsHeld: builds.size, staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null, chain: chain.status(), profiles: profileState(), version, update: updater.status(),
+        return json(res, 200, { nodeId, operator, roles, region, addr, protocol: PROTOCOL_VERSION, epoch: s.epoch, peers: s.peers.length, incompatible: incompatible.size, rulesets: buildHashes(), buildsHeld: builds.size, refused: refused.size, staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null, chain: chain.status(), profiles: profileState(), version, update: updater.status(),
+          sandbox: sandbox.status(), trust: { policy: titleTrust, publishers: trustedPublishers, relayKeys, courts: Object.keys(courts) }, registry: registry ? 'chain' : erc6699 ? 'offline' : 'unset',
           wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, upnp: upnpCtl?.status() ?? null,
           directory: nodeDirectory ? { contract: nodeDirectory, seeds: chainSeeds.length, announcer: announcer?.status() ?? null } : null, startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt,
           // reachable: a peer has pushed gossip to us in the last 30 s. null = no peers known, so nothing to conclude.
           inbound: { peers: [...inbound.values()].filter((t) => Date.now() - t < 30_000).length, lastAt: inbound.size ? new Date(Math.max(...inbound.values())).toISOString() : null, reachable: peersKnown.size ? [...inbound.values()].some((t) => Date.now() - t < 30_000) : null } });
       }
       if (req.method === 'GET' && url.pathname === '/snapshot') return json(res, 200, currentSnapshot());
+      // Every title the mesh hosts right now: this node's plus every fresh
+      // peer's, from the manifests they gossip. The arcade lists from here.
+      if (req.method === 'GET' && url.pathname === '/titles') {
+        const now = epochOf(Date.now());
+        const titles = new Map();
+        const take = (m, host) => {
+          const t = titles.get(m.rulesetId) ?? { rulesetId: m.rulesetId, kind: m.kind, buildHash: m.buildHash, publisher: m.publisher ?? null, display: m.display ?? null, modes: m.modes, participants: m.participants, services: m.services, hosts: [], bondedHosts: 0 };
+          if (!t.hosts.includes(host)) { t.hosts.push(host); if (stakes?.[host]?.active) t.bondedHosts++; }
+          titles.set(m.rulesetId, t);
+        };
+        for (const m of Object.values(manifests())) take(m, nodeId);
+        for (const b of heartbeats.values()) if (b.nodeId !== nodeId && b.epoch >= now - 2) for (const m of Object.values(b.manifests ?? {})) take(m, b.nodeId);
+        return json(res, 200, { titles: [...titles.values()] });
+      }
       // Everyone we have heard from, bonded or not — for onboarding a new
       // machine (its full nodeId is what the bond tool needs). /snapshot is
       // the bonded set only.
@@ -420,15 +551,15 @@ export async function createNode({
           // more than ~4 s behind never reads as fresh: that is clock skew,
           // not a dead node (BUILD-SPEC §16).
           clockSkewS: +(((b.epoch - epochOf(now)) * EPOCH_MS) / 1000).toFixed(1),
-          rulesets: Object.keys(b.buildHashes ?? {}), version: b.version ?? null,
-        })) });
+          rulesets: Object.keys(b.buildHashes ?? {}), version: b.version ?? null, protocol: b.protocol ?? 1,
+        })), incompatible: [...incompatible].map(([id, x]) => ({ nodeId: id, ...x })) });
       }
       if (req.method === 'GET' && url.pathname.startsWith('/ruleset/')) {
         const rid = decodeURIComponent(url.pathname.slice(9));
         const want = url.searchParams.get('build');
         const r = want ? (builds.get(want)?.rulesetId === rid ? builds.get(want) : null) : loaded.get(rid);
         if (!r) return json(res, 404, { error: want ? 'build not held' : 'unknown ruleset' });
-        res.writeHead(200, { 'content-type': 'text/javascript', 'x-build-hash': r.buildHash, ...CORS });
+        res.writeHead(200, { 'content-type': 'text/javascript', 'x-build-hash': r.buildHash, ...(r.publisher ? { 'x-build-publisher': r.publisher, 'x-build-sig': r.sig } : {}), ...CORS });
         return res.end(r.source);
       }
       if (req.method === 'POST' && url.pathname === '/gossip') {
@@ -483,7 +614,14 @@ export async function createNode({
         const d = settlement.delta(decodeURIComponent(url.pathname.slice(7)));
         return d ? json(res, 200, d) : json(res, 404, { error: 'unknown match' });
       }
-      if (req.method === 'GET' && url.pathname === '/deltas') return json(res, 200, { deltas: settlement.list(url.searchParams.get('ruleset') ?? undefined) });
+      if (req.method === 'GET' && url.pathname === '/deltas') return json(res, 200, { deltas: settlement.list(url.searchParams.get('ruleset') ?? undefined, { scope: url.searchParams.get('scope') === 'official' ? 'official' : 'all' }) });
+      if (req.method === 'POST' && url.pathname === '/dispute') {
+        const dsp = await readBody(req);
+        if (stakes) { const w = stakes[dsp.witnessId], me = stakes[nodeId]; if (!w?.active) return json(res, 200, { ok: false, reason: 'witness not bonded' }); if (me?.operator && w.operator === me.operator) return json(res, 200, { ok: false, reason: 'witness shares the host\'s staking address' }); }
+        const r = await settlement.acceptDispute(dsp);
+        if (r.ok) emit('disputed', { matchId: dsp.matchId, witnessId: dsp.witnessId, reason: dsp.reason, disputes: r.disputes }); else emit('refused', { what: 'dispute', reason: r.reason, matchId: dsp.matchId });
+        return json(res, 200, r);
+      }
       if (req.method === 'POST' && url.pathname === '/cosign') {
         const c = await readBody(req);
         // With staking on chain, only a bonded witness under a different
@@ -525,9 +663,11 @@ export async function createNode({
         if (!rid) return json(res, 400, { error: 'ruleset= required' });
         try {
           const byOwner = url.searchParams.get('by') === 'owner';
-          const d = settlement.derived(rid, { requireCosign: url.searchParams.get('cosigned') === '1', profiles: byOwner ? profilesFor(settlement.list(rid).flatMap((x) => x.participants)) : null });
+          // Official standings by default: ranked, placed, verified. ?scope=all shows everything, labelled.
+          const scope = url.searchParams.get('scope') === 'all' ? 'all' : 'official';
+          const d = settlement.derived(rid, { scope, profiles: byOwner ? profilesFor(settlement.list(rid).flatMap((x) => x.participants)) : null });
           const player = url.searchParams.get('player');
-          if (url.pathname === '/leaderboard') return json(res, 200, { rulesetId: rid, by: d.by, deriveVersion: d.deriveVersion, digest: d.digest, skipped: d.skipped, leaderboard: d.leaderboard });
+          if (url.pathname === '/leaderboard') return json(res, 200, { rulesetId: rid, scope: d.scope, by: d.by, deriveVersion: d.deriveVersion, digest: d.digest, skipped: d.skipped, leaderboard: d.leaderboard });
           if (url.pathname === '/credits') { const cur = url.searchParams.get('currency'); const table = cur ? d.credits[cur] ?? {} : d.credits; return json(res, 200, player ? { player, currency: cur, balance: table[player] ?? 0 } : table); }
           return json(res, 200, player ? { player, ...(d.stats[player] ?? { matches: 0, wins: 0, ticks: 0 }) } : d.stats);
         } catch (e) { return json(res, 400, { error: e.message }); }
@@ -535,7 +675,7 @@ export async function createNode({
       if (req.method === 'GET' && url.pathname === '/epoch') {
         const hour = url.searchParams.get('epoch');
         const { tree, ...e } = settlement.epoch(hour ? Number(hour) : undefined);
-        return json(res, 200, e);
+        return json(res, 200, { ...e, anchor: { contract: 'EpochAnchor v2', method: 'propose(uint64,bytes32,bytes32)', note: 'finalizes on chain when `quorum` bonded operators propose the same root' } });
       }
       if (req.method === 'GET' && url.pathname.startsWith('/proof/')) {
         const p = settlement.proof(decodeURIComponent(url.pathname.slice(7)));
@@ -594,7 +734,7 @@ export async function createNode({
     nodeId, addr, port: actualPort, identity,
     snapshot: currentSnapshot, matches: matchesNow, installRuleset, chain, settlement,
     rulesets: () => buildHashes(), peers: () => heartbeats, inbound, operator, roles, region, startedAt,
-    version, updater, restart, tunnels, upnp: upnpCtl, get wsAddr() { return wsAddr; }, get announcer() { return announcer; }, seeds: () => chainSeeds,
-    async stop() { clearInterval(timer); clearInterval(updateTimer); clearInterval(directoryTimer); clearTimeout(announceRetry); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); await new Promise((r) => server.close(r)); },
+    version, updater, restart, tunnels, upnp: upnpCtl, get wsAddr() { return wsAddr; }, get announcer() { return announcer; }, seeds: () => chainSeeds, seedChecks, sandbox, refused, incompatible, protocol: PROTOCOL_VERSION,
+    async stop() { clearInterval(timer); clearInterval(updateTimer); clearInterval(directoryTimer); clearTimeout(announceRetry); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); server.closeAllConnections?.(); await new Promise((r) => server.close(r)); },
   };
 }

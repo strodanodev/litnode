@@ -1,0 +1,15 @@
+{
+  "rulesetId": "tug.v1",
+  "buildHash": "94aee45adbfc68604209a407a63e25c184844526ee87110224d41febc52af218",
+  "bytes": 6278,
+  "kind": "replayable",
+  "display": {
+    "title": "TUG",
+    "url": "https://example.com/tug.v1/",
+    "description": "Two players, one rope. Pull, brace, win."
+  },
+  "builtAt": "2026-09-17T02:37:36.391Z",
+  "publisher": "4d8759b0dab63817f0984a6eec1ec0d6ac4933a9c0aeb26a0de2d61755e08150",
+  "sig": "55abc93f98d9315e003382b39a6710707c045da96d0528d23815239a8f8fa72e9abc0a7817b0d38d17ecc39c125546dfc99bbc49504fa4e1f9fbb0b55da97903",
+  "signedAt": "2026-09-17T13:09:42.725Z"
+}

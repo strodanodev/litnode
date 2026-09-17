@@ -29,7 +29,9 @@ const report = (matchId, mode, scoreA, scoreB, winnerTeam) => ({
 const submission = async (court, r) => {
   const { participants, teams } = seats(r);
   const sig = await sign(ATTEST_TAG, { matchId: r.matchId, rulesetId: 'pickle-brawl.v1', report: r }, court.privateKey);
-  return { kind: 'attested', matchId: r.matchId, rulesetId: 'pickle-brawl.v1', mode: 'ranked', participants, teams, report: r, attestor: { id: court.publicKey, sig } };
+  // Court reports name seats (`pb:air:…`), not mesh keys, and the mesh did not
+  // place them: they settle as CASUAL, labelled unplaced, off the official ladder.
+  return { kind: 'attested', matchId: r.matchId, rulesetId: 'pickle-brawl.v1', mode: 'casual', participants, teams, report: r, attestor: { id: court.publicKey, sig } };
 };
 
 test('rulebook validation', () => {
@@ -44,10 +46,13 @@ test('rulebook validation', () => {
 
 test('attested: court-signed report settles, witness co-signs attestation-only, doubles team Elo', { timeout: 60_000 }, async (t) => {
   t.after(async () => { for (const n of nodes) await n.stop().catch(() => {}); rmSync(tmp, { recursive: true, force: true }); });
-  const host = await spawn({ operator: 'studio', roles: ['mesh', 'settler'], rulesets: [RULESET] });
-  const wit = await spawn({ operator: 'guild-a', roles: ['mesh', 'witness'], seeds: [host.addr] });
-  assert.ok(await until(() => wit.rulesets()['pickle-brawl.v1']));
   const court = await generateKeypair();
+  // Both operators authorize the studio's court for this title (COURTS=pickle-brawl.v1:<key>); a
+  // valid signature from any other key is not a court's word.
+  const courts = { 'pickle-brawl.v1': [court.publicKey] };
+  const host = await spawn({ operator: 'studio', roles: ['mesh', 'settler'], rulesets: [RULESET], courts });
+  const wit = await spawn({ operator: 'guild-a', roles: ['mesh', 'witness'], seeds: [host.addr], courts });
+  assert.ok(await until(() => wit.rulesets()['pickle-brawl.v1']));
 
   const r1 = await fetch(`${host.addr}/ledger`, { method: 'POST', body: JSON.stringify(await submission(court, report('pb-1', 'doubles', 11, 7, 0))) });
   const d1 = await r1.json();
@@ -55,6 +60,7 @@ test('attested: court-signed report settles, witness co-signs attestation-only, 
   assert.equal(d1.attestation, 'attested');
   assert.equal(d1.verifiable, false);
   assert.equal(d1.attestor, court.publicKey);
+  assert.equal(d1.placed, false); assert.equal(d1.official, false);
   assert.deepEqual(d1.teams, [['pb:air:alice', 'pb:air:amy'], ['pb:air:bob', 'pb:air:ben']]);
   assert.equal(d1.scores['pb:air:amy'], 11);
 
@@ -62,13 +68,14 @@ test('attested: court-signed report settles, witness co-signs attestation-only, 
 
   // Second match, singles, other way round.
   await fetch(`${host.addr}/ledger`, { method: 'POST', body: JSON.stringify(await submission(court, report('pb-2', 'singles', 8, 11, 1))) });
-  const lb = await (await fetch(`${host.addr}/leaderboard?ruleset=pickle-brawl.v1`)).json();
+  assert.equal((await (await fetch(`${host.addr}/leaderboard?ruleset=pickle-brawl.v1`)).json()).leaderboard.length, 0, 'unplaced court results are not official standings');
+  const lb = await (await fetch(`${host.addr}/leaderboard?ruleset=pickle-brawl.v1&scope=all`)).json();
   assert.equal(lb.deriveVersion, 2);
   const rating = Object.fromEntries(lb.leaderboard.map((r) => [r.player, r.rating]));
   assert.equal(rating['pb:air:amy'], 1212, 'doubles winners each +12 at even ratings');
   assert.equal(rating['pb:air:ben'], 1188);
   assert.ok(rating['pb:air:bob'] > rating['pb:air:ben'], 'bob won the singles back');
-  const credits = await (await fetch(`${host.addr}/credits?ruleset=pickle-brawl.v1&currency=pickles`)).json();
+  const credits = await (await fetch(`${host.addr}/credits?ruleset=pickle-brawl.v1&currency=pickles&scope=all`)).json();
   assert.equal(credits['pb:air:amy'], 10);
   assert.equal(credits['pb:air:bob'], 10);
 
@@ -80,5 +87,16 @@ test('attested: court-signed report settles, witness co-signs attestation-only, 
   const other = await generateKeypair();
   const forged = await submission(court, report('pb-5', 'singles', 11, 3, 0)); forged.attestor.id = other.publicKey;
   const rf = await fetch(`${host.addr}/ledger`, { method: 'POST', body: JSON.stringify(forged) });
-  assert.equal(rf.status, 400); assert.match((await rf.json()).error, /signature invalid/);
+  assert.equal(rf.status, 400); assert.match((await rf.json()).error, /not an authorized court/);
+  // a VALID signature from a key nobody authorized is refused too (audit: signer must be an authorized court)
+  const stranger = await submission(other, report('pb-6', 'singles', 11, 3, 0));
+  const rs = await fetch(`${host.addr}/ledger`, { method: 'POST', body: JSON.stringify(stranger) });
+  assert.equal(rs.status, 400); assert.match((await rs.json()).error, /not an authorized court/);
+  // ranked without a placement is refused, court or no court
+  const rr = await fetch(`${host.addr}/ledger`, { method: 'POST', body: JSON.stringify({ ...(await submission(court, report('pb-7', 'singles', 11, 3, 0))), mode: 'ranked' }) });
+  assert.equal(rr.status, 400); assert.match((await rr.json()).error, /ranked: participants must be player keys/);
+  // a node that authorizes no court for the title refuses everything for it
+  const none = await spawn({ operator: 'guild-b', roles: ['mesh', 'settler'], rulesets: [RULESET] });
+  const rn = await fetch(`${none.addr}/ledger`, { method: 'POST', body: JSON.stringify(await submission(court, report('pb-8', 'singles', 11, 3, 0))) });
+  assert.equal(rn.status, 400); assert.match((await rn.json()).error, /no authorized court/);
 });

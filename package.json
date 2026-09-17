@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "bundle:af": "node tools/bundle-ruleset.mjs",
-    "test": "node --test --test-concurrency=1 demo/protocol.test.mjs demo/staking.test.mjs demo/af-adapter.test.mjs demo/mesh.test.mjs demo/settle.test.mjs demo/attested.test.mjs demo/client.test.mjs demo/cabinet.test.mjs demo/profile.test.mjs demo/update.test.mjs demo/tunnel.test.mjs demo/upnp.test.mjs demo/evm.test.mjs demo/directory.test.mjs",
+    "test": "node --test --test-concurrency=1 demo/protocol.test.mjs demo/staking.test.mjs demo/af-adapter.test.mjs demo/mesh.test.mjs demo/settle.test.mjs demo/attested.test.mjs demo/client.test.mjs demo/cabinet.test.mjs demo/profile.test.mjs demo/update.test.mjs demo/tunnel.test.mjs demo/upnp.test.mjs demo/evm.test.mjs demo/directory.test.mjs demo/conformance.test.mjs demo/audit.test.mjs",
     "test:protocol": "node --test demo/protocol.test.mjs",
     "test:af": "node --test demo/af-adapter.test.mjs",
     "test:cabinet": "node --test demo/cabinet.test.mjs",
@@ -20,17 +20,22 @@
     "anchor": "node tools/anchor-epoch.mjs",
     "deploy:testnet": "node tools/deploy-contracts.mjs",
     "bundle": "node tools/bundle-ruleset.mjs",
+    "create-title": "node tools/create-title.mjs",
+    "conformance": "node sdk/conformance.mjs",
+    "bundle:title": "node tools/bundle-title.mjs",
     "update": "node tools/update.mjs",
     "release": "node tools/release.mjs",
-    "announcer": "node tools/set-announcer.mjs"
+    "announcer": "node tools/set-announcer.mjs",
+    "sign:build": "node tools/sign-build.mjs"
   },
   "engines": {
     "node": ">=20"
   },
   "license": "Apache-2.0",
   "devDependencies": {
+    "esbuild": "^0.24.2",
     "ethers": "^6.17.0",
     "solc": "^0.8.28"
   },
-  "version": "0.6.5"
+  "version": "0.8.0"
 }

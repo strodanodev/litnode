@@ -12,7 +12,7 @@
 import { loadPlayer as loadKeypair, createClient, IDENTITY_KEY } from './client.js';
 import { roomCodeFor } from './protocol/pairing.js';
 import { applyDelta, sortDeltas } from './protocol/derive.js';
-import { NODE_URL, GAMES } from './config.js';
+import { NODE_URL, GAMES as CONFIG_GAMES } from './config.js';
 import { CHARACTERS, STYLES, ITEMS, ITEM_LINES, PETS, RARITY, INVENTORY_SAMPLE, portraitUrl } from './roster.js';
 import { identicon, fileToAvatar } from './avatar.js';
 import { paintBackdrop } from './bg.js';
@@ -38,7 +38,29 @@ const nodeUrl = () => localStorage.getItem('cabinet.nodeUrl') || servedByNode() 
 const store = (k, v) => { try { v === undefined ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* private mode */ } };
 const load = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const api = async (path) => (await fetch(`${nodeUrl()}${path}`, { signal: AbortSignal.timeout(5000) })).json();
+/** The roster: config.js titles first (curated art and copy), then every
+ *  other title the mesh is hosting right now, listed from the manifest its
+ *  host gossips (`display`). A third-party title needs no entry here — a
+ *  bonded node hosting a conformant ruleset with a display block is listed. */
+const GAMES = [...CONFIG_GAMES];
 const PRIMARY = GAMES.find((g) => g.rulesetId) ?? GAMES[0];
+const ACCENTS = ['#ffb84a', '#4ad7ff', '#c77dff', '#ff6b4a', '#7cff4a'];
+function mergeMeshTitles(titles) {
+  let changed = false;
+  for (const t of titles ?? []) {
+    if (!t.display?.title || GAMES.some((g) => g.rulesetId === t.rulesetId)) continue;
+    const d = t.display;
+    GAMES.push({
+      id: t.rulesetId.replace(/\.v\d+$/, ''), title: d.title, accent: d.accent ?? ACCENTS[GAMES.length % ACCENTS.length],
+      tagline: d.description ?? 'Hosted on the mesh.', description: d.description ?? `A title hosted by ${t.hosts.length} node${t.hosts.length === 1 ? '' : 's'} on the litVM Games mesh.`,
+      controls: d.controls ?? [], modes: t.modes ?? [], players: t.kind === 'attested' ? 'attested' : `${Array.isArray(t.participants) ? t.participants.join('/') : t.participants}P`,
+      url: d.url ?? null, cover: d.cover ?? null, rulesetId: t.rulesetId, buildHash: t.buildHash,
+      status: t.kind === 'attested' ? 'attested' : 'mesh', tags: ['MESH', ...(t.bondedHosts ? ['BONDED HOST'] : [])], badge: d.url ? new URL(d.url).host : 'mesh', playable: !!d.url, mesh: true,
+    });
+    changed = true;
+  }
+  return changed;
+}
 
 // ═══════════════════════════════════════════════ player ══
 let player = null;
@@ -93,6 +115,7 @@ async function pollNode() {
       if (ds) S.deltas[g.rulesetId] = ds.deltas ?? [];
     }
     S.peers = (await api('/peers').catch(() => ({}))).peers ?? [];
+    if (polls % 5 === 1 && mergeMeshTitles((await api('/titles').catch(() => ({}))).titles)) render();
     S.snapshot = await api('/snapshot').catch(() => S.snapshot);
   } catch {
     // One slow answer is not an outage: flip to offline on the second miss.
@@ -215,7 +238,7 @@ function nodePanel({ compact = true } = {}) {
 const panel = (title, body, more = '', cls = '') => `<section class="panel ${cls}"><div class="panel-h"><h3>${title}</h3>${more}</div><div class="panel-b">${body}</div></section>`;
 const moreLink = (href, label = 'view all') => `<a class="more" href="${href}">${label} ›</a>`;
 const gameTag = () => '<span class="tag live">Live</span>';
-const statusTag = (g) => g.status === 'attested' ? '<span class="tag court">Court</span>' : g.status === 'external' ? '<span class="tag hosted">Hosted</span>' : '';
+const statusTag = (g) => g.status === 'attested' ? '<span class="tag court">Court</span>' : g.status === 'external' ? '<span class="tag hosted">Hosted</span>' : g.status === 'mesh' ? '<span class="tag hosted">Mesh</span>' : '';
 const tagRow = (g) => `<div class="chips">${(g.tags ?? []).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}${statusTag(g)}</div>`;
 /** Rank badge: the number inside bracket ticks. */
 const rankBadge = (n, color) => {

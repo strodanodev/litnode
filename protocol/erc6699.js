@@ -24,13 +24,17 @@ export function defineBalance(map) {
 }
 
 /** What a title hydrates when an agent walks in. Shape mirrors IERC6699. */
-export function agent({ tokenId, stats, manifest, equipped = {}, controller }) {
+export function agent({ tokenId, stats, manifest, equipped = {}, controller, source = 'fixture', pin = null }) {
   return {
     tokenId: String(tokenId),
     stats: normalize(stats),
-    manifest,            // { characterConfigURI, soulManifestHash, agentController }
+    manifest,            // { characterConfigURI, soulManifestHash, agentController, characterConfigHash?, statsNonce?, owner? }
     equipped,            // slot -> { collection, assetId }
     controller: controller ?? manifest?.agentController ?? null,
+    // 'registry': read from the chain at `pin.block`; 'fixture': supplied by
+    // the submission or a test. The hydration manifest carries it, so a
+    // reader can always tell an authenticated character from a claimed one.
+    source, pin,
   };
 }
 
@@ -47,10 +51,11 @@ function normalize(s) {
 /** The manifest commitment that travels in every delta. A witness recomputes it
  *  and a mismatched hydration produces a mismatched root, so ranked sterility
  *  and soul tampering are the same event as any other bad root. */
-export function hydrationManifest({ agents, mode, balanceVersion }) {
+export function hydrationManifest({ agents, mode, balanceVersion, pinHash = null }) {
   const sterile = mode === 'ranked';
   const entries = agents.map((a) => ({
     tokenId: a.tokenId,
+    source: a.source ?? 'fixture',
     stats: a.stats,
     // Stats can change between match start and witness time (progression),
     // so the manifest also carries the registry's stat nonce when it has
@@ -63,7 +68,10 @@ export function hydrationManifest({ agents, mode, balanceVersion }) {
     // the witness can replay with equipment off and reach the same root.
     equipped: sterile ? {} : a.equipped,
   }));
-  const body = { mode, balanceVersion, sterile, entries };
+  // pinHash: the title's own pinned record (Agent Fighter's relay pin: seed,
+  // bounds, characters) when the submission carries one — part of what the
+  // players sign, so a host cannot swap it after the fact.
+  const body = { mode, balanceVersion, sterile, entries, pinHash };
   return { ...body, manifestHash: h('hydration', canonical(body)) };
 }
 

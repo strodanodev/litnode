@@ -1,38 +1,92 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.24;
 
-/// @title EpochAnchor — one root per hour, from any bonded settler.
-/// @notice BUILD-SPEC v0.2 §11. The node prepares `anchorEpoch(uint64,bytes32)`
-/// calldata (selector 0xbc978154) and the operator broadcasts it. Anyone can
-/// later prove one match's leaf against the anchored root with the sha256
-/// binary path `protocol/epoch.js` produces.
+/// @title EpochAnchor v2 — one FINALIZED root per hour, by quorum of bonded operators.
+/// @notice BUILD-SPEC v0.2 §11, repaired after the build audit. v1 let any
+/// address write the first root for any epoch, so an early garbage root
+/// could occupy an hour forever. v2:
 ///
-/// Tree convention (must match protocol/epoch.js exactly):
-///   leaves sorted and deduplicated as lowercase hex strings, then hashed
-///   pairwise as sha256(hexA ‖ hexB) over the ASCII hex — NOT over raw bytes —
-///   with an odd last node paired with itself. verifyInclusion reproduces
-///   that here, so an off-chain proof and an on-chain check agree.
+///   - only the OPERATOR of an actively bonded node key may propose
+///     (`NodeStake.standingOf(nodeKey).operator == msg.sender && active`);
+///   - a root FINALIZES when `quorum` distinct operators have proposed the
+///     same root for that epoch; conflicting proposals coexist and are
+///     visible (`support(epoch, root)`), the first to reach quorum wins,
+///     nothing after that changes it;
+///   - an operator proposes once per epoch — a second proposal by the same
+///     operator is refused, so one operator cannot manufacture a quorum;
+///   - `quorum` and the stake contract are set by `admin`; testnet quorum
+///     is 2 (two independent operators must agree).
 ///
-/// Who may anchor: on testnet, anyone (the first root per epoch wins). On
-/// mainnet this is gated on the NodeStake bond and disagreement is resolved
-/// by the wider witness set — neither is implemented, and this contract
-/// says so rather than pretending.
+/// What a finalized root proves: that `quorum` bonded operators committed
+/// to the same batch. An inclusion proof then shows a leaf is in that
+/// batch. Whether the leaf's match was VERIFIED (players signed, an
+/// independent witness agreed) is recorded IN the leaf by the node
+/// (protocol/epoch.js: `verified`), so a reader distinguishes "included"
+/// from "verified" without trusting any one operator.
+///
+/// Tree convention (must match protocol/epoch.js exactly): leaves sorted
+/// and deduplicated as lowercase hex strings, hashed pairwise as
+/// sha256(hexA ‖ hexB) over the ASCII hex, an odd last node paired with
+/// itself. verifyInclusion reproduces that here.
+interface INodeStakeReader {
+    function standingOf(bytes32 nodeKey) external view returns (address operator, uint256 amount, bool active);
+}
+
 contract EpochAnchor {
-    struct Anchor { bytes32 root; address settler; uint64 anchoredAt; }
+    struct Anchor { bytes32 root; uint64 finalizedAt; uint32 proposals; }
 
-    mapping(uint64 => Anchor) public anchors;
+    INodeStakeReader public stake;
+    address public admin;
+    uint32 public quorum;
 
-    event EpochAnchored(uint64 indexed epoch, bytes32 root, address indexed settler);
+    mapping(uint64 => Anchor) public anchors;                                  // finalized only
+    mapping(uint64 => mapping(bytes32 => uint32)) public support;             // epoch → root → distinct operators
+    mapping(uint64 => mapping(address => bytes32)) public proposalOf;         // epoch → operator → root
 
-    error AlreadyAnchored(uint64 epoch, bytes32 existing);
+    event Proposed(uint64 indexed epoch, bytes32 indexed root, address indexed operator, bytes32 nodeKey, uint32 support);
+    event EpochFinalized(uint64 indexed epoch, bytes32 root, uint32 support);
+    event ParamsUpdated(address stake, uint32 quorum, address admin);
 
-    function anchorEpoch(uint64 epoch, bytes32 root) external {
-        Anchor storage a = anchors[epoch];
-        if (a.root != bytes32(0)) revert AlreadyAnchored(epoch, a.root);
-        anchors[epoch] = Anchor(root, msg.sender, uint64(block.timestamp));
-        emit EpochAnchored(epoch, root, msg.sender);
+    error NotAdmin();
+    error NotBondedOperator();
+    error AlreadyProposed(uint64 epoch, bytes32 root);
+    error AlreadyFinalized(uint64 epoch, bytes32 root);
+    error ZeroRoot();
+
+    constructor(INodeStakeReader stake_, uint32 quorum_, address admin_) {
+        stake = stake_;
+        quorum = quorum_ == 0 ? 1 : quorum_;
+        admin = admin_;
+        emit ParamsUpdated(address(stake_), quorum, admin_);
     }
 
+    modifier onlyAdmin() { if (msg.sender != admin) revert NotAdmin(); _; }
+
+    function setParams(INodeStakeReader stake_, uint32 quorum_, address admin_) external onlyAdmin {
+        stake = stake_;
+        quorum = quorum_ == 0 ? 1 : quorum_;
+        admin = admin_;
+        emit ParamsUpdated(address(stake_), quorum, admin_);
+    }
+
+    /// Propose `root` for `epoch` as the operator of bonded node `nodeKey`.
+    function propose(uint64 epoch, bytes32 root, bytes32 nodeKey) external {
+        if (root == bytes32(0)) revert ZeroRoot();
+        (address op, , bool active) = stake.standingOf(nodeKey);
+        if (!active || op != msg.sender) revert NotBondedOperator();
+        Anchor storage a = anchors[epoch];
+        if (a.root != bytes32(0)) revert AlreadyFinalized(epoch, a.root);
+        if (proposalOf[epoch][msg.sender] != bytes32(0)) revert AlreadyProposed(epoch, proposalOf[epoch][msg.sender]);
+        proposalOf[epoch][msg.sender] = root;
+        uint32 n = ++support[epoch][root];
+        emit Proposed(epoch, root, msg.sender, nodeKey, n);
+        if (n >= quorum) {
+            anchors[epoch] = Anchor(root, uint64(block.timestamp), n);
+            emit EpochFinalized(epoch, root, n);
+        }
+    }
+
+    /// The finalized root, or zero while the epoch is open or contested.
     function rootOf(uint64 epoch) external view returns (bytes32) {
         return anchors[epoch].root;
     }

@@ -3,6 +3,35 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.7.0] — 2026-09-17
+
+### Added
+- **The harness: any open-source game can host itself on the mesh.**
+  `sdk/index.js` is the one import (`defineTitle`, `defineAttestedTitle`,
+  `defineBalance`, `seededRandom`, `lerp`, `clamp`, ladders);
+  `npm run create-title -- name.v1 "Name"` scaffolds a complete replayable
+  sample (TUG) from `sdk/template/title.mjs`; `npm run conformance` runs
+  the suite (bundling in memory when the source still imports the SDK);
+  `npm run bundle:title` inlines, checks and writes `rulesets/<id>.js` +
+  `.json { buildHash }`. esbuild is now a devDependency.
+- **Conformance is the gate, not a courtesy.** `installRuleset` runs the
+  same suite over every build before loading it — configured, cached, or
+  fetched from a peer — and refuses one that imports, reads the clock or
+  randomness, or replays to two different roots (`ruleset-refused` event).
+  Nodes on this build will not host what a developer's terminal would not
+  pass. `demo/conformance.test.mjs` proves the pipeline and the refusal.
+- **`GET /titles`** lists every title this node or any fresh peer hosts,
+  from the manifests they gossip, with the new manifest `display` block
+  (`{ title, url, description, cover?, accent?, controls? }`). The cabinet
+  appends any mesh title not in its curated config, tagged *Mesh*, so a
+  third-party title needs no entry in `config.js` to appear in the arcade.
+- `docs/HOST-YOUR-TITLE.md` — the rules of recognition in the litVM Games
+  ecosystem (conformance, hash pinning, bonded host, EpochAnchor
+  settlement, ERC-6699 agents, PlayerProfile keys), what is yours and what
+  is shared, and what is not built yet (no fees or micro-transactions).
+  A Claude Code skill, `.claude/skills/host-a-title`, walks the procedure.
+- `sdk/` and `titles/` ship in releases and packs.
+
 ## [0.6.5] — 2026-09-17
 
 ### Changed

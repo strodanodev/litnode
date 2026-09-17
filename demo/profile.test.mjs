@@ -83,10 +83,10 @@ async function playSigned(matchId, kps) {
   const ai = [engine.createAi(0, 60, 11), engine.createAi(1, 60, 99)];
   const log = createLog();
   while (!title.done(s)) { const fr = [engine.aiPoll(ai[0], s), engine.aiPoll(ai[1], s)]; log.append(fr); title.step(s, { [P[0]]: fr[0], [P[1]]: fr[1] }); }
-  const hm = hydrationManifest({ agents: [agents[P[0]], agents[P[1]]], mode: 'ranked', balanceVersion: balance.version });
+  const hm = hydrationManifest({ agents: [agents[P[0]], agents[P[1]]], mode: 'casual', balanceVersion: balance.version });
   const body = ledgerBody({ matchId, ticks: log.length, head: log.head, buildHash: manifest.buildHash, hydrationHash: hm.manifestHash });
   const signatures = Object.fromEntries(await Promise.all(kps.map(async (k) => [k.publicKey, await signLedger(body, k)])));
-  return { matchId, rulesetId: 'agent-fighter.v1', buildHash: manifest.buildHash, mode: 'ranked', participants: P, entries: log.entries(), signatures, hydration: { agents } };
+  return { matchId, rulesetId: 'agent-fighter.v1', buildHash: manifest.buildHash, mode: 'casual', participants: P, entries: log.entries(), signatures, hydration: { agents } };
 }
 
 /** A JSON-RPC that knows one block and one PlayerProfile. */
@@ -126,12 +126,12 @@ test('profile: node reads bindings, refuses a revoked key, answers /profile, fol
   await new Promise((r) => setTimeout(r, 600)); // a tick reads the participants' bindings
 
   assert.equal((await json('/health')).body.profiles, 'chain');
-  const byKey = (await json('/leaderboard?ruleset=agent-fighter.v1')).body;
-  const byOwner = (await json('/leaderboard?ruleset=agent-fighter.v1&by=owner')).body;
+  const byKey = (await json('/leaderboard?ruleset=agent-fighter.v1&scope=all')).body;
+  const byOwner = (await json('/leaderboard?ruleset=agent-fighter.v1&by=owner&scope=all')).body;
   assert.equal(byKey.by, 'key'); assert.equal(byKey.leaderboard.length, 3);
   assert.equal(byOwner.by, 'owner'); assert.equal(byOwner.leaderboard.length, 2, 'two alice keys → one wallet row');
   assert.ok(byOwner.leaderboard.some((r) => r.player === OWNER.toLowerCase()));
-  const st = (await json('/stats?ruleset=agent-fighter.v1&by=owner&player=' + OWNER.toLowerCase())).body;
+  const st = (await json('/stats?ruleset=agent-fighter.v1&by=owner&scope=all&player=' + OWNER.toLowerCase())).body;
   assert.equal(st.matches, 2);
 
   const p = (await json(`/profile?player=${alice1.publicKey}`)).body;
