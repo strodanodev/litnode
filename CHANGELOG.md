@@ -3,6 +3,16 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.4] — 2026-09-17
+
+### Fixed
+- **Tasks run headless and self-heal.** Seen live: the three tasks ran as
+  console windows, one was closed by accident, and Task Scheduler did not
+  restart them (its restart-on-failure covers a failure to launch, not a
+  process that exits). Now: S4U logon (session 0 — no window to close, no
+  password), hidden, triggers at logon and at boot, and every wrapper
+  loops so a crash or an update restart is back in 5 s.
+
 ## [0.6.3] — 2026-09-17
 
 ### Added
