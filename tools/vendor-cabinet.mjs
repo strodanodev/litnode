@@ -16,7 +16,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const src = join(root, 'protocol');
 const dst = join(root, 'cabinet', 'protocol');
 /** Everything the cabinet imports, directly or transitively. */
-export const VENDORED = ['canonical.js', 'keys.js', 'keccak.js', 'staking.js', 'profile.js', 'abi.js', 'directory.js', 'derive.js', 'placement.js', 'pairing.js', 'snapshot.js'];
+export const VENDORED = ['canonical.js', 'keys.js', 'keccak.js', 'staking.js', 'profile.js', 'abi.js', 'directory.js', 'derive.js', 'placement.js', 'pairing.js', 'snapshot.js', 'challenge.js', 'result.js', 'version.js'];
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 
 export function checkVendored() {

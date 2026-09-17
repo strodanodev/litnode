@@ -13,7 +13,8 @@ export const until = async (pred, ms = 15_000, step = 100) => { const end = Date
 
 /** Queue both keys at `nodeUrl` every bucket until a descriptor names them. Returns the descriptor. */
 export async function placeMatch(nodeUrl, kps, { rulesetId, mode = 'ranked', timeoutMs = 20_000 } = {}) {
-  const end = Date.now() + timeoutMs;
+  const since = Date.now(); // a placement from an earlier call (kept 15 min) is not this one
+  const end = since + timeoutMs;
   let lastBucket = -1;
   while (Date.now() < end) {
     const bucket = bucketOf(Date.now());
@@ -26,7 +27,7 @@ export async function placeMatch(nodeUrl, kps, { rulesetId, mode = 'ranked', tim
       }
     }
     const { matches } = await (await fetch(`${nodeUrl}/match?playerId=${kps[0].publicKey}`)).json();
-    const m = matches.find((x) => x.participants.includes(kps[1].publicKey) && x.host);
+    const m = matches.find((x) => x.participants.includes(kps[1].publicKey) && x.host && x.computedAt > since && x.mode === mode);
     if (m) return m;
     await sleep(250);
   }

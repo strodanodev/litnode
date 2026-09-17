@@ -55,6 +55,7 @@ const node = await createNode({
   relayPort: env.RELAY_PORT ? Number(env.RELAY_PORT) : null,
   relayTunnelName: env.RELAY_TUNNEL_NAME ?? null, relayTunnelHost: env.RELAY_TUNNEL_HOST ?? null,
   releaseUrl: env.RELEASE_URL || undefined,           // a mirror, for testing
+  releaseChannel: env.RELEASE_CHANNEL || 'stable',    // 'canary' nodes take releases first (release-canary.json)
   upnp: env.UPNP === '1',                             // ask the router to forward PORT (and RELAY_PORT); reports CGNAT
   // NodeDirectory (contracts/deployed.testnet.json): the seed list on chain.
   // Bootstrap reads it; with a delegated + funded announcer key this node

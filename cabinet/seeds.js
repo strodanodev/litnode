@@ -6,9 +6,10 @@
 import { CHAIN } from './config.js';
 import { keysCall, entryOfCall, decodeKeys, decodeEntry, liveSeeds } from './protocol/directory.js';
 import { standingCall, decodeStanding } from './protocol/staking.js';
+import { checkChallenge, newNonce } from './protocol/challenge.js';
 
 let id = 0;
-async function rpc(method, params) {
+export async function rpc(method, params) {
   const r = await fetch(CHAIN.rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }), signal: AbortSignal.timeout(12000) });
   const j = await r.json();
   if (j.error) throw new Error(j.error.message);
@@ -30,12 +31,20 @@ export async function chainSeeds() {
   } catch { return []; }
 }
 
-/** The first seed that answers /health over https (a browser on https can
- *  only talk to https seeds). null when none does. */
+/** The first seed that PROVES it is the node its directory entry names: it
+ *  signs our nonce with that key (GET /whoami). A URL that merely answers
+ *  /health is not a seed — anyone can answer /health. Over https only (a
+ *  browser on https can only talk to https seeds). null when none does. */
 export async function reachableSeed(seeds) {
   for (const s of seeds) {
     if (!/^https:/.test(s.url)) continue;
-    try { const r = await fetch(`${s.url}/health`, { signal: AbortSignal.timeout(6000) }); if (r.ok) return s; } catch { /* next */ }
+    try {
+      const nonce = newNonce();
+      const r = await fetch(`${s.url}/whoami?nonce=${nonce}`, { signal: AbortSignal.timeout(6000) });
+      if (!r.ok) continue;
+      const c = await checkChallenge(await r.json(), { expectNodeId: s.nodeId, nonce });
+      if (c.ok) return { ...s, proven: true };
+    } catch { /* next */ }
   }
   return null;
 }

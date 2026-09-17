@@ -24,6 +24,13 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = join(root, 'dist');
 const args = process.argv.slice(2);
 const dry = args.includes('--dry');
+// --channel canary: publish release-canary.json (nodes with RELEASE_CHANNEL=canary
+// take it first; stable nodes never see it). --rotate-to <pubkey> / --retire <pubkey>
+// carry a release-key rotation, signed by the CURRENT key (node/update.js).
+const channel = args.includes('--channel') ? args[args.indexOf('--channel') + 1] : 'stable';
+const rotateTo = args.includes('--rotate-to') ? args[args.indexOf('--rotate-to') + 1] : null;
+const retire = args.includes('--retire') ? [args[args.indexOf('--retire') + 1]] : [];
+const manifestName = channel === 'stable' ? 'release.json' : `release-${channel}.json`;
 const notesArg = args.includes('--notes') ? args[args.indexOf('--notes') + 1] : null;
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const tag = `v${pkg.version}`;
@@ -60,7 +67,7 @@ for (const [f, m] of Object.entries(files)) console.log(`  ${f}  ${(m.size / 102
 if (dry) process.exit(0);
 
 // ---------------------------------------------------------------- publish
-const assets = [...Object.keys(files).map((f) => join(dist, f)), join(dist, 'release.json')];
+const assets = [...Object.keys(files).map((f) => join(dist, f)), join(dist, manifestName)];
 const exists = (() => { try { execFileSync('gh', ['release', 'view', tag], { stdio: 'ignore' }); return true; } catch { return false; } })();
 if (exists) {
   console.log(`release ${tag} exists — replacing its assets`);

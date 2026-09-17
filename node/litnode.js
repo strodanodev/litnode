@@ -54,7 +54,7 @@ export async function createNode({
   dataDir, port = 0, host = '127.0.0.1', publicAddr = null,
   operator = 'dev', roles = ['mesh', 'witness'], region = 'local', wsAddr: wsAddrIn = null,
   seeds = [], rulesets = [], rpc = null, offline = !rpc, nodeStake = null, playerProfile = null, chainFetch = globalThis.fetch,
-  version = null, updates = true, releaseUrl = undefined, onRestart = null,
+  version = null, updates = true, releaseUrl = undefined, releaseChannel = 'stable', onRestart = null,
   // Tunnels the node owns (node/tunnel.js): 'quick' | 'named' for this
   // node's own port; relayPort fronts a title's relay on this machine and
   // advertises it as wsAddr. tunnelBin is for tests.
@@ -98,7 +98,7 @@ export async function createNode({
   // ---------------------------------------------------------------- updates
   // A release is an artifact like a ruleset, plus a signature (node/update.js).
   // Checked hourly; applied only on request, and only from this machine.
-  const updater = createUpdater({ root, version: version ?? '0.0.0', releaseUrl, log });
+  const updater = createUpdater({ root, version: version ?? '0.0.0', releaseUrl, channel: releaseChannel, dataDir, log });
   const checkUpdates = async () => { if (!updates || !version) return; const before = updater.status().available; await updater.check(); const s = updater.status(); if (s.available && !before) emit('update', { version: s.version, latest: s.latest }); };
   const isLoopback = (req) => /^(::1|127\.\d+\.\d+\.\d+|::ffff:127\.\d+\.\d+\.\d+)$/.test(req.socket.remoteAddress ?? '');
   const restart = () => { log('restarting to run the new build'); emit('restart', {}); setTimeout(() => { if (onRestart) onRestart(); else process.exit(RESTART_EXIT); }, 300); };
@@ -524,7 +524,14 @@ export async function createNode({
           // reachable: a peer has pushed gossip to us in the last 30 s. null = no peers known, so nothing to conclude.
           inbound: { peers: [...inbound.values()].filter((t) => Date.now() - t < 30_000).length, lastAt: inbound.size ? new Date(Math.max(...inbound.values())).toISOString() : null, reachable: peersKnown.size ? [...inbound.values()].some((t) => Date.now() - t < 30_000) : null } });
       }
-      if (req.method === 'GET' && url.pathname === '/snapshot') return json(res, 200, currentSnapshot());
+      if (req.method === 'GET' && url.pathname === '/snapshot') {
+        const s = currentSnapshot();
+        // ?envelopes=1: the signed heartbeats behind it, so a client can
+        // re-verify every signature and recompute the root itself instead
+        // of taking this node's word for the membership (audit finding 8).
+        if (url.searchParams.get('envelopes') === '1') return json(res, 200, { ...s, envelopes: [await myHeartbeat(), ...envelopeCache.values()], stakes: stakes ?? null, protocol: PROTOCOL_VERSION });
+        return json(res, 200, s);
+      }
       // Every title the mesh hosts right now: this node's plus every fresh
       // peer's, from the manifests they gossip. The arcade lists from here.
       if (req.method === 'GET' && url.pathname === '/titles') {
@@ -642,8 +649,11 @@ export async function createNode({
         if (req.method === 'GET') { if (url.searchParams.get('check') === '1') await updater.check(); return json(res, 200, updater.status()); }
         if (req.method === 'POST') {
           if (!isLoopback(req)) return json(res, 403, { error: 'updates are applied from the node\'s own machine only (open http://localhost:' + actualPort + '/)' });
-          try { await updater.check(); const r = await updater.apply(); json(res, 200, { ok: true, ...r, restarting: true }); restart(); return; }
-          catch (e) { return json(res, 400, { error: e.message }); }
+          try {
+            const body = await readBody(req).catch(() => ({}));
+            if (body?.rollback) { const r = updater.rollback(); json(res, 200, { ok: true, ...r, restarting: true }); restart(); return; }
+            await updater.check(); const r = await updater.apply(); json(res, 200, { ok: true, ...r, restarting: true }); restart(); return;
+          } catch (e) { return json(res, 400, { error: e.message }); }
         }
       }
       // The bootstrap list as this node last read it from NodeDirectory.
@@ -734,7 +744,7 @@ export async function createNode({
     nodeId, addr, port: actualPort, identity,
     snapshot: currentSnapshot, matches: matchesNow, installRuleset, chain, settlement,
     rulesets: () => buildHashes(), peers: () => heartbeats, inbound, operator, roles, region, startedAt,
-    version, updater, restart, tunnels, upnp: upnpCtl, get wsAddr() { return wsAddr; }, get announcer() { return announcer; }, seeds: () => chainSeeds, seedChecks, sandbox, refused, incompatible, protocol: PROTOCOL_VERSION,
+    version, updater, restart, tunnels, upnp: upnpCtl, get wsAddr() { return wsAddr; }, get announcer() { return announcer; }, seeds: () => chainSeeds, seedChecks, admitSeed, sandbox, refused, incompatible, protocol: PROTOCOL_VERSION, peersKnown,
     async stop() { clearInterval(timer); clearInterval(updateTimer); clearInterval(directoryTimer); clearTimeout(announceRetry); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); server.closeAllConnections?.(); await new Promise((r) => server.close(r)); },
   };
 }

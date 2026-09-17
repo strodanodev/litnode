@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "bundle:af": "node tools/bundle-ruleset.mjs",
-    "test": "node --test --test-concurrency=1 demo/protocol.test.mjs demo/staking.test.mjs demo/af-adapter.test.mjs demo/mesh.test.mjs demo/settle.test.mjs demo/attested.test.mjs demo/client.test.mjs demo/cabinet.test.mjs demo/profile.test.mjs demo/update.test.mjs demo/tunnel.test.mjs demo/upnp.test.mjs demo/evm.test.mjs demo/directory.test.mjs demo/conformance.test.mjs demo/audit.test.mjs",
+    "test": "node --test --test-concurrency=1 demo/protocol.test.mjs demo/staking.test.mjs demo/af-adapter.test.mjs demo/mesh.test.mjs demo/settle.test.mjs demo/attested.test.mjs demo/client.test.mjs demo/cabinet.test.mjs demo/profile.test.mjs demo/update.test.mjs demo/tunnel.test.mjs demo/upnp.test.mjs demo/evm.test.mjs demo/directory.test.mjs demo/conformance.test.mjs demo/audit.test.mjs demo/hydration.test.mjs demo/discovery.test.mjs",
     "test:protocol": "node --test demo/protocol.test.mjs",
     "test:af": "node --test demo/af-adapter.test.mjs",
     "test:cabinet": "node --test demo/cabinet.test.mjs",

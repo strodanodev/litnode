@@ -19,6 +19,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, write
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { opened } from '../protocol/keys.js';
+import { PROTOCOL_VERSION } from '../protocol/version.js';
 
 export const RELEASE_TAG = 'release';
 /** The litnode release key. A manifest not signed by it is not a release. */
@@ -47,18 +48,43 @@ export function pickFile(files, { root }) {
   return names[0] ?? null;
 }
 
-export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey = RELEASE_PUBKEY, fetchImpl = globalThis.fetch, log = () => {} }) {
+/** Staged rollout, recovery and key rotation (audit finding 8):
+ *
+ *  CHANNEL   a node follows one channel (RELEASE_CHANNEL, default 'stable').
+ *            'canary' nodes fetch release-canary.json; a manifest's own
+ *            `channel` must match the one it was fetched for, so a canary
+ *            build never applies to a stable node through a wrong URL.
+ *  PROTOCOL  a manifest names the `protocol` its build speaks; a node refuses
+ *            to apply a release that would drop it to an older protocol.
+ *  ROLLBACK  apply() keeps the replaced CODE in .previous/; rollback() puts
+ *            it back and restarts. One step, no network.
+ *  ROTATION  a manifest signed by an accepted key may carry `rotateTo`
+ *            (a new release public key) and `retire` (keys to stop
+ *            accepting). The node persists the accepted set in
+ *            data/release-keys.json; the pinned key is the root of trust,
+ *            everything after it is a signed chain from it. */
+export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey = RELEASE_PUBKEY, channel = 'stable', dataDir = null, fetchImpl = globalThis.fetch, log = () => {} }) {
   let latest = null, checkedAt = 0, lastError = null, applying = false;
+  const url = channel === 'stable' ? releaseUrl : releaseUrl.replace(/release\.json$/, `release-${channel}.json`);
+  const keysFile = dataDir ? join(dataDir, 'release-keys.json') : null;
+  const persisted = keysFile && existsSync(keysFile) ? JSON.parse(readFileSync(keysFile, 'utf8')) : { accepted: [], retired: [] };
+  const acceptedKeys = () => [pubkey, ...persisted.accepted].filter((k) => !persisted.retired.includes(k));
+  const saveKeys = () => { if (keysFile) writeFileSync(keysFile, JSON.stringify(persisted, null, 2) + '\n'); };
 
   /** Fetch and verify the manifest. Returns the verified body or null. */
   const check = async () => {
     try {
-      const r = await fetchImpl(releaseUrl, { redirect: 'follow', headers: { 'cache-control': 'no-cache' } });
+      const r = await fetchImpl(url, { redirect: 'follow', headers: { 'cache-control': 'no-cache' } });
       if (!r.ok) throw new Error(`release manifest: HTTP ${r.status}`);
       const env = await r.json();
-      if (env?.signer !== pubkey) throw new Error('release manifest signed by an unknown key');
+      if (!acceptedKeys().includes(env?.signer)) throw new Error('release manifest signed by an unknown key');
       if (!(await opened(RELEASE_TAG, env))) throw new Error('release manifest signature invalid');
       if (!env.body?.version || typeof env.body.files !== 'object') throw new Error('release manifest malformed');
+      if ((env.body.channel ?? 'stable') !== channel) throw new Error(`release is for channel ${env.body.channel ?? 'stable'}, this node follows ${channel}`);
+      if (env.body.protocol != null && env.body.protocol < PROTOCOL_VERSION) throw new Error(`release speaks protocol ${env.body.protocol}, older than ours (${PROTOCOL_VERSION}); refused`);
+      // key rotation, only from a key we already accept
+      if (env.body.rotateTo && /^[0-9a-f]{64}$/.test(env.body.rotateTo) && !acceptedKeys().includes(env.body.rotateTo)) { persisted.accepted.push(env.body.rotateTo); saveKeys(); log(`release key rotated: now also accepting ${env.body.rotateTo.slice(0, 12)}…`); }
+      for (const k of env.body.retire ?? []) if (k !== env.signer && acceptedKeys().includes(k) && !persisted.retired.includes(k)) { persisted.retired.push(k); saveKeys(); log(`release key retired: ${k.slice(0, 12)}…`); }
       latest = env.body; lastError = null;
     } catch (e) { lastError = String(e.message ?? e); }
     checkedAt = Date.now();
@@ -66,9 +92,9 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
   };
 
   const status = () => ({
-    version, latest: latest?.version ?? null, available: !!(latest && newer(latest.version, version)),
+    version, channel, protocol: PROTOCOL_VERSION, latest: latest?.version ?? null, available: !!(latest && newer(latest.version, version)),
     notes: latest?.notes ?? null, date: latest?.date ?? null, checkedAt: checkedAt ? new Date(checkedAt).toISOString() : null, lastError, applying,
-    file: latest ? pickFile(latest.files, { root }) : null,
+    file: latest ? pickFile(latest.files, { root }) : null, keys: acceptedKeys(), retired: persisted.retired, canRollback: existsSync(join(root, '.previous', 'node')),
   });
 
   /** Download, verify, unpack, copy code over the install. Returns what changed. */
@@ -98,6 +124,11 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
       if (!top) throw new Error('zip has no node/ directory');
       const src = join(stage, top);
       const changed = [];
+      // keep what we replace, so rollback() needs no network
+      const prev = join(root, '.previous');
+      rmSync(prev, { recursive: true, force: true }); mkdirSync(prev, { recursive: true });
+      for (const item of CODE) if (existsSync(join(root, item))) cpSync(join(root, item), join(prev, item), { recursive: true });
+      writeFileSync(join(prev, 'VERSION'), `${version}\n`);
       for (const item of CODE) {
         if (!existsSync(join(src, item))) continue;
         rmSync(join(root, item), { recursive: true, force: true });
@@ -115,5 +146,21 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
     } finally { applying = false; }
   };
 
-  return { check, status, apply };
+  /** Put the previous CODE back. */
+  const rollback = () => {
+    const prev = join(root, '.previous');
+    if (!existsSync(join(prev, 'node'))) throw new Error('nothing to roll back to (.previous is empty)');
+    const to = existsSync(join(prev, 'VERSION')) ? readFileSync(join(prev, 'VERSION'), 'utf8').trim() : '?';
+    const changed = [];
+    for (const item of CODE) {
+      if (!existsSync(join(prev, item))) continue;
+      rmSync(join(root, item), { recursive: true, force: true });
+      cpSync(join(prev, item), join(root, item), { recursive: true });
+      changed.push(item);
+    }
+    log(`rollback: ${version} → ${to} (${changed.join(', ')}); restart to run it`);
+    return { from: version, to, changed };
+  };
+
+  return { check, status, apply, rollback, acceptedKeys };
 }

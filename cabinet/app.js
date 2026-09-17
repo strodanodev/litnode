@@ -476,7 +476,8 @@ function renderMatchmaking(g) {
     : `<dl class="mesh">
         <div><dt>match</dt><dd class="mono" title="${esc(m.matchId)}">${short(m.matchId, 16)}</dd></div>
         <div><dt>opponent</dt><dd class="mono">${short(m.participants.find((p) => p !== player.id) ?? '', 16)}</dd></div>
-        <div><dt>beacon</dt><dd>${esc(m.beaconSource ?? '?')}</dd></div>
+        <div><dt>beacon</dt><dd>${esc(m.beaconSource ?? '?')}${c.beacon ? c.beacon.ok === true ? ' · <span class="res w">block checked</span>' : c.beacon.ok === false ? ` · <span class="res l">${esc(c.beacon.reason)}</span>` : ` · <span class="dim">${esc(c.beacon.reason ?? 'unchecked')}</span>` : ''}</dd></div>
+        <div><dt>membership</dt><dd>${c.snapshotVerified ? '<span class="res w">signatures re-verified here</span>' : '<span class="dim">as the node reported it</span>'}${m.protocol ? ` · protocol ${m.protocol}` : ''}</dd></div>
         <div><dt>host (node says)</dt><dd class="mono">${short(m.host ?? '', 16)}</dd></div>
         <div><dt>host (you computed)</dt><dd class="mono">${short(c.host ?? '', 16)}</dd></div>
         <div><dt>witness</dt><dd class="mono">${c.witness ? short(c.witness, 16) : 'none (single operator)'}</dd></div>
@@ -500,7 +501,7 @@ async function findMatch(g) {
   if (!player.kp || !S.online || MM.state === 'queued') return;
   const problem = clockProblem();
   if (problem) { alert(problem); return; }
-  const client = createClient({ nodeUrl: nodeUrl(), player: player.kp });
+  const client = createClient({ nodeUrl: nodeUrl(), player: player.kp, rpc: seeds.configured() ? seeds.rpc : null });
   Object.assign(MM, { state: 'queued', game: g, text: 'signing a queue entry…', match: null, check: null, host: null });
   render();
   mmAbort = new AbortController();

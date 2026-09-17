@@ -86,6 +86,44 @@ test('update: unsigned or wrongly signed manifests are refused; a good one appli
   assert.equal(readFileSync(join(root, 'node.env'), 'utf8'), 'OPERATOR=me', 'node.env untouched');
   assert.ok(!existsSync(join(root, 'data-should-not-ship.txt')), 'only CODE items are copied');
   assert.ok(!existsSync(join(root, '.update')), 'staging cleaned');
+  // rollback: the replaced code came back, one step, no network
+  assert.equal(u.status().canRollback, true);
+  const rb = u.rollback();
+  assert.equal(rb.to, '0.1.0');
+  assert.equal(readFileSync(join(root, 'node', 'marker.txt'), 'utf8'), 'old');
+  assert.equal(readFileSync(join(root, 'data', 'n', 'identity.json'), 'utf8'), '{"secret":true}', 'data/ untouched by rollback too');
+});
+
+test('update: channels, protocol floor and release-key rotation', async () => {
+  const releaseKey = await generateKeypair(), nextKey = await generateKeypair();
+  const { root, zipName, zip } = fixture();
+  const files = { [zipName]: { sha256: sha(zip), size: zip.length } };
+  const dataDir = join(root, 'data', 'n');
+  // a canary manifest never applies to a stable node, whatever URL served it
+  let u = createUpdater({ root, version: '0.1.0', releaseUrl: RELEASE, pubkey: releaseKey.publicKey, dataDir, fetchImpl: serve(await seal(RELEASE_TAG, { version: '0.2.0', date: 'd', notes: '', files, channel: 'canary' }, releaseKey), zipName, zip) });
+  await u.check(); assert.match(u.status().lastError, /channel canary/); assert.equal(u.status().available, false);
+  // a canary node fetches release-canary.json and takes it
+  let seen = null;
+  u = createUpdater({ root, version: '0.1.0', releaseUrl: RELEASE, pubkey: releaseKey.publicKey, dataDir, channel: 'canary', fetchImpl: async (url, init) => { seen = url; return serve(await seal(RELEASE_TAG, { version: '0.2.0', date: 'd', notes: '', files, channel: 'canary' }, releaseKey), zipName, zip)(url.replace('release-canary.json', 'release.json'), init); } });
+  await u.check(); assert.match(seen, /release-canary\.json$/); assert.equal(u.status().available, true);
+  // a release that speaks an older protocol is refused
+  u = createUpdater({ root, version: '0.1.0', releaseUrl: RELEASE, pubkey: releaseKey.publicKey, dataDir, fetchImpl: serve(await seal(RELEASE_TAG, { version: '0.2.0', date: 'd', notes: '', files, protocol: 1 }, releaseKey), zipName, zip) });
+  await u.check(); assert.match(u.status().lastError, /protocol 1, older/);
+  // rotation: a manifest signed by the pinned key names the next key; the node persists it
+  u = createUpdater({ root, version: '0.1.0', releaseUrl: RELEASE, pubkey: releaseKey.publicKey, dataDir, fetchImpl: serve(await seal(RELEASE_TAG, { version: '0.2.0', date: 'd', notes: '', files, rotateTo: nextKey.publicKey }, releaseKey), zipName, zip) });
+  await u.check(); assert.equal(u.status().lastError, null); assert.deepEqual(u.status().keys, [releaseKey.publicKey, nextKey.publicKey]);
+  assert.ok(existsSync(join(dataDir, 'release-keys.json')));
+  // a fresh updater on the same dataDir accepts a manifest signed by the NEW key, and one that retires the old key
+  u = createUpdater({ root, version: '0.1.0', releaseUrl: RELEASE, pubkey: releaseKey.publicKey, dataDir, fetchImpl: serve(await seal(RELEASE_TAG, { version: '0.2.1', date: 'd', notes: '', files, retire: [releaseKey.publicKey] }, nextKey), zipName, zip) });
+  await u.check(); assert.equal(u.status().lastError, null); assert.equal(u.status().latest, '0.2.1');
+  assert.deepEqual(u.status().keys, [nextKey.publicKey]);
+  // after retirement the old key signs nothing anyone takes
+  u = createUpdater({ root, version: '0.1.0', releaseUrl: RELEASE, pubkey: releaseKey.publicKey, dataDir, fetchImpl: serve(await seal(RELEASE_TAG, { version: '0.2.2', date: 'd', notes: '', files }, releaseKey), zipName, zip) });
+  await u.check(); assert.match(u.status().lastError, /unknown key/);
+  // and a stranger cannot rotate: rotateTo from an unaccepted signer is ignored with the manifest
+  const stranger = await generateKeypair();
+  u = createUpdater({ root, version: '0.1.0', releaseUrl: RELEASE, pubkey: releaseKey.publicKey, dataDir, fetchImpl: serve(await seal(RELEASE_TAG, { version: '0.2.3', date: 'd', notes: '', files, rotateTo: stranger.publicKey }, stranger), zipName, zip) });
+  await u.check(); assert.match(u.status().lastError, /unknown key/); assert.ok(!u.status().keys.includes(stranger.publicKey));
 });
 
 test('update: the node reports it on /health and /update, and refuses to apply what is not newer', { timeout: 30_000 }, async (t) => {
@@ -97,7 +135,7 @@ test('update: the node reports it on /health and /update, and refuses to apply w
   const h = await (await fetch(`${node.addr}/health`)).json();
   assert.equal(h.version, '0.4.0'); assert.equal(typeof h.update, 'object'); assert.equal(h.update.available, false);
   const st = await (await fetch(`${node.addr}/update`)).json();
-  assert.deepEqual(Object.keys(st).sort(), ['applying', 'available', 'checkedAt', 'date', 'file', 'lastError', 'latest', 'notes', 'version'].sort());
+  assert.deepEqual(Object.keys(st).sort(), ['applying', 'available', 'canRollback', 'channel', 'checkedAt', 'date', 'file', 'keys', 'lastError', 'latest', 'notes', 'protocol', 'retired', 'version'].sort());
   const r = await fetch(`${node.addr}/update`, { method: 'POST' });
   assert.equal(r.status, 400, 'nothing to apply → 400, never a restart');
   void key; void body;

@@ -5,8 +5,10 @@
  *  produce. A node is a directory, never an authority. */
 import { generateKeypair, seal } from './protocol/keys.js';
 import { placement } from './protocol/placement.js';
-import { QUEUE_TAG, bucketOf } from './protocol/pairing.js';
-import { snapshotRoot } from './protocol/snapshot.js';
+import { QUEUE_TAG, bucketOf, bucketEnd } from './protocol/pairing.js';
+import { snapshotRoot, snapshot as buildSnapshot, verifyHeartbeats } from './protocol/snapshot.js';
+import { applyStakes } from './protocol/staking.js';
+import { h } from './protocol/canonical.js';
 
 export const IDENTITY_KEY = 'litnode.player';
 
@@ -21,11 +23,39 @@ export async function loadPlayer(storage) {
   return kp;
 }
 
-export function createClient({ nodeUrl, player, fetchImpl = globalThis.fetch }) {
+/** @param rpc  optional async (method, params) → result, for checking a chain beacon
+ *              against the block it names (cabinet/seeds.js exports one). */
+export function createClient({ nodeUrl, player, fetchImpl = globalThis.fetch, rpc = null }) {
   const base = nodeUrl.replace(/\/+$/, '');
   const get = async (p) => { const r = await fetchImpl(`${base}${p}`); if (!r.ok) throw new Error(`${p}: ${r.status}`); return r.json(); };
 
   const snapshot = () => get('/snapshot');
+  /** The snapshot REBUILT here from the node's signed heartbeat envelopes:
+   *  every signature re-verified, the root recomputed. What the node said
+   *  about membership is then a claim we checked, not one we took. `stakes`
+   *  (the bonded set) is still the node's read of the chain in this build —
+   *  reported as `stakesFrom: 'node'`; a browser with an rpc could read
+   *  standings itself. */
+  const verifiedSnapshot = async () => {
+    const s = await get('/snapshot?envelopes=1');
+    const bodies = await verifyHeartbeats(s.envelopes ?? []);
+    const mine = buildSnapshot(bodies.filter((b) => (b.protocol ?? 1) === (s.protocol ?? 1)), Date.now());
+    if (s.stakes) mine.peers = applyStakes(mine.peers, s.stakes);
+    return { ...mine, staking: s.staking, stakesFrom: s.stakes ? 'node' : 'none', verified: true, nodeRoot: s.root, envelopes: s.envelopes.length, signed: bodies.length };
+  };
+  /** A chain beacon is H('beacon', hash of the first block at/after the bucket end). With an rpc, check the block the descriptor names. */
+  const verifyBeacon = async (m) => {
+    if (m.beaconSource !== 'chain') return { ok: m.beaconSource === 'local', source: m.beaconSource ?? null, reason: m.beaconSource === 'local' ? 'offline mesh (local beacon, labelled)' : 'beacon source unknown' };
+    if (!rpc) return { ok: null, source: 'chain', reason: 'no rpc to check the block' };
+    if (m.beaconBlock == null) return { ok: false, source: 'chain', reason: 'descriptor names no block' };
+    try {
+      const b = await rpc('eth_getBlockByNumber', ['0x' + Number(m.beaconBlock).toString(16), false]);
+      if (!b) return { ok: false, source: 'chain', reason: 'block not found' };
+      if (h('beacon', b.hash) !== m.beacon) return { ok: false, source: 'chain', reason: 'beacon is not that block\'s hash' };
+      if (parseInt(b.timestamp, 16) < bucketEnd(m.bucket) / 1000) return { ok: false, source: 'chain', reason: 'block precedes the bucket end (grindable)' };
+      return { ok: true, source: 'chain', block: m.beaconBlock };
+    } catch (e) { return { ok: null, source: 'chain', reason: e.message }; }
+  };
   const health = () => get('/health');
   const leaderboard = (rulesetId) => get(`/leaderboard?ruleset=${encodeURIComponent(rulesetId)}`);
   const stats = (rulesetId) => get(`/stats?ruleset=${encodeURIComponent(rulesetId)}&player=${player.publicKey}`);
@@ -72,7 +102,13 @@ export function createClient({ nodeUrl, player, fetchImpl = globalThis.fetch }) 
     while (Date.now() - t0 < timeoutMs && !signal?.aborted) {
       const m = await match({ sinceBucket });
       onTick?.(m);
-      if (m) { const s = await snapshot(); return { match: m, check: verifyPlacement(m, s), snapshot: s, waitedMs: Date.now() - t0 }; }
+      if (m) {
+        const s = (await verifiedSnapshot().catch(() => null)) ?? await snapshot();
+        const check = verifyPlacement(m, s);
+        const beacon = await verifyBeacon(m);
+        if (beacon.ok === false) { check.ok = false; check.reason = `beacon: ${beacon.reason}`; }
+        return { match: m, check: { ...check, beacon, snapshotVerified: !!s.verified }, snapshot: s, waitedMs: Date.now() - t0 };
+      }
       const b = bucketOf(Date.now());
       if (requeue && b !== lastBucket) { lastBucket = b; await queue(requeue).catch(() => {}); }
       await new Promise((r) => setTimeout(r, intervalMs));
@@ -80,5 +116,5 @@ export function createClient({ nodeUrl, player, fetchImpl = globalThis.fetch }) 
     return null;
   };
 
-  return { base, player, snapshot, health, leaderboard, stats, deltas, epoch, queue, match, verifyPlacement, waitForMatch };
+  return { base, player, snapshot, verifiedSnapshot, verifyBeacon, health, leaderboard, stats, deltas, epoch, queue, match, verifyPlacement, waitForMatch };
 }

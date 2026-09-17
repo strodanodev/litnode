@@ -42,6 +42,10 @@ test('arcade: lobby served, identity persists, queue → pair → client verifie
   assert.equal(r1.check.ok, true, r1.check.reason);
   assert.equal(r2.check.ok, true, r2.check.reason);
   assert.equal(r1.check.host, r1.match.host);
+  assert.equal(r1.check.snapshotVerified, true, 'the client rebuilt the snapshot from signed heartbeats');
+  assert.equal(r1.snapshot.signed >= 2, true);
+  assert.equal(r1.check.beacon.source, 'local'); assert.equal(r1.check.beacon.ok, true, 'offline mesh: local beacon, labelled');
+  assert.equal(r1.match.protocol, 2);
   // the relay rendezvous code both players derive from the same match
   assert.equal(roomCodeFor(r1.match.matchId), roomCodeFor(r2.match.matchId));
   assert.match(roomCodeFor(r1.match.matchId), /^[A-Z0-9-]{3,40}$/, "fits Agent Fighter's room-code rule");

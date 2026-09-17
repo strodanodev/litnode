@@ -8,10 +8,14 @@
  *  Reads the Agent Fighter .env for the Supabase service key (server-side
  *  secret, never printed). Idempotent: a ledger already settled on the node
  *  is skipped, and a node restart re-settles nothing. */
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { meshRooms, toSubmission } from './lib/af-submission.mjs';
+import { generateKeypair, sign } from '../protocol/keys.js';
+import { chainHead } from '../protocol/log.js';
+import { RELAY_TAG } from '../node/settle.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const AF_ROOT = resolve(process.env.AF_ROOT ?? 'E:/NPC/AGENT FIGHTER/agent-fighter');
@@ -23,6 +27,15 @@ for (const l of readFileSync(join(AF_ROOT, '.env'), 'utf8').split(/\r?\n/)) { co
 const url = env.SUPABASE_URL.replace(/\/+$/, '');
 const headers = { apikey: env.SUPABASE_SERVICE_KEY, authorization: `Bearer ${env.SUPABASE_SERVICE_KEY}` };
 
+// The relay key: this watcher's own identity, distinct from the node's. The
+// node settles what it signs as 'relay' provenance only when RELAY_KEYS in
+// node.env names this public key (audit finding 3: an `expected` record is a
+// claim; the signature says whose). Created on first run, never printed.
+const relayKeyFile = process.env.RELAY_KEY_FILE ?? join(homedir(), '.litnode', 'relay-key.json');
+if (!existsSync(relayKeyFile)) { mkdirSync(dirname(relayKeyFile), { recursive: true }); writeFileSync(relayKeyFile, JSON.stringify(await generateKeypair(), null, 2) + String.fromCharCode(10)); }
+const relayKey = JSON.parse(readFileSync(relayKeyFile, 'utf8'));
+const signRelay = async (sub) => ({ id: relayKey.publicKey, sig: await sign(RELAY_TAG, { matchId: sub.matchId, head: chainHead(sub.entries), ticks: sub.entries.length, expected: sub.expected ?? null }, relayKey.privateKey) });
+
 const manifest = JSON.parse(readFileSync(join(root, 'rulesets', 'agent-fighter.v1.json'), 'utf8'));
 const { engine } = await import(pathToFileURL(join(root, 'rulesets', 'agent-fighter.v1.js')).href);
 const log = (m) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${m}`);
@@ -31,6 +44,7 @@ const log = (m) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${m}
 let since = new Date(Date.now() - 6 * 3600_000).toISOString();
 const settled = new Set((await (await fetch(`${nodeUrl}/deltas`)).json()).deltas.map((d) => d.matchId));
 log(`watching ${url.replace(/^https?:\/\//, '')} for ledgers → ${nodeUrl} (${settled.size} already settled)`);
+log(`relay key ${relayKey.publicKey} — add it to RELAY_KEYS in node.env or the node settles nothing this watcher sends as ranked`);
 
 for (;;) {
   try {
@@ -44,6 +58,7 @@ for (;;) {
       // the descriptor (15 min); the relay id otherwise.
       const rooms = row.pin?.room ? await meshRooms(nodeUrl) : new Map();
       const sub = toSubmission(row, { engine, manifest, afRoot: AF_ROOT, rooms });
+      sub.relay = await signRelay(sub);
       const r = await fetch(`${nodeUrl}/ledger`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(sub) });
       const d = await r.json();
       if (r.ok) { settled.add(row.match_id); log(`settled ${sub.matchId}${sub.matchId !== row.match_id ? ` (relay ${row.match_id}, room ${sub.source.room})` : ''} · ${d.ticks} ticks · ${d.attestation} · ${sub.source.identity === 'keys' ? sub.participants.map((k) => k.slice(0, 12)).join(' vs ') : sub.hydration.pin.names.join(' vs ')} · ${JSON.stringify(d.scores)}`); }
