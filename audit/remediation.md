@@ -8,7 +8,7 @@ three different columns, and this document keeps them apart.
 
 | | |
 |---|---|
-| source | `strodanodev/litnode` master, commits `53bd257` → `b3469c1` → `c4acf48` → this one (docs), on top of audited HEAD `c915601` |
+| source | `strodanodev/litnode` master, commits `53bd257` → `b3469c1` → `c4acf48` → `a1253c6` (docs) → two release-tool fixes, on top of audited HEAD `c915601`; all pushed |
 | package version | 0.8.0 · **protocol version 2** (`protocol/version.js`) |
 | ruleset builds | `agent-fighter.v1` `859e7215418db6473f0ceb1a88a1f51dc279db1974636c2262f547fcafca76da` · `pickle-brawl.v1` `db035b782d23e85d4dcfdab0b2364f9e4f1c828b3dd8b2217c25b62cf0e1cb2e` · `tug.v1` `94aee45adbfc68604209a407a63e25c184844526ee87110224d41febc52af218` — bytes unchanged from the audit; sidecars now carry a publisher signature by the release key `4d8759b0…` |
 | tests | 61 passing, 1 skipped (manual), 0 failing; 19 suites run one file at a time; 248 s on the audit machine (`npm test`) |
@@ -175,12 +175,23 @@ Agent Fighter's 93 KB build takes 122 ms; a spinning title is killed within
 
 ## What was deployed
 
-Nothing on chain. The desktop node was not updated during this work: it is
-on 0.6.5, protocol 1, and once a 0.8.0 release is published and applied it
-will list any 0.6.x laptop as incompatible until those update too. The
-cabinet on Vercel was not redeployed (its `client.js`/`seeds.js` changes —
-proof of possession, verified snapshots, verification labels — ship with
-the next `vercel deploy --prod` from `cabinet/`).
+- **Nothing on chain.**
+- **v0.8.0 is published as a CANARY prerelease**
+  (https://github.com/strodanodev/litnode/releases/tag/v0.8.0, four zips +
+  `release-canary.json`, signed by the release key). Stable nodes keep
+  seeing 0.6.5 (checked: `releases/latest/download/release.json` → 0.6.5;
+  the desktop's `/update` reports nothing available). A node with
+  `RELEASE_CHANNEL=canary` resolves the prerelease through the releases API
+  and reports 0.8.0 available (checked live from this machine).
+- **The desktop node was not updated**: it runs 0.6.5, protocol 1. The
+  fleet must move together — a 0.8.0 node lists every 0.6.x peer as
+  incompatible, so updating the desktop before the laptops would stop
+  cross-machine pairing until they follow. Procedure: RUNBOOK §4.
+- **The cabinet on Vercel was not redeployed.** Its new `seeds.reachableSeed`
+  requires `GET /whoami`, which a 0.6.5 node does not serve: redeploying the
+  cabinet before the desktop runs 0.8.0 would leave arcade.litvm.games
+  without a seed. Order: desktop (and laptops) to 0.8.0, then
+  `vercel deploy --prod` from `cabinet/`.
 
 ## What remains unresolved
 
