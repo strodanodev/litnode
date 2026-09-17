@@ -80,9 +80,11 @@ the same one; the tool reports support and refuses an open (unfrozen) hour.
 
 ## 4. Releases: staged rollout, rollback
 
-- Publish a canary first: `npm run release -- --channel canary` writes and
-  uploads `release-canary.json`; only nodes with `RELEASE_CHANNEL=canary`
-  see it. Run at least one canary node per operator for a full epoch
+- Publish a canary first: `npm run release -- --channel canary` publishes a
+  GitHub PRERELEASE carrying `release-canary.json`; only nodes with
+  `RELEASE_CHANNEL=canary` see it (they find the newest prerelease through
+  the releases API; GitHub's `latest` never points at a prerelease, so
+  stable nodes cannot even fetch it). Run at least one canary node per operator for a full epoch
   (an hour) and watch `/health.incompatible` on stable nodes — a protocol
   bump shows up there immediately.
 - Then `npm run release` (stable). Nodes check hourly and apply on request

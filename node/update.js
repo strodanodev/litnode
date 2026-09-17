@@ -65,7 +65,23 @@ export function pickFile(files, { root }) {
  *            everything after it is a signed chain from it. */
 export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey = RELEASE_PUBKEY, channel = 'stable', dataDir = null, fetchImpl = globalThis.fetch, log = () => {} }) {
   let latest = null, checkedAt = 0, lastError = null, applying = false;
-  const url = channel === 'stable' ? releaseUrl : releaseUrl.replace(/release\.json$/, `release-${channel}.json`);
+  // Where this channel's manifest lives. Stable: releases/latest/download/
+  // release.json (GitHub's "latest" is the newest non-prerelease). Canary: a
+  // PRERELEASE, which "latest" never points at — so on GitHub the canary
+  // manifest is found through the releases API (newest prerelease carrying
+  // release-<channel>.json); a mirror just gets the renamed file.
+  const GH = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/releases\/latest\/download\/release\.json$/;
+  let resolvedUrl = channel === 'stable' ? releaseUrl : releaseUrl.replace(/release\.json$/, `release-${channel}.json`);
+  const resolveUrl = async () => {
+    const m = channel !== 'stable' && GH.exec(releaseUrl);
+    if (!m) return resolvedUrl;
+    const r = await fetchImpl(`https://api.github.com/repos/${m[1]}/${m[2]}/releases?per_page=10`, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'litnode' } });
+    if (!r.ok) throw new Error(`releases api: HTTP ${r.status}`);
+    const rel = (await r.json()).find((x) => x.prerelease && !x.draft && x.assets?.some((a) => a.name === `release-${channel}.json`));
+    if (!rel) throw new Error(`no ${channel} release published`);
+    resolvedUrl = rel.assets.find((a) => a.name === `release-${channel}.json`).browser_download_url;
+    return resolvedUrl;
+  };
   const keysFile = dataDir ? join(dataDir, 'release-keys.json') : null;
   const persisted = keysFile && existsSync(keysFile) ? JSON.parse(readFileSync(keysFile, 'utf8')) : { accepted: [], retired: [] };
   const acceptedKeys = () => [pubkey, ...persisted.accepted].filter((k) => !persisted.retired.includes(k));
@@ -74,6 +90,7 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
   /** Fetch and verify the manifest. Returns the verified body or null. */
   const check = async () => {
     try {
+      const url = await resolveUrl();
       const r = await fetchImpl(url, { redirect: 'follow', headers: { 'cache-control': 'no-cache' } });
       if (!r.ok) throw new Error(`release manifest: HTTP ${r.status}`);
       const env = await r.json();
@@ -92,7 +109,7 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
   };
 
   const status = () => ({
-    version, channel, protocol: PROTOCOL_VERSION, latest: latest?.version ?? null, available: !!(latest && newer(latest.version, version)),
+    version, channel, protocol: PROTOCOL_VERSION, manifestUrl: resolvedUrl, latest: latest?.version ?? null, available: !!(latest && newer(latest.version, version)),
     notes: latest?.notes ?? null, date: latest?.date ?? null, checkedAt: checkedAt ? new Date(checkedAt).toISOString() : null, lastError, applying,
     file: latest ? pickFile(latest.files, { root }) : null, keys: acceptedKeys(), retired: persisted.retired, canRollback: existsSync(join(root, '.previous', 'node')),
   });
@@ -107,7 +124,7 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
     applying = true;
     try {
       const want = latest.files[s.file];
-      const base = releaseUrl.replace(/\/[^/]+$/, '/');
+      const base = resolvedUrl.replace(/\/[^/]+$/, '/');
       log(`update: downloading ${s.file} (${(want.size / 1024 / 1024).toFixed(1)} MB)`);
       const r = await fetchImpl(base + s.file, { redirect: 'follow' });
       if (!r.ok) throw new Error(`download: HTTP ${r.status}`);
