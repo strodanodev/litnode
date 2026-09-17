@@ -16,6 +16,13 @@
  *    5. generate (or load) the local node identity and bond minStake behind it
  *    6. write contracts/deployed.testnet.json — the node reads this
  *
+ *  --fresh   ignore contracts/deployed.testnet.json and deploy a NEW set of
+ *            every contract (the v2 migration: a new deployer wallet, v2
+ *            EpochAnchor with quorum, v2 ERC6699Registry with roles, NodeStake
+ *            with transferOperator). The old file is archived as
+ *            contracts/deployed.testnet.<timestamp>.json — the migration record.
+ *  --quorum N  EpochAnchor quorum (default 2: two independent operators).
+ *
  *  Needs zkLTC for gas on the deployer: https://liteforge.hub.caldera.xyz */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -29,7 +36,18 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const cfgPath = join(root, 'contracts', 'deploy.testnet.json');
 const outPath = join(root, 'contracts', 'deployed.testnet.json');
 const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
-const deployed = existsSync(outPath) ? JSON.parse(readFileSync(outPath, 'utf8')) : {};
+const argv = process.argv.slice(2);
+const fresh = argv.includes('--fresh');
+const quorum = argv.includes('--quorum') ? Number(argv[argv.indexOf('--quorum') + 1]) : 2;
+const previous = existsSync(outPath) ? JSON.parse(readFileSync(outPath, 'utf8')) : null;
+if (fresh && previous) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const archived = join(root, 'contracts', `deployed.testnet.${stamp}.json`);
+  writeFileSync(archived, JSON.stringify(previous, null, 2) + '\n');
+  console.log(`--fresh: previous deployment archived as ${archived}`);
+}
+const deployed = previous && !fresh ? previous : {};
+if (fresh && previous) deployed.migratedFrom = { NodeStake: previous.NodeStake?.address ?? null, EpochAnchor: previous.EpochAnchor?.address ?? null, ERC6699Registry: previous.ERC6699Registry?.address ?? null, NodeDirectory: previous.NodeDirectory?.address ?? null, deployedAt: previous.deployedAt ?? null };
 const save = () => writeFileSync(outPath, JSON.stringify(deployed, null, 2) + '\n');
 
 const key = process.env.DEPLOYER_KEY;
@@ -86,8 +104,14 @@ deployed.NodeStake.unbondingPeriod = ns.unbondingPeriod;
 save();
 
 // ---------------------------------------------------------------- ERC-6699 + EpochAnchor
-await deploy('ERC6699Registry', 'ERC6699Registry.sol', 'ERC6699Registry');
-await deploy('EpochAnchor', 'EpochAnchor.sol', 'EpochAnchor');
+// v2: the deployer is admin of both (names minters/progressors, sets quorum); hand admin over with transferAdmin / setParams later.
+await deploy('ERC6699Registry', 'ERC6699Registry.sol', 'ERC6699Registry', [wallet.address]);
+deployed.ERC6699Registry.version = 2;
+await deploy('EpochAnchor', 'EpochAnchor.sol', 'EpochAnchor', [await stake.getAddress(), quorum, wallet.address]);
+deployed.EpochAnchor.version = 2; deployed.EpochAnchor.quorum = quorum;
+deployed.NodeStake.version = 2;
+// the node reads the registry from here (ERC6699 in node.env overrides)
+deployed.ERC6699RegistryV2 = { address: deployed.ERC6699Registry.address };
 // ---------------------------------------------------------------- identity: player profiles + node badges (docs/WALLET-IDENTITY.md)
 await deploy('PlayerProfile', 'PlayerProfile.sol', 'PlayerProfile');
 await deploy('NodeBadge', 'NodeBadge.sol', 'NodeBadge', [await stake.getAddress()]);
@@ -114,5 +138,8 @@ deployed.chainId = cfg.chainId;
 deployed.rpc = cfg.rpc;
 deployed.deployedAt = new Date().toISOString();
 save();
+deployed.deployer = wallet.address;
+save();
 console.log(`\nwrote ${outPath}`);
+console.log('next: cabinet/config.js CHAIN addresses, then `npm run authority` to snapshot who holds what.');
 console.log(`explorer: https://liteforge.explorer.caldera.xyz/address/${deployed.NodeStake.address}`);

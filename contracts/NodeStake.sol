@@ -25,7 +25,7 @@ interface IERC20Minimal {
 
 contract NodeStake {
     struct Node {
-        address operator;   // who staked; never changes for a key
+        address operator;   // who staked; moves only through transferOperator
         uint256 amount;     // bonded, minus slashes
         uint64 unbondAt;    // 0 = active; else the timestamp withdraw unlocks
     }
@@ -41,6 +41,7 @@ contract NodeStake {
     mapping(bytes32 => Node) public nodes;
 
     event Staked(bytes32 indexed nodeKey, address indexed operator, uint256 amount, uint256 total);
+    event OperatorTransferred(bytes32 indexed nodeKey, address indexed from, address indexed to);
     event Unbonding(bytes32 indexed nodeKey, uint64 unbondAt);
     event Withdrawn(bytes32 indexed nodeKey, address indexed operator, uint256 amount);
     event Slashed(bytes32 indexed nodeKey, uint256 amount, bytes32 indexed reason);
@@ -77,6 +78,17 @@ contract NodeStake {
         require(token.transferFrom(msg.sender, address(this), amount), "transfer");
         n.amount += amount;
         emit Staked(nodeKey, msg.sender, amount, n.amount);
+    }
+
+    /// Hand a node key's bond to another wallet (v2). The rotation path an
+    /// operator uses when its wallet is exposed: the bond, the key and the
+    /// node's history stay; only who may unstake and delegate changes.
+    function transferOperator(bytes32 nodeKey, address to) external {
+        Node storage n = nodes[nodeKey];
+        if (n.operator != msg.sender) revert NotOperator();
+        require(to != address(0), "zero");
+        n.operator = to;
+        emit OperatorTransferred(nodeKey, msg.sender, to);
     }
 
     /// Start unbonding. The key drops out of placement immediately (see

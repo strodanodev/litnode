@@ -1,0 +1,102 @@
+{
+  "chainId": 4441,
+  "rpc": "https://liteforge.rpc.caldera.xyz/http",
+  "block": 51790431,
+  "at": "2026-09-17T13:27:28.807Z",
+  "compromised": "0xa6d840c28b3df4f931f1ac2fb940c59b9e9dfdfe",
+  "holdings": [
+    {
+      "contract": "NodeStake",
+      "role": "slasher (can slash any bond, can setParams)",
+      "address": "0xa6d840C28B3DF4f931F1ac2fB940c59B9e9DfdfE",
+      "heldByCompromised": true,
+      "note": ""
+    },
+    {
+      "contract": "NodeStake",
+      "role": "treasury (receives slashed bonds)",
+      "address": "0xa6d840C28B3DF4f931F1ac2fB940c59B9e9DfdfE",
+      "heldByCompromised": true,
+      "note": ""
+    },
+    {
+      "contract": "NodeStake",
+      "role": "operator of node 5b703f128876… (can unstake it; NodeStake v1 binds the key to this operator forever)",
+      "address": "0xa6d840C28B3DF4f931F1ac2fB940c59B9e9DfdfE",
+      "heldByCompromised": true,
+      "note": "active bond"
+    },
+    {
+      "contract": "NodeDirectory",
+      "role": "announcer for node 5b703f128876… (can misdirect discovery of that node)",
+      "address": "0x7467246301DF4e45c446a98AcB037c85315b560d",
+      "heldByCompromised": false,
+      "note": "delegated key held by the node, not the operator"
+    },
+    {
+      "contract": "EpochAnchor",
+      "role": "anyone (v1 has no authority at all)",
+      "address": null,
+      "heldByCompromised": false,
+      "note": "unauthorized roots possible until v2 is deployed"
+    },
+    {
+      "contract": "ERC6699Registry",
+      "role": "anyone (v1 forge is open)",
+      "address": null,
+      "heldByCompromised": false,
+      "note": "arbitrary competitive stats possible until v2 is deployed"
+    }
+  ],
+  "contracts": {
+    "NodeStake": {
+      "address": "0x11C984bE3ee572eb7280334501B57c82001F397F",
+      "slasher": "0xa6d840C28B3DF4f931F1ac2fB940c59B9e9DfdfE",
+      "treasury": "0xa6d840C28B3DF4f931F1ac2fB940c59B9e9DfdfE",
+      "minStake": "1000000000000000000",
+      "unbondingPeriod": 60,
+      "version": 1
+    },
+    "EpochAnchor": {
+      "address": "0x09fBf6A5026b4E02eE9f78222117F97b19eE507A",
+      "version": 1,
+      "note": "v1: anyone may anchor the first root of any epoch; no admin, no quorum — replace with v2"
+    },
+    "ERC6699Registry": {
+      "address": "0x66cef65F9F3774989D5F4AFa1fF6a09541835145",
+      "version": 1,
+      "note": "v1: anyone may forge any unused id with arbitrary stats; no admin — replace with v2"
+    },
+    "PlayerProfile": {
+      "address": "0x790824e6ea7aF658742bcefEe915Ca40CA210886",
+      "note": "no privileged role"
+    },
+    "NodeBadge": {
+      "address": "0xDAdd39D3fA134d0A30770356D47d733fF0Fc9A21",
+      "note": "no privileged role"
+    },
+    "TestLITVM": {
+      "address": "0x697aC520dFBe1B1830Bf22A77b54564F8ee21744",
+      "note": "no privileged role"
+    }
+  },
+  "nodes": [
+    {
+      "nodeId": "5b703f1288765c0ca3734ab0625df161121ef45a9eabafaaae539be1add95151",
+      "operator": "0xa6d840C28B3DF4f931F1ac2fB940c59B9e9DfdfE",
+      "bonded": "1.0",
+      "active": true,
+      "announcer": "0x7467246301DF4e45c446a98AcB037c85315b560d",
+      "entry": {
+        "url": "https://issues-knife-pages-promising.trycloudflare.com",
+        "wsAddr": "wss://sur-charming-using-stability.trycloudflare.com",
+        "updatedAt": "2026-09-17T11:52:21.000Z",
+        "announcedBy": "0x7467246301DF4e45c446a98AcB037c85315b560d"
+      }
+    }
+  ],
+  "summary": {
+    "heldByCompromised": 3,
+    "rotatable": "NodeStake slasher/treasury via setParams (by the current slasher); EpochAnchor/ERC6699Registry admin via v2 admin. Node OPERATOR bindings in NodeStake v1 cannot be moved: re-bond the keys on a fresh NodeStake from the new wallet (contracts/MIGRATION.md)."
+  }
+}
