@@ -44,6 +44,7 @@ export function formatEvent(ev, color = true) {
     case 'stakes': return `${tag(G.stake, 'stakes', c.magenta)} ${ev.bonded}/${ev.read} bonded`;
     case 'ruleset': return `${tag(G.ruleset, 'ruleset', c.blue)} ${ev.rulesetId} @ ${hash(ev.buildHash, 16)}  ${ev.current ? 'current' : 'held'}  ${kb(ev.bytes)}`;
     case 'revoked': return `${tag(G.bad, 'revoked', c.yellow)} key ${hash(ev.playerId, 12)} revoked by its owner ${hash(ev.owner, 10)} — queue entries refused from now`;
+    case 'announced': return `${tag(G.stake, 'announce', c.magenta)} ${P(c.white, ev.url)}${ev.wsAddr ? ` + ${ev.wsAddr}` : ''} on NodeDirectory  tx ${hash(ev.tx, 14)}`;
     case 'upnp': return ev.mapped?.length ? `${tag(G.ruleset, 'upnp', c.magenta)} ${ev.gateway} forwards ${ev.mapped.map((m) => m.external).join(', ')} · public IP ${ev.publicIp}${ev.cgnat ? P(c.red, ' — CGNAT: unreachable from the internet anyway') : ''}` : `${tag(G.bad, 'upnp', c.yellow)} ${ev.lastError ?? 'no mapping'}${ev.cgnat ? P(c.red, ' — CGNAT') : ''}`;
     case 'tunnel': return `${tag(G.ruleset, 'tunnel', c.magenta)} ${ev.which} ${ev.url ? `up at ${P(c.white, ev.url)} — in the next heartbeat` : P(c.red, 'down (falling back to the LAN address until it returns)')}`;
     case 'update': return `${tag(G.ruleset, 'update', c.yellow)} ${ev.latest} is available (running ${ev.version}) — press u to update and restart`;

@@ -41,7 +41,7 @@ console.log(`deployer ${wallet.address} · ${ethers.formatEther(balance)} zkLTC 
 if (balance === 0n) { console.error('no zkLTC for gas — use the faucet first'); process.exit(1); }
 
 // ---------------------------------------------------------------- compile
-const files = ['TestLITVM.sol', 'NodeStake.sol', 'ERC6699Registry.sol', 'EpochAnchor.sol', 'PlayerProfile.sol', 'NodeBadge.sol'];
+const files = ['TestLITVM.sol', 'NodeStake.sol', 'ERC6699Registry.sol', 'EpochAnchor.sol', 'PlayerProfile.sol', 'NodeBadge.sol', 'NodeDirectory.sol'];
 const sources = Object.fromEntries(files.map((f) => [f, { content: readFileSync(join(root, 'contracts', f), 'utf8') }]));
 const compiled = JSON.parse(solc.compile(JSON.stringify({
   language: 'Solidity', sources,
@@ -91,6 +91,8 @@ await deploy('EpochAnchor', 'EpochAnchor.sol', 'EpochAnchor');
 // ---------------------------------------------------------------- identity: player profiles + node badges (docs/WALLET-IDENTITY.md)
 await deploy('PlayerProfile', 'PlayerProfile.sol', 'PlayerProfile');
 await deploy('NodeBadge', 'NodeBadge.sol', 'NodeBadge', [await stake.getAddress()]);
+// ---------------------------------------------------------------- discovery: the seed list on chain (docs, "decentralized bootstrap")
+await deploy('NodeDirectory', 'NodeDirectory.sol', 'NodeDirectory', [await stake.getAddress()]);
 
 // ---------------------------------------------------------------- bond the first node
 const dataDir = process.env.LITNODE_DATA ?? join(root, 'data', 'node-1');

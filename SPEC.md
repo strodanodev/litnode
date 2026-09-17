@@ -230,6 +230,11 @@ One list, kept here. BUILD-SPEC §16 has the reasoning behind each.
 - **The beacon is not secure against the sequencer**, by litVM's own docs.
 - **Contracts are deployed on testnet, unaudited**, with one slasher key
   held by the deployer wallet; rotate before anyone outside the team bonds.
+- **Discovery is on chain, not deployed.** `NodeDirectory` is written and
+  tested (node announces with a delegated key; readers filter by bond and
+  freshness) but not yet on Liteforge; until `npm run deploy:testnet`, a
+  fresh install still needs `SEEDS=` and the hosted page serves only
+  visitors with a node.
 - **Player identity is a browser key.** Binding it to a wallet-owned profile
   is designed in `docs/WALLET-IDENTITY.md` and not built.
 - **A hosted cabinet cannot read a LAN node** (`https` → `http://192.168…`

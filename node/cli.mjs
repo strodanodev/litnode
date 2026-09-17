@@ -56,6 +56,12 @@ const node = await createNode({
   relayTunnelName: env.RELAY_TUNNEL_NAME ?? null, relayTunnelHost: env.RELAY_TUNNEL_HOST ?? null,
   releaseUrl: env.RELEASE_URL || undefined,           // a mirror, for testing
   upnp: env.UPNP === '1',                             // ask the router to forward PORT (and RELAY_PORT); reports CGNAT
+  // NodeDirectory (contracts/deployed.testnet.json): the seed list on chain.
+  // Bootstrap reads it; with a delegated + funded announcer key this node
+  // publishes its own addresses there. ANNOUNCE=0 reads only.
+  nodeDirectory: env.NODE_DIRECTORY ?? deployed.NodeDirectory?.address ?? null,
+  chainId: deployed.chainId ?? 4441,
+  announce: env.ANNOUNCE !== '0',
   log: tui ? tui.log : (m) => console.log(`${stamp()} ${m}`),
   onEvent: tui ? tui.event : plainEvent,
 });

@@ -76,6 +76,14 @@ run it in, and nowhere else. Never write a private key into a file here.
   TUNNEL_HOST=node.<your-domain>`; same three commands with another name
   for `RELAY_TUNNEL_NAME/HOST`. Nodes behind NAT still work as witnesses
   without any tunnel: gossip replies carry everything.
+- **Being a seed from behind carrier-grade NAT** (hop 2 of `tracert` in
+  100.64–100.127: the ISP shares its public IP; no port forward can help):
+  `TUNNEL=quick` plus an announcer. The node prints its announcer address
+  on `/health.directory.announcer`; delegate it once and give it gas:
+  `set DEPLOYER_KEY=0x…` then `npm run announcer -- <nodeId> <announcer> --fund 0.02`.
+  From then on every new tunnel hostname is published on NodeDirectory
+  within a tick, fresh installs seed from the chain with no `SEEDS=`, and
+  arcade.litvm.games reads the mesh through you for visitors with no node.
 - **Clocks** must be synced. A node more than ~4 s behind is stale to
   everyone; `/peers` shows each peer's skew.
 - **Keys**: the node key is generated on first run and bonded once. The

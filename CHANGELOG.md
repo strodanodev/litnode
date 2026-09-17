@@ -3,6 +3,40 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.0] — 2026-09-17
+
+The decentralized bootstrap: the seed list lives on the chain.
+
+### Added
+- **`contracts/NodeDirectory.sol`** — a bonded node announces how to reach
+  it (`announce(nodeKey, url, wsAddr)`); anyone reads `keys()` + `entryOf`.
+  Writes are allowed to the node's operator wallet or to an **announcer**
+  address the operator delegated for that one node key, so the node holds
+  only a key that can misdirect its own discovery and nothing else. Readers
+  keep only actively bonded, recently announced entries.
+- **`protocol/evm.js`** — the smallest EVM signer a node needs, with zero
+  dependencies: secp256k1, RFC 6979 nonces, addresses, RLP, EIP-155 legacy
+  transactions. `demo/evm.test.mjs` checks every output byte for byte
+  against ethers. `protocol/abi.js` (browser-safe) and `protocol/directory.js`.
+- **The node announces itself.** `node/announce.js` generates
+  `<dataDir>/announcer.json` on first run and shows its address on
+  `/health.directory.announcer`; once delegated (`npm run announcer --
+  <nodeId> <address> --fund 0.02`, operator key in the shell only) and
+  holding a little gas, every tunnel change is published on chain within
+  a tick, an unchanged entry is refreshed every 3 days, and nothing is
+  ever sent twice. It says exactly what is missing until then.
+- **Bootstrap from chain.** Every node reads NodeDirectory on boot and
+  every 10 min and merges the live seeds into its peer set — a fresh
+  install needs no `SEEDS=`. `GET /seeds`.
+- **The hosted arcade page finds the mesh with no node.** `cabinet/seeds.js`
+  reads NodeDirectory from the browser, tries the freshest https seed, and
+  reads the mesh through it; the header says SEED instead of NODE; the
+  Nodes page lists the seeds on chain.
+- `NodeDirectory` in `tools/deploy-contracts.mjs`; `tools/set-announcer.mjs`.
+
+Not yet deployed: `npm run deploy:testnet` (deploys PlayerProfile,
+NodeBadge and NodeDirectory), then the addresses into `cabinet/config.js`.
+
 ## [0.5.2] — 2026-09-17
 
 ### Added

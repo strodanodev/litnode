@@ -80,6 +80,9 @@ export const CHAIN = {
    *  null = "Sign in with wallet" stays hidden; keys are players (docs/WALLET-IDENTITY.md). */
   PlayerProfile: null,
   NodeBadge: null,
+  /** The seed list on chain. Set after deploy; then a visitor with no node
+   *  reads the mesh through the freshest bonded seed (docs: decentralized bootstrap). */
+  NodeDirectory: null,
   explorer: 'https://liteforge.explorer.caldera.xyz',
   token: 'tLITVM',
 };

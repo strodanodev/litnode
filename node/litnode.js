@@ -21,6 +21,8 @@ import { createSettlement } from './settle.js';
 import { createUpdater, RESTART_EXIT } from './update.js';
 import { createTunnel } from './tunnel.js';
 import { keepMapped } from './upnp.js';
+import { createAnnouncer } from './announce.js';
+import { liveSeeds } from '../protocol/directory.js';
 
 // Every response is readable from any origin, and from an https page reaching
 // a loopback node (Chrome's Private Network Access asks on the preflight).
@@ -54,6 +56,9 @@ export async function createNode({
   // UPnP: ask the router to forward our port (and the relay's) — what a
   // torrent client does. Reports CGNAT when the ISP makes it pointless.
   upnp = false, upnpGateway = null,
+  // NodeDirectory: read the live seed list from the chain (bootstrap) and,
+  // with a delegated announcer key, publish our own addresses there.
+  nodeDirectory = null, chainId = null, announce = true,
   heartbeatMs = EPOCH_MS / 2, log = () => {}, onEvent = () => {},
 }) {
   // Every observable thing the node does goes through emit(): the TUI draws
@@ -80,7 +85,7 @@ export async function createNode({
   if (!existsSync(idPath)) writeFileSync(idPath, JSON.stringify(identity, null, 2) + '\n');
   const nodeId = identity.publicKey;
 
-  const chain = createChain({ rpc: rpc ?? 'offline', offline, nodeStake, playerProfile, fetchImpl: chainFetch });
+  const chain = createChain({ rpc: rpc ?? 'offline', offline, nodeStake, playerProfile, nodeDirectory, fetchImpl: chainFetch });
 
   // ---------------------------------------------------------------- player profiles
   // key → { owner, tokenId, active, at }. Read like stakes: every tick, for
@@ -160,6 +165,18 @@ export async function createNode({
   let lanAddr = null;           // what we listen on, kept for /health when a tunnel replaces addr
   const tunnels = { node: null, relay: null };
   let upnpCtl = null;
+  // ---------------------------------------------------------------- directory
+  let chainSeeds = [];          // liveSeeds() from NodeDirectory, refreshed every 10 min
+  let announcer = null;
+  const readDirectory = async () => {
+    if (!nodeDirectory || offline) return;
+    const entries = await chain.directory();
+    if (!entries) return;
+    const st = await chain.standings(Object.keys(entries)) ?? {};
+    chainSeeds = liveSeeds(entries, st);
+    for (const s of chainSeeds) if (s.nodeId !== nodeId && s.url) peersKnown.add(s.url);
+  };
+  const announceNow = () => { if (announcer && announce) announcer.sync(addr, wsAddr ?? '').then((r) => { if (r === 'sent' || r === 'error' || r === 'not-delegated' || r === 'unfunded') log(`announce: ${r}${announcer.status().lastError ? ` — ${announcer.status().lastError}` : ''}`); }).catch(() => {}); };
   let lastBonded = null;        // the bonded set as last reported; stakes events fire on change only
   let addr = publicAddr;
 
@@ -210,7 +227,7 @@ export async function createNode({
   };
 
   // ---------------------------------------------------------------- gossip loop
-  let timer = null, updateTimer = null;
+  let timer = null, updateTimer = null, directoryTimer = null;
   const tick = async () => {
     try {
       await mergeHeartbeats([await myHeartbeat()]);
@@ -374,7 +391,8 @@ export async function createNode({
       if (req.method === 'GET' && url.pathname === '/health') {
         const s = currentSnapshot();
         return json(res, 200, { nodeId, operator, roles, region, addr, epoch: s.epoch, peers: s.peers.length, rulesets: buildHashes(), buildsHeld: builds.size, staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null, chain: chain.status(), profiles: profileState(), version, update: updater.status(),
-          wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, upnp: upnpCtl?.status() ?? null, startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt,
+          wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, upnp: upnpCtl?.status() ?? null,
+          directory: nodeDirectory ? { contract: nodeDirectory, seeds: chainSeeds.length, announcer: announcer?.status() ?? null } : null, startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt,
           // reachable: a peer has pushed gossip to us in the last 30 s. null = no peers known, so nothing to conclude.
           inbound: { peers: [...inbound.values()].filter((t) => Date.now() - t < 30_000).length, lastAt: inbound.size ? new Date(Math.max(...inbound.values())).toISOString() : null, reachable: peersKnown.size ? [...inbound.values()].some((t) => Date.now() - t < 30_000) : null } });
       }
@@ -479,6 +497,8 @@ export async function createNode({
           catch (e) { return json(res, 400, { error: e.message }); }
         }
       }
+      // The bootstrap list as this node last read it from NodeDirectory.
+      if (req.method === 'GET' && url.pathname === '/seeds') return json(res, 200, { source: nodeDirectory ? (chainSeeds.length ? 'chain' : 'chain-empty') : 'unset', seeds: chainSeeds });
       if (req.method === 'GET' && url.pathname === '/profile') {
         const pid = url.searchParams.get('player');
         if (!pid) return json(res, 400, { error: 'player= required' });
@@ -533,17 +553,26 @@ export async function createNode({
   try {
     if (tunnel) {
       tunnels.node = createTunnel({ port: actualPort, name: tunnel === 'named' ? tunnelName : null, hostname: tunnel === 'named' ? tunnelHost : null, log, bin: tunnelBin,
-        onUrl: (u) => { addr = u ?? lanAddr; emit('tunnel', { which: 'node', url: u }); } });
+        onUrl: (u) => { addr = u ?? lanAddr; emit('tunnel', { which: 'node', url: u }); if (u) announceNow(); } });
     }
     if (relayPort && !wsAddrIn) {
       tunnels.relay = createTunnel({ port: relayPort, name: relayTunnelName, hostname: relayTunnelHost, log, bin: tunnelBin,
-        onUrl: (u) => { wsAddr = u ? u.replace(/^https:/, 'wss:') : null; emit('tunnel', { which: 'relay', url: wsAddr }); } });
+        onUrl: (u) => { wsAddr = u ? u.replace(/^https:/, 'wss:') : null; emit('tunnel', { which: 'relay', url: wsAddr }); if (u) announceNow(); } });
     }
   } catch (e) {
     // A misconfigured tunnel must not leave a half-started node listening.
     tunnels.node?.stop();
     await new Promise((r) => server.close(r));
     throw e;
+  }
+  if (nodeDirectory && !offline) {
+    announcer = createAnnouncer({ dataDir, nodeId, contract: nodeDirectory, chainId: chainId ?? 4441, rpc: chain.rpc, log, emit });
+    await readDirectory().catch((e) => log(`directory: ${e.message}`));
+    log(`directory: ${chainSeeds.length} live seed(s) on chain · announcer ${announcer.address}`);
+    directoryTimer = setInterval(() => { readDirectory().catch(() => {}); announceNow(); }, 10 * 60_000);
+    // Announce what we have now (the LAN address if no tunnel); a tunnel
+    // coming up announces again. Both are no-ops when nothing changed.
+    if (!tunnel) setTimeout(announceNow, 3_000);
   }
   timer = setInterval(tick, heartbeatMs);
   await tick();
@@ -554,7 +583,7 @@ export async function createNode({
     nodeId, addr, port: actualPort, identity,
     snapshot: currentSnapshot, matches: matchesNow, installRuleset, chain, settlement,
     rulesets: () => buildHashes(), peers: () => heartbeats, inbound, operator, roles, region, startedAt,
-    version, updater, restart, tunnels, upnp: upnpCtl, get wsAddr() { return wsAddr; },
-    async stop() { clearInterval(timer); clearInterval(updateTimer); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); await new Promise((r) => server.close(r)); },
+    version, updater, restart, tunnels, upnp: upnpCtl, get wsAddr() { return wsAddr; }, get announcer() { return announcer; }, seeds: () => chainSeeds,
+    async stop() { clearInterval(timer); clearInterval(updateTimer); clearInterval(directoryTimer); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); await new Promise((r) => server.close(r)); },
   };
 }

@@ -3,8 +3,9 @@
 import { beaconFromBlocks, blockOf, localBeacon } from '../protocol/beacon.js';
 import { standingCall, decodeStanding } from '../protocol/staking.js';
 import { ownerOfKeyCall, decodeOwner, nameOfCall, decodeString } from '../protocol/profile.js';
+import { keysCall, decodeKeys, entryOfCall, decodeEntry } from '../protocol/directory.js';
 
-export function createChain({ rpc, offline = false, nodeStake = null, playerProfile = null, fetchImpl = globalThis.fetch }) {
+export function createChain({ rpc, offline = false, nodeStake = null, playerProfile = null, nodeDirectory = null, fetchImpl = globalThis.fetch }) {
   let id = 0;
   const blocks = [];
   let lastError = null;
@@ -66,8 +67,19 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
     try { return decodeString(await call('eth_call', [nameOfCall(playerProfile, tokenId), 'latest'])); } catch { return null; }
   };
 
+  /** NodeDirectory: every announced key → entry. Missing contract → null. */
+  const directory = async () => {
+    if (!nodeDirectory || offline) return null;
+    try {
+      const keys = decodeKeys(await call('eth_call', [keysCall(nodeDirectory), 'latest']));
+      const out = {};
+      for (const k of keys) { try { out[k] = decodeEntry(await call('eth_call', [entryOfCall(nodeDirectory, k), 'latest'])); } catch (e) { lastError = String(e.message ?? e); } }
+      return out;
+    } catch (e) { lastError = String(e.message ?? e); return null; }
+  };
+
   return {
-    pollBlock, beaconFor, standings, profiles, profileName,
-    status: () => ({ rpc, offline, nodeStake, playerProfile, blocks: blocks.length, head: blocks.at(-1)?.number ?? null, lastError }),
+    pollBlock, beaconFor, standings, profiles, profileName, directory, rpc: call,
+    status: () => ({ rpc, offline, nodeStake, playerProfile, nodeDirectory, blocks: blocks.length, head: blocks.at(-1)?.number ?? null, lastError }),
   };
 }

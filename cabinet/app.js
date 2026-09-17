@@ -19,6 +19,7 @@ import { paintBackdrop } from './bg.js';
 import { sample, loadHistory, slots, uptimePct, hoursOnline, fmtDuration, ring, strip, heatmap } from './uptime.js';
 import { readStake } from './chain.js';
 import * as wallet from './wallet.js';
+import * as seeds from './seeds.js';
 import { CHAIN } from './config.js';
 
 const $ = (id) => document.getElementById(id);
@@ -30,7 +31,10 @@ const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
 // preflight); a static host (Vercel) falls back to config, and the footer
 // override wins over both.
 const servedByNode = () => /^https?:$/.test(location.protocol) && !/vercel\.app$|litvm\.games$/.test(location.hostname) && location.port !== '5180' ? location.origin : null;
-const nodeUrl = () => localStorage.getItem('cabinet.nodeUrl') || servedByNode() || NODE_URL;
+// With no node on this machine, the freshest bonded seed announced on chain
+// (seeds.js) stands in — found once the local default has failed.
+let seedUrl = null;
+const nodeUrl = () => localStorage.getItem('cabinet.nodeUrl') || servedByNode() || seedUrl || NODE_URL;
 const store = (k, v) => { try { v === undefined ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* private mode */ } };
 const load = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const api = async (path) => (await fetch(`${nodeUrl()}${path}`, { signal: AbortSignal.timeout(5000) })).json();
@@ -57,7 +61,15 @@ $('avatar-file').addEventListener('change', async (e) => {
 });
 
 // ═══════════════════════════════════════════════ node state ══
-const S = { online: false, checked: false, health: null, boards: {}, stats: {}, deltas: {}, peers: [], snapshot: null, uptime: {}, stake: null };
+const S = { online: false, checked: false, health: null, boards: {}, stats: {}, deltas: {}, peers: [], snapshot: null, uptime: {}, stake: null, seeds: [], seedsAt: 0, viaSeed: null };
+/** No local node → read NodeDirectory and try the seeds. Runs at most once a minute. */
+async function findSeed() {
+  if (S.online || localStorage.getItem('cabinet.nodeUrl') || servedByNode() || !seeds.configured() || Date.now() - S.seedsAt < 60_000) return;
+  S.seedsAt = Date.now();
+  S.seeds = await seeds.chainSeeds();
+  const s = await seeds.reachableSeed(S.seeds);
+  if (s) { seedUrl = s.url; S.viaSeed = s; pollNode(); }
+}
 // Wallet / profile (docs/WALLET-IDENTITY.md): what the chain says about THIS browser's key.
 const Wl = { binding: null, account: null, profile: null, busy: '', error: '' };
 async function refreshBinding() {
@@ -84,7 +96,7 @@ async function pollNode() {
     S.snapshot = await api('/snapshot').catch(() => S.snapshot);
   } catch {
     // One slow answer is not an outage: flip to offline on the second miss.
-    if (++misses >= 2) { S.online = false; S.health = null; }
+    if (++misses >= 2) { S.online = false; S.health = null; findSeed().catch(() => {}); }
   }
   S.checked = true;
   S.uptime = sample(nodeUrl(), S.online);
@@ -133,7 +145,7 @@ function renderChrome() {
   $('me-level').textContent = `LV ${levelOf(xp).level}`;
   $('node-pill').classList.toggle('on', S.online);
   const h = S.health;
-  $('node-text').textContent = S.online ? `NODE ${h.bonded ? 'BONDED' : h.bonded === false ? 'UNBONDED' : 'ONLINE'} · ${h.peers} PEER${h.peers === 1 ? '' : 'S'}` : S.checked ? 'NODE OFFLINE' : 'CONNECTING…';
+  $('node-text').textContent = S.online ? `${S.viaSeed && nodeUrl() === seedUrl ? 'SEED' : 'NODE'} ${h.bonded ? 'BONDED' : h.bonded === false ? 'UNBONDED' : 'ONLINE'} · ${h.peers} PEER${h.peers === 1 ? '' : 'S'}` : S.checked ? 'NODE OFFLINE' : 'CONNECTING…';
 }
 
 
@@ -568,10 +580,12 @@ function renderNode() {
           <li>Reload this page: the header turns green and your key appears on the ladders once you play. Keep the window open — it is your peer.</li>
           <li>Only if others must reach you (a seed, a LAN host): <span class="mono">allow-firewall.cmd</span> once. A node that only reaches outward needs nothing.</li>
           <li>To host and witness ranked matches, bond the node's key from the operator wallet: <span class="mono">npm run bond -- &lt;nodeId&gt;</span>. Until then it plays and verifies as a guest peer.</li></ol>`, '', 's6')}
+      ${panel('Seeds on chain', seeds.configured() ? (S.seeds.length ? `<table><thead><tr><th>Operator</th><th>Node</th><th>Address</th><th>Relay</th><th>Announced</th></tr></thead><tbody>${S.seeds.map((s) => `<tr><td class="mono">${s.operator.slice(0, 6)}…${s.operator.slice(-4)}</td><td class="mono" title="${esc(s.nodeId)}">${short(s.nodeId, 12)}</td><td class="mono">${esc(s.url)}</td><td class="mono dim">${esc(s.wsAddr ?? '—')}</td><td class="dim">${new Date(s.updatedAt * 1000).toLocaleString()}</td></tr>`).join('')}</tbody></table><div class="source">Read from NodeDirectory on ${esc(CHAIN.name)}: bonded nodes that announced an address in the last 7 days. ${S.viaSeed ? `This page is reading the mesh through ${esc(S.viaSeed.url)}.` : 'Your own node comes first; these are the fallback.'}</div>` : '<div class="empty">No seed has announced yet, or the chain is unreachable. <button class="link" id="seeds-refresh">Read again</button></div>') : '<div class="empty">NodeDirectory is not configured in this build (config.js CHAIN.NodeDirectory).</div>', '', 's12')}
       ${panel('Peers', peers, '', 's12')}
     </div>`;
   $('node-edit2')?.addEventListener('click', editNode);
   $('update-btn')?.addEventListener('click', updateNode);
+  $('seeds-refresh')?.addEventListener('click', () => { S.seedsAt = 0; findSeed().then(render); });
 }
 
 // ═══════════════════════════════════════════════ router ══
@@ -669,6 +683,7 @@ player = await loadPlayer();
 renderChrome();
 navigate();
 refreshBinding().then(render);
+if (seeds.configured()) seeds.chainSeeds().then((s) => { S.seeds = s; S.seedsAt = Date.now(); render(); });
 setInterval(() => refreshBinding().then(render), 60_000);
 pollNode();
 setInterval(pollNode, 5000);

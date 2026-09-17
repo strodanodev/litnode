@@ -60,7 +60,7 @@ test('cabinet contract: fields by name, cabinet served at /, vendored protocol i
 
   // the node is a frontend host: the cabinet at /, its files at the root, the protocol modules it imports
   const page = await get('/'); assert.match(page.headers.get('content-type'), /text\/html/); assert.match(await page.text(), /LIT GAMES/);
-  for (const f of ['/app.js', '/client.js', '/wallet.js', '/config.js', '/style.css', '/sw.js', '/manifest.webmanifest', '/protocol/keys.js', '/protocol/derive.js', '/protocol/profile.js', '/cabinet/protocol/keys.js'])
+  for (const f of ['/app.js', '/client.js', '/wallet.js', '/seeds.js', '/protocol/directory.js', '/protocol/abi.js', '/config.js', '/style.css', '/sw.js', '/manifest.webmanifest', '/protocol/keys.js', '/protocol/derive.js', '/protocol/profile.js', '/cabinet/protocol/keys.js'])
     assert.equal((await fetch(`${node.addr}${f}`)).status, 200, f);
   assert.equal((await fetch(`${node.addr}/protocol/../package.json`)).status, 404, 'no path escape');
   assert.equal((await fetch(`${node.addr}/nope.js`)).status, 404);
@@ -103,6 +103,11 @@ test('cabinet contract: fields by name, cabinet served at /, vendored protocol i
   // /stats — keyed by playerId
   const st = await json('/stats?ruleset=agent-fighter.v1');
   hasFields(st[kps[0].publicKey], { matches: 'number', wins: 'number', ticks: 'number' }, '/stats[player]');
+
+  // /seeds — the bootstrap list this node last read from NodeDirectory (unset in this offline node)
+  const sd = await json('/seeds');
+  hasFields(sd, { source: 'string', seeds: 'array' }, '/seeds');
+  assert.equal(sd.source, 'unset');
 
   // /profile — what the cabinet's profile card asks about this browser's key
   const prof = await json(`/profile?player=${kps[0].publicKey}`);
