@@ -99,7 +99,8 @@ export async function createNode({
   const refreshProfiles = async (keys) => {
     if (!playerProfile || offline) return;
     const now = Date.now();
-    const stale = [...new Set(keys)].filter((k) => now - (profileCache.get(k)?.at ?? 0) > PROFILE_TTL).slice(0, 50);
+    // Only real player keys: relay-era deltas name players `af:<name>`, which no contract can answer for.
+    const stale = [...new Set(keys)].filter((k) => /^[0-9a-f]{64}$/i.test(k) && now - (profileCache.get(k)?.at ?? 0) > PROFILE_TTL).slice(0, 50);
     if (!stale.length) return;
     const got = await chain.profiles(stale);
     if (!got) return;
