@@ -22,8 +22,9 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const deployed = JSON.parse(readFileSync(join(root, 'contracts', 'deployed.testnet.json'), 'utf8'));
 const [nodeId, announcer] = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const fund = process.argv.includes('--fund') ? process.argv[process.argv.indexOf('--fund') + 1] : null;
-const key = process.env.DEPLOYER_KEY;
-if (!key || !/^0x[0-9a-fA-F]{64}$/.test(key)) { console.error('DEPLOYER_KEY not set (expected 0x + 64 hex)'); process.exit(1); }
+const rawKey = (process.env.DEPLOYER_KEY ?? '').trim();
+const key = /^(0x)?[0-9a-fA-F]{64}$/.test(rawKey) ? (rawKey.startsWith('0x') ? rawKey : '0x' + rawKey) : null;
+if (!key) { console.error('DEPLOYER_KEY not set (expected 64 hex characters, with or without 0x)'); process.exit(1); }
 if (!deployed.NodeDirectory?.address) { console.error('NodeDirectory not deployed — run npm run deploy:testnet'); process.exit(1); }
 if (!/^[0-9a-f]{64}$/i.test(nodeId ?? '') || !/^0x[0-9a-fA-F]{40}$/.test(announcer ?? '')) { console.error('usage: node tools/set-announcer.mjs <nodeId 64 hex> <announcer 0x…> [--fund <zkLTC>]'); process.exit(1); }
 
