@@ -64,7 +64,9 @@ const retry = async (label, fn, tries = 6) => {
   for (let i = 1; ; i++) {
     try { return await fn(); }
     catch (e) {
-      const transient = e?.code === 'SERVER_ERROR' || e?.code === 'TIMEOUT' || e?.code === 'NETWORK_ERROR' || /502|503|504|ECONNRESET|fetch failed/i.test(e?.message ?? '');
+      // BAD_DATA with an empty result: the gateway routed the eth_call to a
+      // node that has not seen the contract we just deployed — a lag, not a bug.
+      const transient = e?.code === 'SERVER_ERROR' || e?.code === 'TIMEOUT' || e?.code === 'NETWORK_ERROR' || (e?.code === 'BAD_DATA' && e?.value === '0x') || /502|503|504|ECONNRESET|fetch failed/i.test(e?.message ?? '');
       if (!transient || i >= tries) throw e;
       console.log(`${label}: ${e.shortMessage ?? e.message} — retry ${i}/${tries - 1} in ${3 * i}s`);
       await new Promise((r) => setTimeout(r, 3000 * i));
