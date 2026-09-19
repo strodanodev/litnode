@@ -68,21 +68,23 @@ export const GAMES = [
 ];
 
 /** litVM (LiteForge testnet) — read-only from the dashboard. Addresses from
- *  contracts/deployed.testnet.json. */
+ *  contracts/deployed.testnet.json — the v2 set deployed 19 Sep 2026 from the
+ *  rotated wallet (contracts/MIGRATION.md); the 12–17 Sep v1 addresses are
+ *  archived in contracts/deployed.testnet.2026-09-17T00-45-43-682Z.json. */
 export const CHAIN = {
   name: 'litVM LiteForge',
   chainId: 4441,
   rpc: 'https://liteforge.rpc.caldera.xyz/http',
-  NodeStake: '0x11C984bE3ee572eb7280334501B57c82001F397F',
-  TestLITVM: '0x697aC520dFBe1B1830Bf22A77b54564F8ee21744',
-  EpochAnchor: '0x09fBf6A5026b4E02eE9f78222117F97b19eE507A',
+  NodeStake: '0x53822d9a334082e88AB70103F58AD65eBEF73801',
+  TestLITVM: '0x85D309Fe638B639Ae8c9889A5199Fce55B5dBd41',
+  EpochAnchor: '0x87d9fB5FC60140B3e7A63FC657c1969baAf7d6eD',
   /** Set after `npm run deploy:testnet` writes it to contracts/deployed.testnet.json.
    *  null = "Sign in with wallet" stays hidden; keys are players (docs/WALLET-IDENTITY.md). */
-  PlayerProfile: '0x790824e6ea7aF658742bcefEe915Ca40CA210886',
-  NodeBadge: '0xDAdd39D3fA134d0A30770356D47d733fF0Fc9A21',
+  PlayerProfile: '0xCdB1901aA9f4bc5dfd7F62c68B9d06247229B112',
+  NodeBadge: '0x036f11E25d2A352f1B2DDc621c64aa22276D5f6e',
   /** The seed list on chain. Set after deploy; then a visitor with no node
    *  reads the mesh through the freshest bonded seed (docs: decentralized bootstrap). */
-  NodeDirectory: '0xf63AA4590fDCa66fD9FA3005C588E9deb09767b4',
+  NodeDirectory: '0x278e4550F8a45B5D7d630a606d577F9Fb6cBE4c1',
   explorer: 'https://liteforge.explorer.caldera.xyz',
   token: 'tLITVM',
 };

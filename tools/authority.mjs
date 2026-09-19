@@ -52,7 +52,7 @@ for (const id of keys) {
   const n = { nodeId: id, operator, bonded: ethers.formatEther(amount), active };
   if (dir) { n.announcer = await retry(() => dir.announcerOf(key, at)); const e = await retry(() => dir.entryOf(key, at)); n.entry = { url: e[0], wsAddr: e[1], updatedAt: Number(e[2]) ? new Date(Number(e[2]) * 1000).toISOString() : null, announcedBy: e[3] }; }
   report.nodes.push(n);
-  if (operator !== ethers.ZeroAddress) hold('NodeStake', `operator of node ${id.slice(0, 12)}… (can unstake it; NodeStake v1 binds the key to this operator forever)`, operator, active ? 'active bond' : 'not active');
+  if (operator !== ethers.ZeroAddress) hold('NodeStake', `operator of node ${id.slice(0, 12)}… (can unstake it${deployed.NodeStake?.version >= 2 ? '; movable with transferOperator' : '; NodeStake v1 binds the key to this operator forever'})`, operator, active ? 'active bond' : 'not active');
   if (n.announcer && n.announcer !== ethers.ZeroAddress) hold('NodeDirectory', `announcer for node ${id.slice(0, 12)}… (can misdirect discovery of that node)`, n.announcer, 'delegated key held by the node, not the operator');
 }
 // EpochAnchor
@@ -69,7 +69,7 @@ for (const c of ['PlayerProfile', 'NodeBadge', 'TestLITVM']) if (deployed[c]?.ad
 
 report.summary = {
   heldByCompromised: report.holdings.filter((h) => h.heldByCompromised).length,
-  rotatable: 'NodeStake slasher/treasury via setParams (by the current slasher); EpochAnchor/ERC6699Registry admin via v2 admin. Node OPERATOR bindings in NodeStake v1 cannot be moved: re-bond the keys on a fresh NodeStake from the new wallet (contracts/MIGRATION.md).',
+  rotatable: deployed.NodeStake?.version >= 2 ? 'v2 set: NodeStake slasher/treasury via setParams, operator bindings via transferOperator, EpochAnchor/ERC6699Registry admin via transferAdmin/setParams — no redeploy needed.' : 'NodeStake slasher/treasury via setParams (by the current slasher); EpochAnchor/ERC6699Registry admin via v2 admin. Node OPERATOR bindings in NodeStake v1 cannot be moved: re-bond the keys on a fresh NodeStake from the new wallet (contracts/MIGRATION.md).',
 };
 mkdirSync(join(root, 'audit'), { recursive: true });
 const out = join(root, 'audit', `authority-${block}.json`);

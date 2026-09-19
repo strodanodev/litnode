@@ -12,7 +12,7 @@ three different columns, and this document keeps them apart.
 | package version | 0.8.0 · **protocol version 2** (`protocol/version.js`) |
 | ruleset builds | `agent-fighter.v1` `859e7215418db6473f0ceb1a88a1f51dc279db1974636c2262f547fcafca76da` · `pickle-brawl.v1` `db035b782d23e85d4dcfdab0b2364f9e4f1c828b3dd8b2217c25b62cf0e1cb2e` · `tug.v1` `94aee45adbfc68604209a407a63e25c184844526ee87110224d41febc52af218` — bytes unchanged from the audit; sidecars now carry a publisher signature by the release key `4d8759b0…` |
 | tests | 61 passing, 1 skipped (manual), 0 failing; 19 suites run one file at a time; 248 s on the audit machine (`npm test`) |
-| deployed contracts | **unchanged: the v1 set** listed in `contracts/deployed.testnet.json` (Liteforge 4441). The v2 contracts in this source are compiled and tested against mocks only. |
+| deployed contracts | **v2 set, deployed 19 Sep 2026 from the rotated wallet** (`contracts/deployed.testnet.json`; v1 archived as `contracts/deployed.testnet.2026-09-17T00-45-43-682Z.json`). Unaudited testnet code. |
 | running nodes | desktop `5b703f12…` was on **0.6.5** during this work and has not been updated to 0.8.0 (see "what was deployed"); the two laptop nodes were offline (desktop `/peers` listed only itself, as the audit also observed) |
 
 ## What changed, per finding
@@ -175,7 +175,18 @@ Agent Fighter's 93 KB build takes 122 ms; a spinning title is killed within
 
 ## What was deployed
 
-- **Nothing on chain.**
+- **19 Sep 2026: the v2 contract set is deployed on Liteforge from a new
+  wallet** (`0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27`; addresses, blocks
+  and transactions in `contracts/MIGRATION.md` and
+  `contracts/deployed.testnet.json`; the v1 set is archived alongside).
+  Verified on chain: EpochAnchor v2 admin = new wallet, quorum 2, bound to the
+  new NodeStake; ERC6699Registry v2 admin = new wallet; NodeStake
+  slasher/treasury = new wallet; the desktop node key is bonded from it.
+  `npm run authority` at block **52404437**: **0 holdings by the exposed
+  address** on the live set. Still pending on that set: bonding the laptop
+  keys, re-delegating the announcer, naming a minter/progressor, and
+  pointing the running nodes at the new addresses (they ship in 0.8.0;
+  `LITNODE-DESKTOP/contracts/deployed.testnet.json` must be replaced).
 - **v0.8.0 is published as a CANARY prerelease**
   (https://github.com/strodanodev/litnode/releases/tag/v0.8.0, four zips +
   `release-canary.json`, signed by the release key). Stable nodes keep

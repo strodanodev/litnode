@@ -1,29 +1,77 @@
 {
+  "migratedFrom": {
+    "NodeStake": "0x11C984bE3ee572eb7280334501B57c82001F397F",
+    "EpochAnchor": "0x09fBf6A5026b4E02eE9f78222117F97b19eE507A",
+    "ERC6699Registry": "0x66cef65F9F3774989D5F4AFa1fF6a09541835145",
+    "NodeDirectory": "0xf63AA4590fDCa66fD9FA3005C588E9deb09767b4",
+    "deployedAt": "2026-09-17T00:45:43.682Z"
+  },
   "TestLITVM": {
-    "address": "0x697aC520dFBe1B1830Bf22A77b54564F8ee21744",
-    "tx": "0x823f062de57d13fb45d3e87dfefac8c1b70edcfa13c0cfac76ec6b4e1f30afc1",
-    "block": 50088907,
+    "address": "0x85D309Fe638B639Ae8c9889A5199Fce55B5dBd41",
+    "tx": "0x16f7615690910afb35d54b84da465d29d7b8fd12c952e9b17cd581b63c9bb733",
+    "block": 52403165,
     "args": []
   },
   "NodeStake": {
-    "address": "0x11C984bE3ee572eb7280334501B57c82001F397F",
-    "tx": "0xe2047826bac831c7828a15f43e1c4089bf5a600330d421b821b72f1bd2b06bca",
-    "block": 50088942,
+    "address": "0x53822d9a334082e88AB70103F58AD65eBEF73801",
+    "tx": "0xf1b3435f663e87ab3107d29a6f758928e4af3b554152217ca2fd0ad68552aa0e",
+    "block": 52403667,
     "args": [
-      "0x697aC520dFBe1B1830Bf22A77b54564F8ee21744",
+      "0x85D309Fe638B639Ae8c9889A5199Fce55B5dBd41",
       "1000000000000000000",
       "60",
-      "0xa6d840C28B3DF4f931F1ac2fB940c59B9e9DfdfE",
-      "0xa6d840C28B3DF4f931F1ac2fB940c59B9e9DfdfE"
+      "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27",
+      "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27"
     ],
     "minStake": "1000000000000000000",
-    "unbondingPeriod": 60
+    "unbondingPeriod": 60,
+    "version": 2
   },
   "ERC6699Registry": {
-    "address": "0x66cef65F9F3774989D5F4AFa1fF6a09541835145",
-    "tx": "0xadbab1ccd240be732a2444c5cce96c08747ffcd559f2f231eb4174dbf6639519",
-    "block": 50088959,
+    "address": "0x4062626DB36CE24752ED7a3e8c5FD7fE2ceFaB02",
+    "tx": "0x72a40670defcb1366b32f0f799d5c2de6018c678c02a86cd07cdaf7978d0411f",
+    "block": 52403694,
+    "args": [
+      "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27"
+    ],
+    "version": 2
+  },
+  "EpochAnchor": {
+    "address": "0x87d9fB5FC60140B3e7A63FC657c1969baAf7d6eD",
+    "tx": "0xebf797f793e64b75cd2a3ced1730d02627f3dcab6744d7d2b5bfe1c24773ad98",
+    "block": 52403774,
+    "args": [
+      "0x53822d9a334082e88AB70103F58AD65eBEF73801",
+      "2",
+      "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27"
+    ],
+    "version": 2,
+    "quorum": 2
+  },
+  "ERC6699RegistryV2": {
+    "address": "0x4062626DB36CE24752ED7a3e8c5FD7fE2ceFaB02"
+  },
+  "PlayerProfile": {
+    "address": "0xCdB1901aA9f4bc5dfd7F62c68B9d06247229B112",
+    "tx": "0xb1dd3e842a73e3b8068bcc5803d2769e19aff6ea50f1d95c53fedd042a7ca554",
+    "block": 52403825,
     "args": []
+  },
+  "NodeBadge": {
+    "address": "0x036f11E25d2A352f1B2DDc621c64aa22276D5f6e",
+    "tx": "0x32be3630ea137b579225f094f5e03bdd232a33c54d9565d9c5c508307ae5c4f5",
+    "block": 52403893,
+    "args": [
+      "0x53822d9a334082e88AB70103F58AD65eBEF73801"
+    ]
+  },
+  "NodeDirectory": {
+    "address": "0x278e4550F8a45B5D7d630a606d577F9Fb6cBE4c1",
+    "tx": "0x8354c19f221c5fbf92e03dcb39b2008876d53f4ddd887c4a3bd74174fe6e72ea",
+    "block": 52403947,
+    "args": [
+      "0x53822d9a334082e88AB70103F58AD65eBEF73801"
+    ]
   },
   "firstNode": {
     "nodeId": "5b703f1288765c0ca3734ab0625df161121ef45a9eabafaaae539be1add95151",
@@ -31,33 +79,6 @@
   },
   "chainId": 4441,
   "rpc": "https://liteforge.rpc.caldera.xyz/http",
-  "deployedAt": "2026-09-17T00:45:43.682Z",
-  "EpochAnchor": {
-    "address": "0x09fBf6A5026b4E02eE9f78222117F97b19eE507A",
-    "tx": "0xe7063f6621f6460831c35217993d23143a42f620e23eac8f4a6e1b27c4abc352",
-    "block": 50091691,
-    "args": []
-  },
-  "PlayerProfile": {
-    "address": "0x790824e6ea7aF658742bcefEe915Ca40CA210886",
-    "tx": "0xe07ef7cfbae556b8f9d294114550376590b628dee093d0fbabfeecf37fe627d1",
-    "block": 51608640,
-    "args": []
-  },
-  "NodeBadge": {
-    "address": "0xDAdd39D3fA134d0A30770356D47d733fF0Fc9A21",
-    "tx": "0x4c3a7c899bc4a92da1783e2d7bff8a85e558a72c487beeae0b28f5da32412907",
-    "block": 51608689,
-    "args": [
-      "0x11C984bE3ee572eb7280334501B57c82001F397F"
-    ]
-  },
-  "NodeDirectory": {
-    "address": "0xf63AA4590fDCa66fD9FA3005C588E9deb09767b4",
-    "tx": "0x834f728a08117f14f0bc18f93a87e8c7c03766a8e179550e95e7852f88fe9e9e",
-    "block": 51608717,
-    "args": [
-      "0x11C984bE3ee572eb7280334501B57c82001F397F"
-    ]
-  }
+  "deployedAt": "2026-09-19T08:19:23.550Z",
+  "deployer": "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27"
 }
