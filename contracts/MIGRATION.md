@@ -16,7 +16,7 @@ And the deployer key that holds NodeStake's slasher/treasury and the desktop
 node's operator binding was exposed in a chat transcript. v1 NodeStake cannot
 move an operator binding, so the rotation IS the redeploy.
 
-## Procedure (executed 19 Sep 2026 — steps 1–3 done, 4–9 pending)
+## Procedure (executed 19 Sep 2026 — steps 1–3 and 5 (desktop) done; 4, 6–9 pending)
 
 1. Snapshot who holds what now: `npm run authority` → `audit/authority-<block>.json`.
 2. Create wallet W2; fund it with zkLTC (faucet). Never paste its key anywhere but the shell.
@@ -48,6 +48,7 @@ move an operator binding, so the rotation IS the redeploy.
 | 2026-09-19 | v2 NodeDirectory `0x278e4550F8a45B5D7d630a606d577F9Fb6cBE4c1` | 52403947 | tx `0x8354c19f221c5fbf92e03dcb39b2008876d53f4ddd887c4a3bd74174fe6e72ea` |
 | 2026-09-19 | desktop node `5b703f12…` bonded 1 tLITVM from W2 `0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27` (admin of EpochAnchor v2 quorum 2, ERC6699Registry v2; NodeStake slasher/treasury) | — | `deployed.testnet.json` |
 | 2026-09-19 | authority snapshot after migration: **0 holdings by the exposed address** | 52404437 | `audit/authority-52404437.json` |
+| 2026-09-19 | announcer `0x74672463…` re-delegated for the desktop key on NodeDirectory v2 (tx `0xd624639f346debe9cab4364f07119c84ce34ff8a8582c0f148426f6164e96f9c`), funded 0.005 zkLTC (tx `0x9ab55e036e359a181639607bc46d07122f13beee5ffc74e5251fd4659cdf72ee`) | — | — |
 
 Old anchors: scanning `rootOf()` for every hour from 11 Sep to 17 Sep 2026
 finds exactly one v1 anchor — epoch **497006** (2026-09-12 14:00 UTC), root
