@@ -42,20 +42,41 @@ const argv = process.argv.slice(2);
 const fresh = argv.includes('--fresh');
 const quorum = argv.includes('--quorum') ? Number(argv[argv.indexOf('--quorum') + 1]) : 2;
 const previous = existsSync(outPath) ? JSON.parse(readFileSync(outPath, 'utf8')) : null;
-if (fresh && previous) {
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+// --fresh is resumable: a file that already carries `migratedFrom` IS the new
+// generation, half-deployed (Caldera's gateway 502s mid-run) — continue it
+// rather than archiving it and starting over. Archive names come from the
+// previous set's own deployedAt, so a re-run never makes a second copy.
+const resuming = fresh && previous?.migratedFrom;
+if (fresh && previous && !resuming) {
+  const stamp = String(previous.deployedAt ?? new Date().toISOString()).replace(/[:.]/g, '-');
   const archived = join(root, 'contracts', `deployed.testnet.${stamp}.json`);
-  writeFileSync(archived, JSON.stringify(previous, null, 2) + '\n');
+  if (!existsSync(archived)) writeFileSync(archived, JSON.stringify(previous, null, 2) + '\n');
   console.log(`--fresh: previous deployment archived as ${archived}`);
 }
-const deployed = previous && !fresh ? previous : {};
-if (fresh && previous) deployed.migratedFrom = { NodeStake: previous.NodeStake?.address ?? null, EpochAnchor: previous.EpochAnchor?.address ?? null, ERC6699Registry: previous.ERC6699Registry?.address ?? null, NodeDirectory: previous.NodeDirectory?.address ?? null, deployedAt: previous.deployedAt ?? null };
+const deployed = previous && (!fresh || resuming) ? previous : {};
+if (fresh && previous && !resuming) deployed.migratedFrom = { NodeStake: previous.NodeStake?.address ?? null, EpochAnchor: previous.EpochAnchor?.address ?? null, ERC6699Registry: previous.ERC6699Registry?.address ?? null, NodeDirectory: previous.NodeDirectory?.address ?? null, deployedAt: previous.deployedAt ?? null };
+if (resuming) console.log(`--fresh: resuming the v2 deployment already in ${outPath}`);
+
+/** Caldera's gateway answers 502 now and then. Every chain call and every
+ *  transaction is retried a few times rather than abandoning the run; a
+ *  deploy that already landed is skipped on re-run (see deploy()). */
+const retry = async (label, fn, tries = 6) => {
+  for (let i = 1; ; i++) {
+    try { return await fn(); }
+    catch (e) {
+      const transient = e?.code === 'SERVER_ERROR' || e?.code === 'TIMEOUT' || e?.code === 'NETWORK_ERROR' || /502|503|504|ECONNRESET|fetch failed/i.test(e?.message ?? '');
+      if (!transient || i >= tries) throw e;
+      console.log(`${label}: ${e.shortMessage ?? e.message} — retry ${i}/${tries - 1} in ${3 * i}s`);
+      await new Promise((r) => setTimeout(r, 3000 * i));
+    }
+  }
+};
 const save = () => writeFileSync(outPath, JSON.stringify(deployed, null, 2) + '\n');
 
 const provider = new ethers.JsonRpcProvider(cfg.rpc, cfg.chainId);
 const wallet = new ethers.Wallet(key, provider);
-const balance = await provider.getBalance(wallet.address);
-console.log(`deployer ${wallet.address} · ${ethers.formatEther(balance)} zkLTC · chain ${(await provider.getNetwork()).chainId}`);
+const balance = await retry('balance', () => provider.getBalance(wallet.address));
+console.log(`deployer ${wallet.address} · ${ethers.formatEther(balance)} zkLTC · chain ${(await retry('network', () => provider.getNetwork())).chainId}`);
 if (balance === 0n) { console.error('no zkLTC for gas — use the faucet first'); process.exit(1); }
 
 // ---------------------------------------------------------------- compile
@@ -76,8 +97,8 @@ const deploy = async (label, file, name, args = []) => {
   }
   const { abi, evm } = artifact(file, name);
   const factory = new ethers.ContractFactory(abi, '0x' + evm.bytecode.object, wallet);
-  const c = await factory.deploy(...args);
-  const receipt = await c.deploymentTransaction().wait();
+  const c = await retry(`${label}: deploy`, () => factory.deploy(...args));
+  const receipt = await retry(`${label}: receipt`, () => c.deploymentTransaction().wait());
   deployed[label] = { address: await c.getAddress(), tx: receipt.hash, block: receipt.blockNumber, args: args.map(String) };
   save();
   console.log(`${label}: deployed at ${deployed[label].address} (tx ${receipt.hash})`);
@@ -86,12 +107,12 @@ const deploy = async (label, file, name, args = []) => {
 
 // ---------------------------------------------------------------- token + faucet
 const token = await deploy('TestLITVM', 'TestLITVM.sol', 'TestLITVM');
-const tBal = await token.balanceOf(wallet.address);
+const tBal = await retry('balanceOf', () => token.balanceOf(wallet.address));
 if (tBal === 0n) {
   console.log('faucet: pulling 1000 tLITVM');
-  await (await token.faucet()).wait();
+  await retry('faucet', async () => (await token.faucet()).wait());
 }
-console.log(`tLITVM balance ${ethers.formatEther(await token.balanceOf(wallet.address))}`);
+console.log(`tLITVM balance ${ethers.formatEther(await retry('balanceOf', () => token.balanceOf(wallet.address)))}`);
 
 // ---------------------------------------------------------------- NodeStake
 const ns = cfg.NodeStake;
@@ -125,13 +146,13 @@ const idPath = join(dataDir, 'identity.json');
 const identity = existsSync(idPath) ? JSON.parse(readFileSync(idPath, 'utf8')) : await generateKeypair();
 if (!existsSync(idPath)) writeFileSync(idPath, JSON.stringify(identity, null, 2) + '\n');
 const nodeKey = nodeKeyBytes32(identity.publicKey);
-const [, amount, active] = await stake.standingOf(nodeKey);
+const [, amount, active] = await retry('standingOf', () => stake.standingOf(nodeKey));
 if (!active) {
   console.log(`bonding ${ethers.formatEther(minStake)} tLITVM behind node ${identity.publicKey.slice(0, 16)}…`);
-  await (await token.approve(await stake.getAddress(), minStake)).wait();
-  await (await stake.stake(nodeKey, minStake)).wait();
+  await retry('approve', async () => (await token.approve(await stake.getAddress(), minStake)).wait());
+  await retry('stake', async () => (await stake.stake(nodeKey, minStake)).wait());
 }
-const standing = await stake.standingOf(nodeKey);
+const standing = await retry('standingOf', () => stake.standingOf(nodeKey));
 console.log(`node ${identity.publicKey.slice(0, 16)}… operator ${standing[0]} bonded ${ethers.formatEther(standing[1])} active ${standing[2]}`);
 deployed.firstNode = { nodeId: identity.publicKey, bonded: ethers.formatEther(standing[1]) };
 deployed.chainId = cfg.chainId;
