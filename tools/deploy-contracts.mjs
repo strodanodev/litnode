@@ -36,6 +36,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const cfgPath = join(root, 'contracts', 'deploy.testnet.json');
 const outPath = join(root, 'contracts', 'deployed.testnet.json');
 const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
+const key = process.env.DEPLOYER_KEY;
+if (!key) { console.error('DEPLOYER_KEY is not set. Set it in this shell only and re-run (tools/new-wallet.mjs makes one and says how).'); process.exit(1); }
 const argv = process.argv.slice(2);
 const fresh = argv.includes('--fresh');
 const quorum = argv.includes('--quorum') ? Number(argv[argv.indexOf('--quorum') + 1]) : 2;
@@ -50,8 +52,6 @@ const deployed = previous && !fresh ? previous : {};
 if (fresh && previous) deployed.migratedFrom = { NodeStake: previous.NodeStake?.address ?? null, EpochAnchor: previous.EpochAnchor?.address ?? null, ERC6699Registry: previous.ERC6699Registry?.address ?? null, NodeDirectory: previous.NodeDirectory?.address ?? null, deployedAt: previous.deployedAt ?? null };
 const save = () => writeFileSync(outPath, JSON.stringify(deployed, null, 2) + '\n');
 
-const key = process.env.DEPLOYER_KEY;
-if (!key) { console.error('DEPLOYER_KEY is not set. Set it in this shell only and re-run.'); process.exit(1); }
 const provider = new ethers.JsonRpcProvider(cfg.rpc, cfg.chainId);
 const wallet = new ethers.Wallet(key, provider);
 const balance = await provider.getBalance(wallet.address);

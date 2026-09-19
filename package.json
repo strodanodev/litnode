@@ -28,7 +28,8 @@
     "announcer": "node tools/set-announcer.mjs",
     "sign:build": "node tools/sign-build.mjs",
     "authority": "node tools/authority.mjs",
-    "custody": "node tools/custody.mjs"
+    "custody": "node tools/custody.mjs",
+    "wallet": "node tools/new-wallet.mjs"
   },
   "engines": {
     "node": ">=20"
