@@ -24,4 +24,5 @@ const privateKey = randomPrivateKey();
 const address = addressOf(privateKey);
 mkdirSync(dirname(file), { recursive: true });
 writeFileSync(file, JSON.stringify({ address, privateKey, createdAt: new Date().toISOString(), purpose: 'litnode testnet deployer / operator (v2 migration)' }, null, 2) + '\n', { mode: 0o600 });
-console.log(`new wallet ${address}\nkey written to ${file} (never printed; never commit it)\n\nnext:\n  1. fund ${address} with zkLTC: https://liteforge.hub.caldera.xyz\n  2. PowerShell:  $env:DEPLOYER_KEY = (Get-Content "${file.replace(/\/g, '/')}" | ConvertFrom-Json).privateKey\n  3. npm run deploy:testnet -- --fresh --quorum 2`);
+const shown = file.split('\\').join('/');
+console.log(`new wallet ${address}` + String.fromCharCode(10) + `key written to ${file} (never printed; never commit it)` + String.fromCharCode(10, 10) + 'next:' + String.fromCharCode(10) + `  1. fund ${address} with zkLTC: https://liteforge.hub.caldera.xyz` + String.fromCharCode(10) + `  2. PowerShell:  $env:DEPLOYER_KEY = (Get-Content "${shown}" | ConvertFrom-Json).privateKey` + String.fromCharCode(10) + '  3. npm run deploy:testnet -- --fresh --quorum 2');
