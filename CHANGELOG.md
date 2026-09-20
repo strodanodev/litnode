@@ -5,6 +5,16 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+- **Sign-in is asked for when it matters, once.** The header chip reads
+  "· SIGN IN" and opens AIR; Find match signs in first and goes straight to
+  the queue (a closed dialog queues as a guest); a launched title gets a
+  single-sign-on URL (`goToPartner`) so it opens already signed in — its own
+  AIR dialog cannot show inside the cabinet's frame anyway; `cabinet:init`
+  carries `air:{id,email,address,tokenId,name}`. Binding your own wallet is
+  folded under "advanced". A remembered identity is dropped when AIR says
+  the session ended.
+
 ## [0.10.0] — 2026-09-21 — universal login
 
 Protocol 3, unchanged. Node + cabinet.

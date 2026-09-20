@@ -53,7 +53,7 @@ async function fillUser(s) {
 export async function rehydrate() {
   const s = await service();
   if (s.isLoggedIn) { me.loggedIn = true; await fillUser(s); }
-  else { me.loggedIn = false; }
+  else { me.loggedIn = false; me.session = null; store(null); } // the AIR session ended: forget the remembered identity too
   return me.loggedIn;
 }
 /** Interactive: AIR's dialog. Must be called from a user gesture. */
@@ -86,6 +86,16 @@ export async function nodeSession(nodeUrl, { playerKey = null, name = null } = {
   me.session = { ...body, at: Date.now() };
   store(me.session);
   return me.session;
+}
+/** Single sign-on into a title: AIR rewrites the launch URL with a one-time
+ *  token so the title's own AIR Kit picks the session up without a second
+ *  dialog (which an iframe could not show anyway — AIR's login page refuses
+ *  to be framed). Falls back to the plain URL when not signed in or when AIR
+ *  cannot vouch for that destination. */
+export async function ssoUrl(url) {
+  if (!me.loggedIn) return url;
+  try { const s = await service(); const r = await s.goToPartner(url); return typeof r?.urlWithToken === 'string' && r.urlWithToken ? r.urlWithToken : url; }
+  catch { return url; }
 }
 /** Does this node do universal login at all? */
 export async function nodeSupports(nodeUrl) {

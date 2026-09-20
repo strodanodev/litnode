@@ -167,7 +167,9 @@ const ticksToHours = (t) => t / 60 / 3600;
 // ═══════════════════════════════════════════════ chrome ══
 function renderChrome() {
   $('me-avatar').src = player.avatar;
-  $('me-name').textContent = player.name;
+  const signedIn = !!Ai.me.session?.address;
+  $('me-name').textContent = signedIn ? (Ai.me.session.name || player.name) : air.configured() && player.kp ? `${player.name} · SIGN IN` : player.name;
+  $('me-chip').title = signedIn ? `AIR ${Ai.me.email ?? ''} · litVM ${Ai.me.session.address}` : air.configured() ? 'Sign in with AIR' : '';
   const t = myTotals();
   const xp = t.wins * 60 + (t.matches - t.wins) * 20;
   $('me-level').textContent = `LV ${levelOf(xp).level}`;
@@ -306,9 +308,9 @@ function walletLine() {
   if (b?.active && !(Ai.me.session?.address && b.owner === Ai.me.session.address)) return airLine() + `<div class="sub">profile <b>${esc(Wl.profile?.name ?? `#${b.tokenId}`)}</b> · wallet <span class="mono" title="${esc(b.owner)}">${b.owner.slice(0, 6)}…${b.owner.slice(-4)}</span></div>`;
   if (b?.active) return airLine();
   if (b && !b.active) return '<div class="sub" style="color:var(--bad,#ff7b8a)">this key was revoked by its profile owner — nodes refuse it</div>';
-  const own = !wallet.hasWallet() ? '<div class="sub dim">…or install a wallet (MetaMask) to bind this key yourself.</div>'
+  const own = !wallet.hasWallet() ? '<div class="sub dim">Install a wallet (MetaMask) on litVM to bind this key yourself.</div>'
     : `<div class="sub"><button class="btn sm" id="wallet-btn">Bind with my own wallet</button> <span class="dim">one transaction: a soulbound profile owns this key</span>${Wl.error ? `<div class="dim">${esc(Wl.error)}</div>` : ''}</div>`;
-  return airLine() + own;
+  return airLine() + `<details class="sub"><summary class="dim">advanced · your own wallet</summary>${own}</details>`;
 }
 /** Connect, then register (no profile yet) or bindKey (profile exists, new device). */
 async function signInWithWallet() {
@@ -539,6 +541,9 @@ function clockProblem() {
 }
 async function findMatch(g) {
   if (!player.kp || !S.online || MM.state === 'queued') return;
+  // Identity is asked for at the moment it matters — a ranked queue — never
+  // at the door. One dialog, then the queue; a closed dialog queues as a guest.
+  if (air.configured() && !Ai.me.session?.address && !Ai.busy) { await signInWithAir(); if (MM.state === 'queued') return; }
   const problem = clockProblem();
   if (problem) { alert(problem); return; }
   const client = createClient({ nodeUrl: nodeUrl(), player: player.kp, rpc: seeds.configured() ? seeds.rpc : null });
@@ -727,7 +732,7 @@ window.addEventListener('hashchange', navigate);
 
 // One delegated click handler for everything rendered from templates.
 document.addEventListener('click', (e) => {
-  const t = e.target.closest('[data-play],[data-queue],[data-mm-stop],[data-mm-reset],[data-mm-launch],[data-lb],[data-style],#name-btn,#avatar-btn,#wallet-btn,#air-btn,#air-link,#air-out');
+  const t = e.target.closest('[data-play],[data-queue],[data-mm-stop],[data-mm-reset],[data-mm-launch],[data-lb],[data-style],#name-btn,#avatar-btn,#wallet-btn,#air-btn,#air-link,#air-out,#me-chip');
   if (!t) return;
   if (t.id === 'wallet-btn') { signInWithWallet(); return; }
   if (t.dataset.play) { e.preventDefault(); const g = GAMES.find((x) => x.id === t.dataset.play); if (g) play(g); }
@@ -741,17 +746,18 @@ document.addEventListener('click', (e) => {
   else if (t.dataset.style) { styleFilter = t.dataset.style; render(); }
   else if (t.id === 'name-btn') setName();
   else if (t.id === 'air-btn' || t.id === 'air-link') signInWithAir();
+  else if (t.id === 'me-chip' && air.configured() && player.kp && !Ai.me.session?.address) { e.preventDefault(); signInWithAir(); }
   else if (t.id === 'air-out') signOutAir();
   else if (t.id === 'avatar-btn') $('avatar-file').click();
 });
 
 // ═══════════════════════════════════════════════ play ══
-// Shell → game: { type:'cabinet:init', version:1, player:{id,guest,name}, node:{url,online}, game:{id,title},
+// Shell → game: { type:'cabinet:init', version:1, player:{id,guest,name}, air:{id,email,address,tokenId,name}|null, node:{url,online}, game:{id,title},
 //                 match?:{matchId, host, hostAddr, witness, wsAddr, beacon, beaconSource, participants, mode, buildHash, rulesetId} }   ← present when launched from a verified placement
 // Game → shell: { type:'cabinet:hello' } (ask for init) · { type:'cabinet:exit' }
 let current = null, currentMatch = null;
 const frame = $('game');
-const sendInit = () => { if (current && frame.contentWindow) frame.contentWindow.postMessage({ type: 'cabinet:init', version: 1, player: { id: player.id, guest: player.guest, name: player.name }, node: { url: nodeUrl(), online: S.online }, game: { id: current.id, title: current.title }, ...(currentMatch ? { match: currentMatch } : {}) }, '*'); };
+const sendInit = () => { if (current && frame.contentWindow) frame.contentWindow.postMessage({ type: 'cabinet:init', version: 1, player: { id: player.id, guest: player.guest, name: player.name }, air: Ai.me.session?.address ? { id: Ai.me.id ?? null, email: Ai.me.email ?? null, address: Ai.me.session.address, tokenId: Ai.me.session.tokenId ?? null, name: Ai.me.session.name ?? null } : null, node: { url: nodeUrl(), online: S.online }, game: { id: current.id, title: current.title }, ...(currentMatch ? { match: currentMatch } : {}) }, '*'); };
 window.addEventListener('message', async (e) => {
   if (e.source !== frame.contentWindow || !e.data?.type) return;
   if (e.data.type === 'cabinet:hello') sendInit();
@@ -774,7 +780,7 @@ frame.addEventListener('load', sendInit);
 /** Open a title. With `match` (from a verified placement) the title is told
  *  which relay to join: Agent Fighter's client takes the relay as ?ws=, and
  *  every title gets the full descriptor in cabinet:init. */
-function play(g, match = null) {
+async function play(g, match = null) {
   if (!g.playable || !g.url) return;
   current = g; currentMatch = match;
   $('play').style.setProperty('--ga', g.accent);
@@ -794,7 +800,9 @@ function play(g, match = null) {
     u.searchParams.set('match', match.matchId);
     if (match.buildHash) u.searchParams.set('build', match.buildHash);
   }
-  frame.src = u.href;
+  // Signed in with AIR → the title gets a one-time token in its URL and
+  // opens already signed in (cabinet/air.js ssoUrl); otherwise the plain URL.
+  frame.src = await air.ssoUrl(u.href);
   $('play').hidden = false;
 }
 function exit() { current = null; currentMatch = null; frame.src = 'about:blank'; $('play').hidden = true; }
