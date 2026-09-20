@@ -709,7 +709,10 @@ player = await loadPlayer();
 renderChrome();
 navigate();
 refreshBinding().then(render);
-if (seeds.configured()) seeds.chainSeeds().then((s) => { S.seeds = s; S.seedsAt = Date.now(); render(); });
+// Read the directory now AND, when no local node answers, fall through to a
+// proven seed at once. (Stamping seedsAt here used to make findSeed() wait
+// a full minute: a visitor with no node saw NODE OFFLINE for 60 s.)
+if (seeds.configured()) findSeed().then(render);
 setInterval(() => refreshBinding().then(render), 60_000);
 pollNode();
 setInterval(pollNode, 5000);
