@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createNode } from '../node/litnode.js';
+import { PROTOCOL_VERSION } from '../protocol/version.js';
 import { generateKeypair, sign } from '../protocol/keys.js';
 import { verifyProof } from '../protocol/epoch.js';
 import { resultHash } from '../protocol/result.js';
@@ -42,7 +43,7 @@ test('settle: placed + signed → verified delta → witness co-sign → officia
   const kps = await Promise.all([generateKeypair(), generateKeypair()]);
   const desc = await placeMatch(host.addr, kps, { rulesetId: 'agent-fighter.v1', mode: 'ranked' });
   assert.equal(desc.host, host.nodeId);
-  assert.equal(desc.protocol, 2);
+  assert.equal(desc.protocol, PROTOCOL_VERSION);
   assert.equal(desc.buildHash, manifest.buildHash, 'the descriptor pins the build');
   const sub = await playPlaced(desc, kps, { title, engine, manifest, balance });
   const r = await post(`${host.addr}/ledger`, sub);

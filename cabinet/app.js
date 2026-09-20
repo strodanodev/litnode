@@ -11,6 +11,7 @@
  *             that arrives with the Agent Fighter sync. Labelled "sample". */
 import { loadPlayer as loadKeypair, createClient, IDENTITY_KEY } from './client.js';
 import { roomCodeFor } from './protocol/pairing.js';
+import { ledgerBody, signLedger } from './protocol/log.js';
 import { applyDelta, sortDeltas } from './protocol/derive.js';
 import { NODE_URL, GAMES as CONFIG_GAMES } from './config.js';
 import { CHARACTERS, STYLES, ITEMS, ITEM_LINES, PETS, RARITY, INVENTORY_SAMPLE, portraitUrl } from './roster.js';
@@ -666,10 +667,23 @@ document.addEventListener('click', (e) => {
 let current = null, currentMatch = null;
 const frame = $('game');
 const sendInit = () => { if (current && frame.contentWindow) frame.contentWindow.postMessage({ type: 'cabinet:init', version: 1, player: { id: player.id, guest: player.guest, name: player.name }, node: { url: nodeUrl(), online: S.online }, game: { id: current.id, title: current.title }, ...(currentMatch ? { match: currentMatch } : {}) }, '*'); };
-window.addEventListener('message', (e) => {
+window.addEventListener('message', async (e) => {
   if (e.source !== frame.contentWindow || !e.data?.type) return;
   if (e.data.type === 'cabinet:hello') sendInit();
   if (e.data.type === 'cabinet:exit') exit();
+  // The title asks this shell to sign the ledger it just played (protocol 3):
+  // the player key never leaves this origin. Signed only for the match this
+  // shell launched, with the build it launched — a title cannot get a
+  // signature over some other match or some other ruleset.
+  if (e.data.type === 'cabinet:sign') {
+    const b = e.data.body ?? {};
+    const ok = currentMatch && player?.kp && b.matchId === currentMatch.matchId && (!currentMatch.buildHash || b.buildHash === currentMatch.buildHash)
+      && typeof b.head === 'string' && Number.isInteger(b.ticks) && b.ticks > 0;
+    if (!ok) { frame.contentWindow.postMessage({ type: 'cabinet:signed', matchId: b.matchId ?? null, error: 'not the match this shell launched' }, '*'); return; }
+    const body = ledgerBody({ matchId: b.matchId, ticks: b.ticks, head: b.head, buildHash: currentMatch.buildHash ?? b.buildHash ?? null });
+    const sig = await signLedger(body, player.kp);
+    frame.contentWindow.postMessage({ type: 'cabinet:signed', matchId: b.matchId, player: player.id, sig }, '*');
+  }
 });
 frame.addEventListener('load', sendInit);
 /** Open a title. With `match` (from a verified placement) the title is told
@@ -689,6 +703,10 @@ function play(g, match = null) {
     u.searchParams.set('ws', match.wsAddr);
     u.searchParams.set('room', roomCodeFor(match.matchId));
     if (player.kp) u.searchParams.set('player', player.id);
+    // What the title needs to ask this shell for a ledger signature at match
+    // end (cabinet:sign → cabinet:signed): the mesh match and the build.
+    u.searchParams.set('match', match.matchId);
+    if (match.buildHash) u.searchParams.set('build', match.buildHash);
   }
   frame.src = u.href;
   $('play').hidden = false;

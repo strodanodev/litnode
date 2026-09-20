@@ -38,11 +38,18 @@ export function toSubmission(row, { engine, manifest, afRoot, rooms = new Map() 
   return {
     matchId: placed ? placed.matchId : row.match_id,
     rulesetId: 'agent-fighter.v1', buildHash: manifest.buildHash,
-    mode: placed || row.pin?.mode === 'ranked' ? 'ranked' : 'casual',
+    // A placed match settles in the mode the mesh placed it in (the node
+    // refuses a mode that differs from its descriptor); an unplaced relay
+    // match is casual unless the relay itself called it ranked.
+    mode: placed ? (placed.mode ?? 'casual') : (row.pin?.mode === 'ranked' ? 'ranked' : 'casual'),
     // A player is the same player on either side; no side suffix.
     participants: keys ?? pin.names.map((name) => `af:${name}`),
     entries: Array.from({ length: n }, (_, k) => ({ k, inputs: [t0[k] | 0, t1[k] | 0] })),
     hydration: { pin, bundles: Object.fromEntries(pin.chars.map((id) => [id, JSON.parse(readFileSync(join(afRoot, 'characters', id, 'character.json'), 'utf8'))])) },
+    // Player signatures over the ledger body (protocol 3), when the relay
+    // collected them: {playerKey: sig}. With both, the node settles as
+    // 'players' provenance; without, as 'relay'.
+    ...(keys && pin.signatures && keys.every((k) => typeof pin.signatures[k] === 'string') ? { signatures: Object.fromEntries(keys.map((k) => [k, pin.signatures[k]])) } : {}),
     expected: pin.result ? { hash: pin.result.hash, winner: pin.result.winner, rounds: pin.result.rounds, endTick: pin.result.endTick, reason: pin.result.reason } : null,
     source: { table: 'match_ledgers', relayMatchId: row.match_id, room: pin.room ?? null, identity, engine: row.engine, protocol: row.protocol, codecVersion: row.codec_version, digest: row.digest, createdAt: row.created_at },
   };

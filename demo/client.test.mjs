@@ -9,6 +9,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNode } from '../node/litnode.js';
+import { PROTOCOL_VERSION } from '../protocol/version.js';
 import { loadPlayer, createClient } from '../cabinet/client.js';
 import { roomCodeFor } from '../protocol/pairing.js';
 
@@ -45,7 +46,7 @@ test('arcade: lobby served, identity persists, queue → pair → client verifie
   assert.equal(r1.check.snapshotVerified, true, 'the client rebuilt the snapshot from signed heartbeats');
   assert.equal(r1.snapshot.signed >= 2, true);
   assert.equal(r1.check.beacon.source, 'local'); assert.equal(r1.check.beacon.ok, true, 'offline mesh: local beacon, labelled');
-  assert.equal(r1.match.protocol, 2);
+  assert.equal(r1.match.protocol, PROTOCOL_VERSION);
   // the relay rendezvous code both players derive from the same match
   assert.equal(roomCodeFor(r1.match.matchId), roomCodeFor(r2.match.matchId));
   assert.match(roomCodeFor(r1.match.matchId), /^[A-Z0-9-]{3,40}$/, "fits Agent Fighter's room-code rule");

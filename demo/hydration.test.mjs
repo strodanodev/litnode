@@ -114,21 +114,32 @@ test('ranked hydration comes from the registry at the placement block; submitted
   assert.equal((await (await fetch(`${host.addr}/delta/${desc.matchId}`)).json()).verification, 'verified');
   assert.equal((await (await fetch(`${host.addr}/leaderboard?ruleset=agent-fighter.v1`)).json()).leaderboard.length, 2, 'official: registry-hydrated, placed, signed, witnessed');
 
-  // A cheater who signed the ledger over inflated stats: the node hydrates from the registry → hash differs → signatures fail.
+  // A cheater who submits inflated stats alongside a properly signed ledger:
+  // the node hydrates from the registry and the claim simply does not
+  // survive. (Protocol 3: the signed body no longer carries the hydration
+  // hash — a player can neither verify nor influence hydration — so the
+  // refusal moved from "signatures" to "your claim was ignored".)
   const desc2 = await placeMatch(host.addr, [alice, bob], { rulesetId: 'agent-fighter.v1', mode: 'ranked' });
   const P2 = desc2.participants, kps2 = P2.map((p) => (p === alice.publicKey ? alice : bob));
   const inflated = { [P2[0]]: agent({ ...regAgents[P2[0]], stats: { ...regAgents[P2[0]].stats, intelligence: 60000 }, source: 'registry' }), [P2[1]]: regAgents[P2[1]] };
   const cheat = await playPlaced(desc2, kps2, { title, engine, manifest, balance, agents: inflated });
   cheat.hydration = { agents: { [P2[0]]: { tokenId: inflated[P2[0]].tokenId, stats: inflated[P2[0]].stats }, [P2[1]]: { tokenId: inflated[P2[1]].tokenId } } };
   const rc = await fetch(`${host.addr}/ledger`, { method: 'POST', body: JSON.stringify(cheat) });
-  assert.equal(rc.status, 400, (await rc.clone().text()).slice(0, 4000)); assert.match((await rc.json()).error, /signatures/);
+  assert.equal(rc.status, 200, (await rc.clone().text()).slice(0, 4000));
+  const cheated = await rc.json();
+  assert.equal(cheated.hydrationSource, 'registry');
+  assert.equal(cheated.hydrationManifest.entries.find((e) => e.tokenId === inflated[P2[0]].tokenId).stats.intelligence, regAgents[P2[0]].stats.intelligence, 'the inflated claim did not survive: the registry decides');
 
-  // A token the player's profile neither owns nor controls
-  const stolen = { ...cheat, hydration: { agents: { [P2[0]]: { tokenId: P2[0] === alice.publicKey ? '2' : '1' }, [P2[1]]: { tokenId: P2[1] === alice.publicKey ? '2' : '1' } } } };
+  // A token the player's profile neither owns nor controls. (A fresh placement:
+  // the cheat above settled desc2, and settlement is idempotent by matchId.)
+  const desc3 = await placeMatch(host.addr, [alice, bob], { rulesetId: 'agent-fighter.v1', mode: 'ranked' });
+  const P3 = desc3.participants, kps3 = P3.map((p) => (p === alice.publicKey ? alice : bob));
+  const sub3 = await playPlaced(desc3, kps3, { title, engine, manifest, balance, agents: { [P3[0]]: regAgents[P3[0]], [P3[1]]: regAgents[P3[1]] } });
+  const stolen = { ...sub3, hydration: { agents: { [P3[0]]: { tokenId: P3[0] === alice.publicKey ? '2' : '1' }, [P3[1]]: { tokenId: P3[1] === alice.publicKey ? '2' : '1' } } } };
   const rs = await fetch(`${host.addr}/ledger`, { method: 'POST', body: JSON.stringify(stolen) });
   assert.equal(rs.status, 400, await rs.clone().text()); assert.match((await rs.json()).error, /neither owns nor controls/);
   // An unknown token
-  const ghost = { ...cheat, hydration: { agents: { [P2[0]]: { tokenId: '99' }, [P2[1]]: { tokenId: '2' } } } };
+  const ghost = { ...sub3, hydration: { agents: { [P3[0]]: { tokenId: '99' }, [P3[1]]: { tokenId: '2' } } } };
   const rg = await fetch(`${host.addr}/ledger`, { method: 'POST', body: JSON.stringify(ghost) });
   assert.equal(rg.status, 400); assert.match((await rg.json()).error, /unknown to the registry/);
 });

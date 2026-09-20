@@ -3,6 +3,40 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.9.0] — 2026-09-20 — players sign
+
+Protocol **3**. Nodes on protocol 2 are heard, listed as incompatible, and
+excluded from placement and witnessing — update every node together.
+
+### Changed
+- **The player-signed ledger body is `{matchId, ticks, head, buildHash}`.**
+  The hydration hash is gone from it: a player can neither verify nor
+  influence hydration (the node and the witness compute it themselves,
+  bound to the placement's registry block), and for a relay match it
+  depends on the relay's own pin, which no client can know at match end —
+  so requiring it made player signatures impossible in practice. A
+  submitted stats claim that disagrees with the registry is now simply
+  ignored (registry wins) instead of failing the signature check.
+
+### Added
+- **Cabinet signs for the title.** A title running in the cabinet posts
+  `cabinet:sign {matchId, ticks, head, buildHash}` to the shell; the shell
+  signs only the match and build it launched and answers `cabinet:signed`.
+  The player key never leaves the cabinet origin. The launch URL now also
+  carries `?match=` and `?build=`.
+- **Agent Fighter relay + client (strodanodev/agent-fighter):** a mesh-placed
+  match's `result` names the ledger commitment (`ledger.head`, `ticks`,
+  computed exactly as the node rebuilds it); the client asks the shell to
+  sign and forwards `CSign` to the relay; archival waits 3 s so the pin
+  carries `signatures`; the watcher passes them on. With both, a relay
+  match settles as `players` provenance — placed, signed, witnessed:
+  official.
+
+### Fixed
+- **A placed relay match settles in the mode the mesh placed it in.** The
+  watcher forced `ranked` whenever a placement existed; the node refuses a
+  mode that differs from its descriptor.
+
 ## [0.8.3] — 2026-09-20 — stay up
 
 Protocol **2** (unchanged). Every restart of a quick-tunnel node rotates
