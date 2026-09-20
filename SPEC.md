@@ -291,6 +291,7 @@ One list, kept here. BUILD-SPEC §16 has the reasoning behind each.
 - **Pickle Brawl results are attested, not verified**, and no live court has
   reported yet.
 - **No rewards, no economics.** Credits reconcile against nothing.
+- **No publisher on chain.** Any bonded node may host any title; a publisher owns nothing, stakes nothing, grants nothing and has no seat in a dispute. Spec: docs/PUBLISHER-BONDS.md.
 - **Delta gossip is by advertisement, not replication.** A host gone before
   a witness saw its delta leaves one signature; no obligatory custody.
 - **Disagreement is recorded, not adjudicated.** A witness that recomputes a

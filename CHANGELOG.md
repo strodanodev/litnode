@@ -5,6 +5,14 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **docs/PUBLISHER-BONDS.md** — spec for publisher bonds: a title the
+  publisher owns (ERC-721, vault flag for later tokenisation), host grants
+  with expiry requested by nodes and signed through AIR, five flat hosting
+  settings, a 10× publisher stake tier on NodeStake, a three-tier escalation
+  ladder with every ruling hashed on chain, revenue share as an unwired
+  field. Nothing built.
+
 ### Changed
 - **Cabinet prompts and loading.** Display name, mint-profile name, node
   URL and operator transfer use an in-page dialog (validated, Enter/Esc)
@@ -63,6 +71,23 @@ follows [Keep a Changelog](https://keepachangelog.com/).
   event log in block order with `official` (finalized) and `pending` views.
   Deploy tool deploys it and names it an adjudicator; `deploy.testnet.json`
   carries the windows and slash sizes. Tests: `demo/matchbook.test.mjs`.
+  **22 Sep review and fixes**: the escalation tally now uses weights
+  SNAPSHOTTED at the draw (a top-up after the draw bought a majority); the
+  seed is the hash of a block `finalize()` names `drawDelay` ahead, so the
+  caller of `escalate()` cannot grind it; `expire()` voids a commit never
+  settled or an escalation nobody fed (two states were forever); one
+  agreeing witness with no dissent extends the window once instead of
+  seating nine; the draw reads each candidate's operator once (was
+  O(pool × 9) external calls, over the block cap at ~1,000 nodes); slashes
+  are basis points of the bond (`hostSlashBps`, `witnessSlashBps`), not
+  flat wei; `matchOf()` replaces the auto-getter (stack too deep);
+  `Escalating`/`Extended` are their own events. NodeStake v3: re-stake
+  after withdraw starts a NEW lock (was skipping it); a top-up restarts the
+  eligibility age; `slash(key, bps, reason)`; `MAX_TERM` bounds every term.
+  **The contracts are now EXECUTED in `npm test`**: `demo/lib/evm.mjs`
+  (`@ethereumjs/vm`, dev-dependency) and `demo/matchbook-vm.test.mjs` run
+  every branch including both attacks; before this they were only
+  compile-checked.
 - **BUILD-SPEC v0.3**: the chain as the index. Per ranked match `commit` →
   `settle` → `attest` ×3 → `dispute`/escalation on a `MatchBook` contract
   (specified, phase 2); ladders fold over finalized on-chain events in block
