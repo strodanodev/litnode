@@ -5,7 +5,23 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-09-20 — phantom placements
+
+Protocol 3, unchanged. A node fix; update every node.
+
 ### Fixed
+- **A stale queue pair placed a new match every second.** Two players who
+  queued once and left stayed in the queue for ever (nothing pruned it), and
+  the beacon for their bucket was "the first block in the node's rolling
+  600-block window at or after the bucket end" — so once the window rolled
+  past that block, every poll picked a later one, minted a new match id for
+  the same pair, and placed it: 16,000 phantom placements in an evening on
+  the publisher node, all gossiped. Now (a) `beaconFromBlocks` answers null
+  unless the window also holds a block from *before* the bucket end, so a
+  late or rolled window never guesses; (b) the chain pins a bucket's beacon
+  the first time it is known; (c) a queue entry is dropped one minute after
+  its bucket closed (`QUEUE_TTL_MS`), on every node alike, so the gossiped
+  queue converges to empty. `demo/beacon.test.mjs` covers the pin.
 - **The dashboard's `u` key checks for a release before applying.** It used to
   apply the version from the last hourly check, so pressing it right after a
   release installed the previous one.

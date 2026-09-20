@@ -1,6 +1,7 @@
 /** litVM RPC, the thin part. No wallet, no signing — the node only reads.
  *  Every read reports its source so a fallback never looks like a chain read. */
 import { beaconFromBlocks, blockOf, localBeacon } from '../protocol/beacon.js';
+import { bucketOf } from '../protocol/pairing.js';
 import { standingCall, decodeStanding } from '../protocol/staking.js';
 import { ownerOfKeyCall, decodeOwner, nameOfCall, decodeString } from '../protocol/profile.js';
 import { keysCall, decodeKeys, entryOfCall, decodeEntry } from '../protocol/directory.js';
@@ -48,10 +49,20 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
     } catch (e) { lastError = String(e.message ?? e); return null; }
   };
 
+  // A bucket's chain beacon is pinned the first time it is known: the block
+  // window rolls on, and a placement frozen on one beacon must keep it.
+  const pinned = new Map(); // bucket → { beacon, source, block }
+  const PIN_MS = 30 * 60_000;
   const beaconFor = (bucket) => {
     if (offline) return localBeacon(bucket);
+    const p = pinned.get(bucket);
+    if (p) return p;
     const b = beaconFromBlocks(bucket, blocks);
-    if (b) return b;
+    if (b) {
+      pinned.set(bucket, b);
+      if (pinned.size > 2000) { const cut = bucketOf(Date.now() - PIN_MS); for (const k of pinned.keys()) if (k < cut) pinned.delete(k); }
+      return b;
+    }
     if (lastError) return { ...localBeacon(bucket), source: 'local-fallback', error: lastError };
     return null; // chain reachable, block not yet seen → wait
   };

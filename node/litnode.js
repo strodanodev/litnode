@@ -14,7 +14,7 @@ import { h } from '../protocol/canonical.js';
 import { generateKeypair, seal, opened, verify } from '../protocol/keys.js';
 import { snapshot as buildSnapshot, verifyHeartbeats, HEARTBEAT_TAG, epochOf, EPOCH_MS } from '../protocol/snapshot.js';
 import { applyStakes } from '../protocol/staking.js';
-import { pair, QUEUE_TAG, bucketOf } from '../protocol/pairing.js';
+import { pair, QUEUE_TAG, bucketOf, isStale } from '../protocol/pairing.js';
 import { placement } from '../protocol/placement.js';
 import { createChain } from './chain.js';
 import { createSettlement } from './settle.js';
@@ -343,7 +343,7 @@ export async function createNode({
       const b = env?.body;
       if (!b || b.playerId !== env.signer || typeof b.bucket !== 'number' || !b.rulesetId) continue;
       const k = `${b.bucket}|${b.playerId}`;
-      if (queue.has(k) || !(await opened(QUEUE_TAG, env))) continue;
+      if (queue.has(k) || isStale(b.bucket, Date.now()) || !(await opened(QUEUE_TAG, env))) continue;
       queue.set(k, b);
     }
   };
@@ -503,6 +503,11 @@ export async function createNode({
     const s = currentSnapshot();
     const now = Date.now();
     for (const [id, e] of matchBook) if (now - e.descriptor.computedAt > matchTtlMs) matchBook.delete(id);
+    // Entries that outlived their bucket: the player left, or was placed a
+    // minute ago. Kept, they would pair again as soon as the placement's TTL
+    // ran out, and be gossiped forever.
+    for (const [k, b] of queue) if (isStale(b.bucket, now)) { queue.delete(k); queueEnvelopes.delete(k); }
+    for (const [k, env] of queueEnvelopes) if (env?.body && isStale(env.body.bucket, now)) queueEnvelopes.delete(k);
     const pairs = pair([...queue.values()], now, (b) => chain.beaconFor(b)?.beacon ?? null);
     for (const m of pairs) {
       if (matchBook.has(m.matchId)) continue;

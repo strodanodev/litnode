@@ -16,6 +16,12 @@ export const BUCKET_MS = 2000;
 export const bucketOf = (ms) => Math.floor(ms / BUCKET_MS);
 export const bucketEnd = (bucket) => (bucket + 1) * BUCKET_MS;
 export const isClosed = (bucket, nowMs) => bucket < bucketOf(nowMs) - 1;
+/** A queue entry outlives its bucket by this much and no more. A player who
+ *  is still looking re-queues every bucket; an entry older than this is a
+ *  browser that left, and pairing it would place a match nobody plays. Every
+ *  node prunes on the same rule, so the gossiped queue converges to empty. */
+export const QUEUE_TTL_MS = 60_000;
+export const isStale = (bucket, nowMs) => bucketEnd(bucket) < nowMs - QUEUE_TTL_MS;
 
 export const QUEUE_TAG = 'queue';
 
@@ -35,7 +41,7 @@ export const roomCodeFor = (matchId) => `LIT-${String(matchId).slice(0, 32).toUp
 export function pair(entries, nowMs, beaconFor) {
   const seen = new Set();
   const closed = entries
-    .filter((e) => isClosed(e.bucket, nowMs))
+    .filter((e) => isClosed(e.bucket, nowMs) && !isStale(e.bucket, nowMs))
     .filter((e) => { const k = `${e.bucket}|${e.playerId}`; if (seen.has(k)) return false; seen.add(k); return true; })
     .sort((a, b) => a.bucket - b.bucket || (a.playerId < b.playerId ? -1 : a.playerId > b.playerId ? 1 : 0));
 

@@ -8,7 +8,7 @@ import { keccak256Hex, selector } from '../protocol/keccak.js';
 import { generateKeypair, sign, verify, seal, opened } from '../protocol/keys.js';
 import { createLog, chainHead, ledgerBody, signLedger, verifyLedger } from '../protocol/log.js';
 import { placement, acceptsHost } from '../protocol/placement.js';
-import { pair, bucketOf, isClosed, BUCKET_MS } from '../protocol/pairing.js';
+import { pair, bucketOf, isClosed, isStale, BUCKET_MS, QUEUE_TTL_MS } from '../protocol/pairing.js';
 import { beaconFromBlocks, localBeacon } from '../protocol/beacon.js';
 import { snapshot, verifyHeartbeats, HEARTBEAT_TAG, epochOf } from '../protocol/snapshot.js';
 import { buildTree, proofFor, verifyProof, leafOf, anchorCalldata, anchorSelector } from '../protocol/epoch.js';
@@ -162,6 +162,24 @@ test('beacon: first block after bucket end; local fallback is labelled', () => {
   assert.equal(b.source, 'chain');
   assert.equal(beaconFromBlocks(bucket, blocks.slice(0, 1)), null);
   assert.equal(localBeacon(bucket).source, 'local');
+  // A window that starts after the bucket end cannot know which block was
+  // first: null, not the earliest block it happens to hold.
+  assert.equal(beaconFromBlocks(bucket, blocks.slice(1)), null);
+  // …so a rolling window never re-picks: once the pre-end block rolls out,
+  // the answer is unknown rather than a different block each poll.
+  const rolled = blocks.slice(1).concat([{ number: 13, timestamp: end + 2, hash: '0xdd' }]);
+  assert.equal(beaconFromBlocks(bucket, rolled), null);
+});
+
+test('pairing: a queue entry outlives its bucket by QUEUE_TTL_MS and no more', () => {
+  const now = 10_000_000;
+  const fresh = bucketOf(now) - 3;                       // closed, recent
+  const old = bucketOf(now - QUEUE_TTL_MS - 3 * BUCKET_MS); // closed long ago
+  assert.equal(isStale(fresh, now), false);
+  assert.equal(isStale(old, now), true);
+  const q = (bucket) => [{ playerId: 'a', rulesetId: 'r', mode: 'casual', bucket }, { playerId: 'b', rulesetId: 'r', mode: 'casual', bucket }];
+  assert.equal(pair(q(fresh), now, () => 'beacon').length, 1);
+  assert.equal(pair(q(old), now, () => 'beacon').length, 0, 'a stale pair places nothing');
 });
 
 // ---------------------------------------------------------------- snapshot

@@ -16,9 +16,16 @@
 import { h } from './canonical.js';
 import { bucketEnd } from './pairing.js';
 
-/** Pure: given the blocks a node has seen (any order), the beacon for a bucket. */
+/** Pure: given the blocks a node has seen (any order), the beacon for a bucket.
+ *  "First block at or after the bucket end" is only knowable when the window
+ *  also holds a block from BEFORE it; a window that starts after the bucket
+ *  end (the node came up later, or its rolling window slid past) cannot say
+ *  which block was first, and answers null rather than a guess. Without this
+ *  a rolling window re-picked a later block every poll, and a stale queue
+ *  pair minted a new match id every second (0.9.1). */
 export function beaconFromBlocks(bucket, blocks) {
   const t = bucketEnd(bucket) / 1000;
+  if (!blocks.some((b) => b.timestamp < t)) return null;
   const after = blocks.filter((b) => b.timestamp >= t).sort((a, b) => a.number - b.number);
   const first = after[0];
   return first ? { beacon: h('beacon', first.hash), source: 'chain', block: first.number } : null;
