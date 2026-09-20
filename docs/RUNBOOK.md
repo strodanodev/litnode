@@ -41,6 +41,13 @@ private key anywhere but the shell that runs one command.
 npm run node                     # dashboard; q quit · g gossip · l log · p peers · u update
 ```
 
+A task install (`install-task.cmd`) has no dashboard. The node records its
+PID in `data/<operator>/node.pid`; `restart-node.cmd` ends that process and
+the wrapper brings it back in 5 s on the current code and `node.env`;
+`stop-node.cmd` ends the task's wrapper first so it stays down. Both need an
+admin prompt when the task runs elevated. `schtasks /End` alone ends only
+the wrapper — the node keeps running and holds the port.
+
 `GET /health` says: `protocol`, `bonded`, `sandbox`, `trust`, `registry`,
 `incompatible` (peers on another protocol), `refused` (builds refused).
 `GET /peers` lists the incompatible peers by version. `GET /titles` is what

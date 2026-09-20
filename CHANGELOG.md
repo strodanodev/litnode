@@ -16,9 +16,22 @@ Protocol **2** (unchanged). Canary.
   code with the live addresses (`contracts/MIGRATION.md`). Nodes on 0.8.0
   should update before bonding or announcing anything.
 
+- **An update or rollback never replaces a newer contract set.** After code
+  is copied, the `contracts/deployed.testnet.json` with the later
+  `deployedAt` on the same chain wins (`keepNewerContracts`, reported in
+  `changed`). This is the guard against the 0.8.0 class of accident: a
+  release cut before a deployment can no longer drag an install back.
+
+### Added
+- **`restart-node.cmd` / `stop-node.cmd`** for task installs. The node
+  records its PID in `data/<operator>/node.pid`; `schtasks /End` only ends
+  the wrapper, so until now restarting the desktop meant finding the
+  process by hand. Both need an admin prompt when the task runs elevated.
+
 ### Docs
-- README, SPEC, remediation and HOST-YOUR-TITLE record the live v2 set and
-  what is still pending on it (laptop bonds, minter/progressor, ).
+- README, SPEC, remediation, RUNBOOK and HOST-YOUR-TITLE record the live v2
+  set and what is still pending on it (laptop bonds, minter/progressor,
+  `ERC6699`).
 
 ## [0.8.0] — 2026-09-17 — the build-audit remediation
 

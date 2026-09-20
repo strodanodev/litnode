@@ -28,7 +28,28 @@ export const RELEASE_URL = 'https://github.com/strodanodev/litnode/releases/late
 export const RESTART_EXIT = 75; // start-node.cmd relaunches on this code
 
 /** What gets replaced by an update. Everything else in the folder is the operator's. */
-export const CODE = ['node', 'protocol', 'sdk', 'cabinet', 'rulesets', 'tools', 'contracts', 'titles', 'start-node.cmd', 'run-node.cmd', 'run-af-relay.cmd', 'run-af-watch.cmd', 'install-task.cmd', 'allow-firewall.cmd', 'update.cmd', 'node.env.example', 'README.md', 'package.json'];
+export const CODE = ['node', 'protocol', 'sdk', 'cabinet', 'rulesets', 'tools', 'contracts', 'titles', 'start-node.cmd', 'run-node.cmd', 'restart-node.cmd', 'stop-node.cmd', 'run-af-relay.cmd', 'run-af-watch.cmd', 'install-task.cmd', 'allow-firewall.cmd', 'update.cmd', 'node.env.example', 'README.md', 'package.json'];
+
+/** A release replaces contracts/ as code, but an install can hold a NEWER
+ *  contract set than the release was cut with — 0.8.0 shipped the v1
+ *  addresses two days before v2 went live, and applying it would have
+ *  pointed a node back at the retired NodeStake and NodeDirectory. So after
+ *  code is copied (apply or rollback), the deployed set with the later
+ *  `deployedAt` on the same chain wins. Returns what was kept, or null. */
+export function keepNewerContracts(fromDir, root) {
+  const rel = join('contracts', 'deployed.testnet.json');
+  const a = join(fromDir, rel), b = join(root, rel);
+  if (!existsSync(a) || !existsSync(b)) return null;
+  try {
+    const old = JSON.parse(readFileSync(a, 'utf8')), cur = JSON.parse(readFileSync(b, 'utf8'));
+    if ((old.chainId ?? 0) !== (cur.chainId ?? 0)) return null;
+    if (Date.parse(old.deployedAt ?? 0) > Date.parse(cur.deployedAt ?? 0)) {
+      cpSync(a, b);
+      return `contracts/deployed.testnet.json (kept the newer set, deployed ${old.deployedAt})`;
+    }
+  } catch { /* unreadable on either side: the release's file stands */ }
+  return null;
+}
 
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 const tar = process.platform === 'win32' ? 'C:\\Windows\\System32\\tar.exe' : 'tar';
@@ -152,6 +173,8 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
         cpSync(join(src, item), join(root, item), { recursive: true });
         changed.push(item);
       }
+      const kept = keepNewerContracts(prev, root);
+      if (kept) { changed.push(kept); log(`update: ${kept}`); }
       if (existsSync(join(src, 'runtime', 'node.exe'))) {
         const cur = existsSync(join(root, 'runtime', 'VERSION')) ? readFileSync(join(root, 'runtime', 'VERSION'), 'utf8').trim() : '';
         const next = readFileSync(join(src, 'runtime', 'VERSION'), 'utf8').trim();
@@ -169,12 +192,20 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
     if (!existsSync(join(prev, 'node'))) throw new Error('nothing to roll back to (.previous is empty)');
     const to = existsSync(join(prev, 'VERSION')) ? readFileSync(join(prev, 'VERSION'), 'utf8').trim() : '?';
     const changed = [];
+    // Rolling code back must not roll the contract set back: stash the
+    // current file and let the newer deployedAt win afterwards.
+    const stash = join(root, '.stash');
+    rmSync(stash, { recursive: true, force: true });
+    if (existsSync(join(root, 'contracts', 'deployed.testnet.json'))) { mkdirSync(join(stash, 'contracts'), { recursive: true }); cpSync(join(root, 'contracts', 'deployed.testnet.json'), join(stash, 'contracts', 'deployed.testnet.json')); }
     for (const item of CODE) {
       if (!existsSync(join(prev, item))) continue;
       rmSync(join(root, item), { recursive: true, force: true });
       cpSync(join(prev, item), join(root, item), { recursive: true });
       changed.push(item);
     }
+    const kept = keepNewerContracts(stash, root);
+    if (kept) { changed.push(kept); log(`rollback: ${kept}`); }
+    rmSync(stash, { recursive: true, force: true });
     log(`rollback: ${version} → ${to} (${changed.join(', ')}); restart to run it`);
     return { from: version, to, changed };
   };

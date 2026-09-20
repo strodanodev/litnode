@@ -46,6 +46,35 @@ const serve = (env, zipName, zip) => async (url) => {
 };
 const RELEASE = 'https://example.test/releases/latest/download/release.json';
 
+test('update: a release never replaces a newer contract set (apply and rollback)', async () => {
+  const releaseKey = await generateKeypair();
+  const { root, zipName, zip } = fixture();
+  // The install holds a newer deployed set than the release was cut with.
+  const v2 = { chainId: 4441, deployedAt: '2026-09-19T12:00:00Z', NodeStake: { address: '0xNEW' } };
+  mkdirSync(join(root, 'contracts'), { recursive: true });
+  writeFileSync(join(root, 'contracts', 'deployed.testnet.json'), JSON.stringify(v2));
+  // Rebuild the zip with an OLDER set inside.
+  const build = join(tmp, 'build', 'litnode-portable-2026-01-01');
+  mkdirSync(join(build, 'contracts'), { recursive: true });
+  writeFileSync(join(build, 'contracts', 'deployed.testnet.json'), JSON.stringify({ chainId: 4441, deployedAt: '2026-09-17T00:00:00Z', NodeStake: { address: '0xOLD' } }));
+  execFileSync(tar, ['-a', '-cf', join(tmp, 'build', zipName), '-C', join(tmp, 'build'), 'litnode-portable-2026-01-01']);
+  const zip2 = readFileSync(join(tmp, 'build', zipName));
+  const body = { version: '0.2.0', date: '2026-01-01T00:00:00Z', notes: 'n', files: { [zipName]: { sha256: sha(zip2), size: zip2.length } } };
+  const u = createUpdater({ root, version: '0.1.0', releaseUrl: RELEASE, pubkey: releaseKey.publicKey, fetchImpl: serve(await seal(RELEASE_TAG, body, releaseKey), zipName, zip2) });
+  const r = await u.apply();
+  assert.equal(JSON.parse(readFileSync(join(root, 'contracts', 'deployed.testnet.json'), 'utf8')).NodeStake.address, '0xNEW', 'the newer set survives the update');
+  assert.ok(r.changed.some((c) => c.startsWith('contracts/deployed.testnet.json (kept')), r.changed.join(', '));
+  assert.equal(readFileSync(join(root, 'node', 'marker.txt'), 'utf8'), 'new', 'code still updated');
+  // A deploy AFTER the update writes an even newer set; rolling the code
+  // back must not roll that back with it.
+  writeFileSync(join(root, 'contracts', 'deployed.testnet.json'), JSON.stringify({ chainId: 4441, deployedAt: '2026-09-20T09:00:00Z', NodeStake: { address: '0xNEWER' } }));
+  const rb = u.rollback();
+  assert.equal(readFileSync(join(root, 'node', 'marker.txt'), 'utf8'), 'old', 'code rolled back');
+  assert.equal(JSON.parse(readFileSync(join(root, 'contracts', 'deployed.testnet.json'), 'utf8')).NodeStake.address, '0xNEWER', 'rollback keeps the newer set too');
+  assert.ok(rb.changed.some((c) => c.startsWith('contracts/deployed.testnet.json (kept')));
+  void zip; // the fixture's own zip is superseded by the rebuilt one above
+});
+
 test('update: version compare and zip choice', () => {
   assert.ok(newer('0.2.0', '0.1.9')); assert.ok(newer('1.0.0', '0.9.9')); assert.ok(!newer('0.4.0', '0.4.0')); assert.ok(!newer('0.3.9', '0.4.0'));
   const files = { 'litnode-portable-2026-01-01.zip': {}, 'litnode-portable-2026-01-01-win-x64.zip': {}, 'litnode-operator-2026-01-01.zip': {}, 'litnode-operator-2026-01-01-win-x64.zip': {} };

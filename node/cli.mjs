@@ -9,7 +9,7 @@
  *  On a terminal the node draws its dashboard (node/tui.js). Under a
  *  scheduled task, a pipe or LITNODE_PLAIN=1 it prints one line per event
  *  instead, so litnode.log reads the same as the screen. */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createNode } from './litnode.js';
@@ -83,6 +83,11 @@ const node = await createNode({
 });
 if (tui) tui.attach(node);
 else console.log(`health: ${node.addr}/health   cabinet: ${node.addr}/`);
-const bail = async () => { if (tui) await tui.stop(); await node.stop(); process.exit(0); };
+// Record the PID beside the identity, so restart-node.cmd / stop-node.cmd can
+// end THIS process rather than the wrapper (a scheduled task's End only
+// stops cmd.exe; the node kept running and held the port).
+const pidFile = join(env.DATA_DIR ?? join(root, 'data', env.OPERATOR ?? 'node'), 'node.pid');
+try { writeFileSync(pidFile, `${process.pid}\n`); } catch { /* read-only data dir: nothing to record */ }
+const bail = async () => { if (tui) await tui.stop(); await node.stop(); try { rmSync(pidFile, { force: true }); } catch {} process.exit(0); };
 process.on('SIGINT', bail);
 process.on('SIGTERM', bail);
