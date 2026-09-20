@@ -29,7 +29,8 @@
     "sign:build": "node tools/sign-build.mjs",
     "authority": "node tools/authority.mjs",
     "custody": "node tools/custody.mjs",
-    "wallet": "node tools/new-wallet.mjs"
+    "wallet": "node tools/new-wallet.mjs",
+    "transfer": "node tools/transfer-operator.mjs"
   },
   "engines": {
     "node": ">=20"
