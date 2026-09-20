@@ -15,10 +15,18 @@ built from it (`npm run pack`); nothing ships that is not here.
 **What this is today:** a testnet arcade-node prototype with chain-based
 discovery, signed updates, sandboxed title execution and replayable,
 witness-verified match records, working toward community hosting and
-portable game characters. It is not a production service, pays no rewards,
-and its publisher-independence claim is not yet demonstrated — see
+portable game characters. Its contracts (the v2 set, deployed 19 Sep 2026
+from a wallet that has never left the operator's machine) are unaudited
+testnet code. It is not a production service, pays no rewards, and its
+publisher-independence claim is not yet demonstrated — see
 [SPEC.md §4](SPEC.md#4-known-gaps-and-honest-zeroes) and
 [audit/remediation.md](audit/remediation.md).
+
+**Operating it without a terminal** is the next piece of work: bonding,
+announcer delegation, badges and operator transfer as MetaMask
+confirmations on the cabinet's Nodes page, and a first-run setup page —
+the same wallet flow the cabinet already uses for player sign-in
+([docs/RUNBOOK.md](docs/RUNBOOK.md) is the terminal version of every step).
 
 - [BUILD-SPEC.md](BUILD-SPEC.md) — the build plan: what is built, what is
   specified, what reports zero, and the test that proves each claim
@@ -128,7 +136,7 @@ npm run sign:build -- rulesets/<id>.js          vouch for a build as its publish
 
 | Title | Kind | Ruleset | State |
 |---|---|---|---|
-| Agent Fighter | replayable (`@af/core` af-core-8, bundled) | `agent-fighter.v1` | real relay matches settled and co-signed (relay-attested: not official until the client signs); one v1 anchor on 12 Sep |
+| Agent Fighter | replayable (`@af/core` af-core-8, bundled) | `agent-fighter.v1` | real relay matches settled and co-signed (relay-attested: not official until the client signs); one anchor on the retired v1 EpochAnchor (12 Sep) |
 | Pickle Brawl | attested (court-signed report) | `pickle-brawl.v1` | adapter built; no authorized court configured, none has reported |
 | TUG (sample) | replayable (the SDK template) | `tug.v1` | the harness's worked example; not hosted on the desktop |
 | Robot Fighting Championship (AFC) | — | — | in the cabinet; ruleset is roadmap item 2 |

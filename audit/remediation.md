@@ -206,13 +206,13 @@ Agent Fighter's 93 KB build takes 122 ms; a spinning title is killed within
 
 ## What remains unresolved
 
-1. **Authority rotation / v2 migration** — designed and tooled; not
-   executed (needs the user's new wallet). Until then the exposed key holds
-   what the snapshot lists and the v1 anchor/registry stay open to anyone.
-2. **Registry hydration on Liteforge** — reads nothing until v2 is deployed
-   and nodes set `ERC6699`; then a minter and a progressor must be named and
-   at least one character forged for a live ranked match to be
-   registry-verified.
+1. ~~Authority rotation / v2 migration~~ — **done 19 Sep 2026**: v2 set
+   deployed from a new wallet, desktop re-bonded and re-announced, 0 holdings
+   by the exposed key at block 52410944 (`contracts/MIGRATION.md`). The
+   laptop keys still have to be bonded on the new NodeStake.
+2. **Registry hydration on Liteforge** — v2 is deployed; a minter and a
+   progressor must be named and at least one character forged, and nodes
+   must set `ERC6699`, before a live ranked match is registry-verified.
 3. **Agent Fighter player signatures** — the AF client still does not sign
    the chain head, so every live AF result is `relay`-attested: authenticated
    (relay key) but unofficial. The honest path is the SDK contract
@@ -229,8 +229,9 @@ Agent Fighter's 93 KB build takes 122 ms; a spinning title is killed within
    through `defineBalance`, but no authorized progression update exists yet.
 7. **Load, success-rate, tail-latency and recovery measurements under a
    documented workload** — only the single observations above.
-8. **Slashing** — disputes are recorded and exclude results; nothing slashes,
-   and the slasher is the exposed key until item 1.
+8. **Slashing** — disputes are recorded and exclude results; nothing slashes.
+   The slasher is now the rotated wallet, so the path is at least
+   trustworthy when it is built.
 
 ## Wording
 

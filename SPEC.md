@@ -175,17 +175,18 @@ RPC `https://liteforge.rpc.caldera.xyz/http`, CORS `*`. Contracts in
 directory, and — with `ERC6699` set — characters at a pinned block); the only
 chain key a node holds is the delegated announcer for NodeDirectory.
 
-**Deployed today (v1, 12–17 Sep 2026) vs. in this source (v2):** the source
-carries `EpochAnchor` v2 (propose by bonded operators, finalize at quorum),
-`ERC6699Registry` v2 (minter/progressor roles, stats nonce, config hash, item
-ownership on equip) and `NodeStake` with `transferOperator`. Liteforge still
-runs v1 of all three: anyone may anchor the first root of an epoch, anyone
-may forge a character, and the exposed deployer address holds NodeStake's
-slasher/treasury and the desktop node's operator binding
-(`audit/authority-51790431.json`). `npm run deploy:testnet -- --fresh` from a
-NEW wallet deploys the v2 set and archives the old addresses; until then the
-node treats registry hydration as unavailable (`registry: unset`) and
-`tools/anchor-epoch.mjs` refuses to anchor to v1. See `contracts/MIGRATION.md`.
+**Deployed: the v2 set, 19 Sep 2026** (`contracts/deployed.testnet.json`),
+from a wallet whose key has never left the operator's machine:
+`EpochAnchor` v2 (propose by bonded operators only, finalized at a quorum of
+2 distinct operators), `ERC6699Registry` v2 (minter/progressor roles, stats
+nonce, config hash, item ownership on equip), `NodeStake` with
+`transferOperator`, and fresh `NodeDirectory`, `NodeBadge`, `PlayerProfile`,
+`TestLITVM`. The 12–17 Sep v1 set is archived beside it and nothing reads
+it. `npm run authority` (block 52410944): the exposed deployer address holds
+nothing on the live set. Still to do on this set: bond the laptop keys, name
+a minter and a progressor, and set `ERC6699` on nodes so ranked hydration
+reads the registry (no character has been forged yet). Record:
+`contracts/MIGRATION.md`.
 
 "ERC-6699" here is this project's PROPOSED interface (whitepaper Article
 VI). No such number appears in the official ERC index at the time of
@@ -304,16 +305,14 @@ One list, kept here. BUILD-SPEC §16 has the reasoning behind each.
   trusted publisher's signature. Permissionless title intake stays gated on
   a track record of the sandbox (and ideally Wasm with a pinned runtime).
 - **The beacon is not secure against the sequencer**, by litVM's own docs.
-- **Contracts on testnet are v1 and unaudited; the deployer key is
-  exposed.** What it still controls is listed by `npm run authority`. The v2
-  set (this source) is compiled and tested against mocks, not deployed; the
-  migration (new wallet, `--fresh`, re-bond, re-delegate) is a user action —
-  `contracts/MIGRATION.md`.
-- **Registry hydration is wired but reads nothing on Liteforge** until
-  ERC6699Registry v2 is deployed and `ERC6699` is set; until then every
-  hydration is labelled `fixture`/`external` and a ranked result can be
-  verified only in the sense "both nodes replayed the same claimed
-  characters".
+- **Contracts are unaudited testnet code.** The v2 set is live and every
+  authority on it is the rotated wallet (`npm run authority` → 0 holdings by
+  the exposed key), but no third party has reviewed the Solidity.
+- **Registry hydration reads nothing yet.** ERC6699Registry v2 is deployed
+  but has no minter, no progressor and no characters, and nodes do not set
+  `ERC6699` until it does; until then every hydration is labelled
+  `fixture`/`external` and a ranked result is verified only in the sense
+  "both nodes replayed the same claimed characters".
 - **Discovery is on chain** (`NodeDirectory`, deployed 17 Sep). Readers now
   check proof of possession (`/whoami`) before treating a URL as the node it
   claims. The bonded set a browser folds into placement is still the node's

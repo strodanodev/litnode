@@ -131,9 +131,9 @@ be litVM Games.
 Said plainly, so the SDK does not imply otherwise:
 
 - No fees, revenue share or micro-transactions are implemented. The contracts
-  on Liteforge are unaudited testnet deployments — and, today, the v1 set;
-  the v2 registry and anchor in this source are not deployed yet
-  (`contracts/MIGRATION.md`), so registry hydration reads nothing live.
+  on Liteforge are unaudited testnet deployments (the v2 set, since 19 Sep
+  2026 — `contracts/MIGRATION.md`); the registry has no minter or characters
+  yet, so registry hydration reads nothing live until one is forged.
 - A ranked result is OFFICIAL only when the mesh placed it, both players (or
   an authorized court) signed it, an independent bonded witness reached the
   same commitment, and nobody disputes it. Agent Fighter's own client does
