@@ -34,11 +34,10 @@ const wallet = new ethers.Wallet(key, provider);
 const abi = [
   'function propose(uint64 epoch, bytes32 root, bytes32 nodeKey)',
   'function rootOf(uint64 epoch) view returns (bytes32)',
-  'function support(uint64 epoch, bytes32 root) view returns (uint32)',
-  'function quorum() view returns (uint32)',
+  'function standing(uint64 epoch, bytes32 root) view returns (uint256 has, uint256 needed, bool finalized)',
   'function verifyInclusion(uint64 epoch, bytes32 leaf, bytes32[] path, bool[] left) view returns (bool)',
 ];
-if ((deployed.EpochAnchor.version ?? 1) < 2) { console.error('EpochAnchor v1 is deployed (anyone may anchor, no quorum). Deploy v2 first: npm run deploy:testnet -- --fresh'); process.exit(1); }
+if ((deployed.EpochAnchor.version ?? 1) < 3) { console.error('EpochAnchor v1/v2 is deployed. This tool speaks v3 (stake-weighted quorum, delegate or operator may propose). Migrate first: contracts/MIGRATION.md'); process.exit(1); }
 const anchor = new ethers.Contract(deployed.EpochAnchor.address, abi, wallet);
 
 const existing = await anchor.rootOf(e.epoch);
@@ -47,8 +46,8 @@ if (existing !== ethers.ZeroHash) {
 } else {
   const tx = await wallet.sendTransaction({ to: deployed.EpochAnchor.address, data: e.proposeCalldata });
   const rc = await tx.wait();
-  const [sup, q] = await Promise.all([anchor.support(e.epoch, '0x' + e.root), anchor.quorum()]);
-  console.log(`proposed in tx ${rc.hash} (block ${rc.blockNumber}) · support ${sup}/${q}${sup >= q ? ' — FINAL' : ' — waiting for other operators'}`);
+  const [has, needed, fin] = await anchor.standing(e.epoch, '0x' + e.root);
+  console.log(`proposed in tx ${rc.hash} (block ${rc.blockNumber}) · stake behind this root ${ethers.formatEther(has)} of ${ethers.formatEther(needed)} needed${fin ? ' — FINAL' : ' — waiting for more stake'}`);
   console.log(`explorer: https://liteforge.explorer.caldera.xyz/tx/${rc.hash}`);
 }
 

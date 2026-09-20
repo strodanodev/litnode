@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { opened } from '../protocol/keys.js';
 import { PROTOCOL_VERSION } from '../protocol/version.js';
+import { releaseVerdict } from '../protocol/release.js';
 
 export const RELEASE_TAG = 'release';
 /** The litnode release key. A manifest not signed by it is not a release. */
@@ -87,9 +88,33 @@ export function pickFile(files, { root }) {
  *            (a new release public key) and `retire` (keys to stop
  *            accepting). The node persists the accepted set in
  *            data/release-keys.json; the pinned key is the root of trust,
- *            everything after it is a signed chain from it. */
-export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey = RELEASE_PUBKEY, channel = 'stable', dataDir = null, fetchImpl = globalThis.fetch, log = () => {} }) {
+ *            everything after it is a signed chain from it.
+ *  REGISTRY  (BUILD-SPEC v0.3 §2.4) with a ReleaseRegistry configured, the
+ *            signature is necessary but not sufficient: the zip's sha256
+ *            must be registered on chain by the admin multisig and be
+ *            ACTIVE (its activation delay passed) and not revoked. One
+ *            leaked release key can no longer ship code to every node
+ *            within the hour. `registry` is { statusOf(zipHashHex) →
+ *            { registered, active, revoked, version, activatesAt } | null }
+ *            (null = chain unreadable, which BLOCKS: a gate that opens when
+ *            the chain is down is no gate). Unset → signature-only, and
+ *            status() says `registry: 'unset'`. */
+export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey = RELEASE_PUBKEY, channel = 'stable', dataDir = null, fetchImpl = globalThis.fetch, registry = null, log = () => {} }) {
   let latest = null, checkedAt = 0, lastError = null, applying = false;
+  let registryStatus = null, registryAsked = false; // the last statusOf read for the zip this install would apply
+  /** Read the registry for the zip `check()` picked. Returns the verdict. */
+  const gate = async () => {
+    if (!registry) return { ok: true, reason: null, registry: 'unset' };
+    const file = latest ? pickFile(latest.files, { root }) : null;
+    const want = file ? latest.files[file]?.sha256 : null;
+    if (!want) return { ok: false, reason: 'no zip to check against the registry', registry: 'unset' };
+    let st = null;
+    registryAsked = true;
+    try { st = await registry.statusOf(want); } catch (e) { log(`release registry: ${e.message}`); }
+    registryStatus = st ? { ...st, zipHash: want } : null;
+    const v = releaseVerdict(st);
+    return { ...v, registry: st ? (st.revoked ? 'revoked' : st.active ? 'active' : st.registered ? 'pending' : 'unregistered') : 'unreadable' };
+  };
   // Where this channel's manifest lives. Stable: releases/latest/download/
   // release.json (GitHub's "latest" is the newest non-prerelease). Canary: a
   // PRERELEASE, which "latest" never points at — so on GitHub the canary
@@ -128,6 +153,7 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
       if (env.body.rotateTo && /^[0-9a-f]{64}$/.test(env.body.rotateTo) && !acceptedKeys().includes(env.body.rotateTo)) { persisted.accepted.push(env.body.rotateTo); saveKeys(); log(`release key rotated: now also accepting ${env.body.rotateTo.slice(0, 12)}…`); }
       for (const k of env.body.retire ?? []) if (k !== env.signer && acceptedKeys().includes(k) && !persisted.retired.includes(k)) { persisted.retired.push(k); saveKeys(); log(`release key retired: ${k.slice(0, 12)}…`); }
       latest = env.body; lastError = null;
+      if (registry) { const g = await gate(); if (!g.ok) lastError = g.reason; }
     } catch (e) { lastError = String(e.message ?? e); }
     checkedAt = Date.now();
     return latest;
@@ -137,6 +163,9 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
     version, channel, protocol: PROTOCOL_VERSION, manifestUrl: resolvedUrl, latest: latest?.version ?? null, available: !!(latest && newer(latest.version, version)),
     notes: latest?.notes ?? null, date: latest?.date ?? null, checkedAt: checkedAt ? new Date(checkedAt).toISOString() : null, lastError, applying,
     file: latest ? pickFile(latest.files, { root }) : null, keys: acceptedKeys(), retired: persisted.retired, canRollback: existsSync(join(root, '.previous', 'node')),
+    // unset: no registry configured · unchecked: configured, no release looked at yet · unreadable: asked, the chain did not answer
+    registry: !registry ? 'unset' : !registryAsked ? 'unchecked' : registryStatus ? (registryStatus.revoked ? 'revoked' : registryStatus.active ? 'active' : registryStatus.registered ? 'pending' : 'unregistered') : 'unreadable',
+    registryStatus,
   });
 
   /** Download, verify, unpack, copy code over the install. Returns what changed.
@@ -150,6 +179,10 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
     const s = status();
     if (!s.available && !(force && latest && latest.version === version)) throw new Error(s.lastError ?? `already on ${version}`);
     if (!s.file) throw new Error('no zip in this release matches this install');
+    // The chain is asked again at apply time: a release registered an hour
+    // ago may have been revoked since, and "active" is a clock question.
+    const g = await gate();
+    if (!g.ok) throw new Error(`release registry: ${g.reason} — refused`);
     applying = true;
     try {
       const want = latest.files[s.file];

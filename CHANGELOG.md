@@ -88,6 +88,54 @@ follows [Keep a Changelog](https://keepachangelog.com/).
   (`@ethereumjs/vm`, dev-dependency) and `demo/matchbook-vm.test.mjs` run
   every branch including both attacks; before this they were only
   compile-checked.
+- **Settlement v1.0, phase 2 — the node side** (`node/matchbook.js`,
+  `MATCH_BOOK` in `node.env`, from `deployed.MatchBook`). The drawn host
+  COMMITS a ranked placement on chain before play (the descriptor now carries
+  `panel`, three seats drawn stake-weighted by `protocol/placement.js`
+  `drawPanel` — build holders above the standing floor, witness role,
+  `witnessEligible` on chain, distinct staking addresses) and SETTLES from its
+  delegated key when the ledger settles (`settle.js` `onSettled`); custodians
+  = host + panel; `ledgerHash` = sha256 of the ledger `GET /ledger/:id`
+  serves. Panel nodes watch the log with a cursor (never advanced past a
+  gap), fetch delta + ledger from the host, refuse a ledger whose hash is not
+  the committed one, recompute through `settlement.cosign` and ATTEST the
+  hash they reached — agreement or dispute is the same call. The host
+  FINALIZES (as soon as all three answered, else after the window), feeds an
+  escalation with its custody copy once the seed block exists, resolves after
+  the escalation window. `/leaderboard` folds the chain (`source: chain`,
+  `cursor`, `counts`, `scope=official|pending`; `all` stays local);
+  `/match/:id/chain`; `/health.matchBook` (delegate, delegated, funded,
+  cursor, sends, hosting, attested). Gossip carries no delta advertisements
+  and gossip-driven witnessing is off once MatchBook is configured. Placed
+  players leave the queue (their per-bucket entries paired again as each
+  bucket closed — three commits for one match). One transaction at a time
+  per delegate key. `chain.js`: `witnessEligible` read beside `standingOf`
+  (v3 detected once), `getLogs`, `blockNumber`. Tests:
+  `demo/lib/rpc-evm.mjs` (a JSON-RPC over the in-process EVM: raw
+  transactions, receipts, logs, blocks), `demo/matchbook-node.test.mjs`.
+- **EpochAnchor v3 and automatic proposal.** The delegate (or operator)
+  proposes; support is bonded stake; a root finalizes at `quorumBps` of
+  `NodeStake.totalActive` — v2's operator count, which one wallet funding N
+  stakes could manufacture, is gone. The tree is over the hour's
+  CHAIN-FINALIZED set (`protocol/matchbook.js chainLeaf`/`chainEpoch`, leaves
+  from the `Settled` + `Finalized` events, voids included with their
+  status), so every node computes the same root; the settler proposes each
+  frozen hour by itself (`node/matchbook.js propose`), `/epoch` and
+  `/proof` serve the chain tree (`source: chain`), `tools/anchor-epoch.mjs`
+  speaks v3 (`standing(epoch, root)`), `deploy:testnet --quorum` is basis
+  points (default 5000). `ERC6699Registry` and `EpochAnchor` now take
+  `admin` rather than the deployer. Tests: VM (two 1-token nodes cannot
+  outvote a 3-token one), node e2e (a witness computes the host's root, the
+  proposal finalizes, the node's proof verifies on chain).
+- **The migration, dry-run** (`demo/deploy.test.mjs`): the deploy tool runs
+  unchanged against the in-process chain served over HTTP (`rpc-evm.mjs
+  listen()`): refuses windows the bond cannot cover BEFORE sending anything
+  (the check moved ahead of the first deploy), deploys the whole set, names
+  MatchBook an adjudicator, bonds the local node, is idempotent on a plain
+  re-run, and a node boots on the written file reporting `admin: eoa`,
+  `bond.eligible: false`, `update.registry: unchecked` (new label:
+  configured, nothing looked at yet). `DEPLOY_CONFIG`/`DEPLOY_OUT` override
+  the tool's paths.
 - **BUILD-SPEC v0.3**: the chain as the index. Per ranked match `commit` →
   `settle` → `attest` ×3 → `dispute`/escalation on a `MatchBook` contract
   (specified, phase 2); ladders fold over finalized on-chain events in block

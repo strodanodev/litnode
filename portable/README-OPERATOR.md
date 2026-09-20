@@ -20,6 +20,12 @@ witnesses. Two nodes from one wallet are one operator.
 
 ## Set up
 
+Every step below also exists as one non-interactive command —
+`node sdk/host/cli.mjs init|doctor|start --detach|bond|publish|install-service|verify`
+(`docs/HOST-A-NODE.md` in the source repository) — which is what an
+agent, a Linux or macOS machine, or a script should use. The steps here
+are the Windows double-click path.
+
 1. Unzip. The `-win-x64` zip carries its runtime in `runtime/`; the plain
    zip needs Node.js 20+ (`winget install OpenJS.NodeJS.LTS`).
 2. Copy `node.env.example` to `node.env`, set `OPERATOR`, `SEEDS`, and

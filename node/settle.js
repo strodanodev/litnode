@@ -59,6 +59,7 @@ import { applyProfiles } from '../protocol/profile.js';
 import { buildTree, leafOf, proofFor, proposeCalldata, hourOf, freezeAt } from '../protocol/epoch.js';
 import { resultHash as commit, cosignBody, verification, isOfficial } from '../protocol/result.js';
 import { PROTOCOL_VERSION } from '../protocol/version.js';
+import { matchIdBytes32 } from '../protocol/matchbook.js';
 
 export const COSIGN_TAG = 'cosign';
 export const DISPUTE_TAG = 'dispute';
@@ -83,6 +84,7 @@ export function createSettlement({
   courts = {},                         // rulesetId → [court pubkeys] the operator authorizes (in addition to the manifest's)
   relayKeys = [],                      // relay pubkeys THIS host accepts
   hostRelayKeys = () => [],            // hostId → relay pubkeys that host advertised (witness path)
+  onSettled = null,                    // (delta, storedLedger) → after a RANKED, PLACED result settled here (MatchBook.settle)
 }) {
   if (!sandbox) throw new Error('settlement needs the title sandbox');
   /** The build a submission names, or the current one when it names none. */
@@ -210,11 +212,16 @@ export function createSettlement({
   const finish = async (body, sub, binding) => {
     body.resultHash = commit(body);
     const delta = { ...body, hostSig: await sign(HOST_TAG, body, identity.privateKey), cosigners: [], cosigs: {}, disputes: [] };
-    put(dirs.ledgers, sub.matchId, { ...sub, descriptor: binding.envelope ?? null });
+    const stored = { ...sub, descriptor: binding.envelope ?? null };
+    put(dirs.ledgers, sub.matchId, stored);
     put(dirs.deltas, sub.matchId, delta);
     deltas.set(sub.matchId, delta);
+    // The ledger served by GET /ledger/:id is exactly `stored`: a witness hashes what it fetched and compares with the chain's ledgerHash.
+    if (onSettled && body.mode === 'ranked' && body.placed) { try { await onSettled(delta, JSON.parse(JSON.stringify(stored))); } catch (e) { log(`settled ${sub.matchId} but the chain send failed: ${e.message}`); } }
     return delta;
   };
+  /** A delta or ledger by the chain's bytes32 key (protocol/matchbook.js matchIdBytes32) — a witness that only knows the key. */
+  const byChainKey = (key) => { for (const d of deltas.values()) if (matchIdBytes32(d.matchId) === key) return d.matchId; return null; };
 
   /** Host / settler side: bind, verify what can be verified, replay, sign. */
   const intake = async (sub) => {
@@ -379,7 +386,7 @@ export function createSettlement({
 
   return {
     intake, cosign, acceptCosign, acceptDispute, replay, derived, epoch, freeze, maybeFreeze, proof, list,
-    delta: (id) => { const d = deltas.get(id); return d ? decorate(d) : null; }, ledger: (id) => get(dirs.ledgers, id),
+    delta: (id) => { const d = deltas.get(id) ?? deltas.get(byChainKey(id)); return d ? decorate(d) : null; }, ledger: (id) => get(dirs.ledgers, id) ?? (byChainKey(id) ? get(dirs.ledgers, byChainKey(id)) : null),
     verification: (d) => verification(d, { registry: registryOn }), official: officialOf,
   };
 }

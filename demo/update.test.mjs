@@ -190,7 +190,8 @@ test('update: the node reports it on /health and /update, and refuses to apply w
   const h = await (await fetch(`${node.addr}/health`)).json();
   assert.equal(h.version, '0.4.0'); assert.equal(typeof h.update, 'object'); assert.equal(h.update.available, false);
   const st = await (await fetch(`${node.addr}/update`)).json();
-  assert.deepEqual(Object.keys(st).sort(), ['applying', 'available', 'canRollback', 'channel', 'checkedAt', 'date', 'file', 'keys', 'lastError', 'latest', 'manifestUrl', 'notes', 'protocol', 'retired', 'version'].sort());
+  assert.deepEqual(Object.keys(st).sort(), ['applying', 'available', 'canRollback', 'channel', 'checkedAt', 'date', 'file', 'keys', 'lastError', 'latest', 'manifestUrl', 'notes', 'protocol', 'registry', 'registryStatus', 'retired', 'version'].sort());
+  assert.equal(st.registry, 'unset', 'no ReleaseRegistry configured → signature-only, and it says so');
   const r = await fetch(`${node.addr}/update`, { method: 'POST' });
   assert.equal(r.status, 400, 'nothing to apply → 400, never a restart');
   void key; void body;

@@ -1,3 +1,49 @@
+# Contract migration: testnet v2 → v3 (Settlement v1.0, phase 1 — no single key)
+
+BUILD-SPEC v0.3 §2.2–2.4. Prepared 21 Sep 2026; **not yet executed**.
+
+## Why
+
+| contract | v2 problem | v3 change |
+|---|---|---|
+| `NodeStake` `0x53822d9a…` | a bond can leave the moment a bad result finalizes (`unstake()` any time); a key bonded a minute ago can witness; one `slasher` WALLET (W2) can cut any bond; the node has no on-chain key of its own, so per-match settlement transactions (phase 2) have nowhere to come from | `lockTerm` (unstake refused before `bondedSince + lockTerm`); `eligibilityAge` and `witnessEligible()`; `setDelegate()` — the hot key the node runs with, gas only; `slash()` only by `adjudicators` (contracts named by `admin`), no slasher address; `admin` meant for a multisig behind a timelock, `adminIsContract()` reported on `/health`; `nodeOf()`; `totalActive` for stake-weighted quorum. `standingOf` unchanged. |
+| (new) `ReleaseRegistry` | one release key ships code to every node within the hour | a release zip's sha256 must be registered by `admin` and be active (`activationDelay` after registration) before a node applies it; `revoke()` is immediate. Node gate in `node/update.js`. |
+| `EpochAnchor` `0x87d9fB5F…` | a COUNT of distinct operators finalizes a root (one entity funding N stakes manufactures it); only the operator's cold key may propose; each node's tree is over its own hosted matches, so roots never agree | v3: the delegate proposes; support is bonded stake; finalizes at `quorumBps` of `totalActive`; the tree is over the chain-finalized MatchBook set so every node's root agrees; the settler proposes by itself. `--quorum` is now basis points (default 5000). |
+| (new) `MatchBook` | — | every ranked match on chain: commit → settle → attest ×3 → finalize, escalation to nine, slashing through NodeStake (BUILD-SPEC §11). Named an adjudicator by the deploy tool when the deployer is admin. |
+| `NodeDirectory`, `NodeBadge` | bound to NodeStake by address | redeployed against NodeStake v3 (their reader interface is unchanged; `demo/contracts.test.mjs` asserts it). |
+| `TitleRegistry` | — | publisher rules and auth — a separate workstream; deployed by the same tool. |
+| `PlayerProfile`, `ERC6699Registry`, `TestLITVM` | no change | redeployed only so one `deployed.testnet.json` describes one coherent set (`--fresh`). Profiles registered on the v2 PlayerProfile must be re-registered — testnet only. |
+
+Bonds do not migrate: v3 starts every lock from the new `stake()`. Every node
+re-bonds from its operator wallet, which is the point — the lock is the bond's
+history on the contract that enforces it.
+
+## Procedure
+
+1. `npm test` green, including `demo/contracts.test.mjs`.
+2. `npm run authority` → `audit/authority-<block>.json` (who holds what on v2).
+3. Decide `admin`. With a multisig behind a timelock: put its address in `contracts/deploy.testnet.json` `admin`. Without one: leave `null`; the deploy tool warns, `/health` says `admin: eoa`, and this is written down in §16 until it changes.
+4. `DEPLOYER_KEY=<W2> npm run deploy:testnet -- --fresh --quorum 5000` (dry-run of exactly this command: `demo/deploy.test.mjs`)
+   - refuses if `NodeStake.unbondingPeriod ≤ MatchBook.settleWindowS + attestWindowS + escalationWindowS` (the windows in the config are phase 2's plan; the invariant holds from today),
+   - deploys TestLITVM, NodeStake v3, ERC6699Registry, EpochAnchor v3, PlayerProfile, NodeBadge, NodeDirectory, ReleaseRegistry, TitleRegistry, MatchBook (named an adjudicator),
+   - bonds the local node key from W2 (the lock starts now),
+   - writes `deployed.testnet.json` with `NodeStake.version: 3`, `lockTerm`, `eligibilityAge`, `admin`, `ReleaseRegistry`.
+5. Bond every other node from its operator's wallet (`npm run bond -- <nodeId>`).
+6. Delegate each node's hot key: `npm run delegate -- <nodeId> <announcerAddress> --fund 0.005` (the announcer key the node already holds is the natural delegate; NodeDirectory's own `setAnnouncer` is still needed until phase 2 folds it into the delegate).
+7. Register the current release: `npm run release:registry -- register <release.json>` (or `--calldata` for the multisig). Nodes on this build will refuse the NEXT release until it is registered and active.
+8. `cabinet/config.js` `CHAIN`: new addresses; redeploy the cabinet.
+9. Enrol each node in the MatchBook witness pool from its delegate (a tool for this is not written yet: `enroll(nodeKey)` via `protocol/matchbook.js enrollCalldata`), then restart nodes. `/health` shows `bond.eligible` flipping to true after `eligibilityAge`, `matchBook.delegated`, `update.registry`, and `admin`. A ranked match from *Find match* then appears as `/match/:id/chain` → committed, settled, attested, final.
+10. `npm run authority` again; record both snapshots below.
+11. When the multisig exists: `setParams(...)` on NodeStake and `setParams(admin, delay)` on ReleaseRegistry from W2, handing `admin` over; `transferAdmin` on ERC6699Registry and EpochAnchor. Then W2 holds nothing but node bonds.
+
+## Records (v3)
+
+| when | what | block | file |
+|---|---|---|---|
+| 2026-09-21 | v3 contracts written and compile-tested; not deployed | — | `demo/contracts.test.mjs` |
+
+---
+
 # Contract migration: testnet v1 → v2
 
 ## Why

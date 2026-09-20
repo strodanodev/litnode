@@ -1,64 +1,96 @@
-/** Backdrop: a painted-sky gradient with soft clouds under a cyan wireframe
- *  mesh, drawn once to a fixed canvas. Drop the brand art in as `bg.jpg`
- *  next to index.html and it is used instead of the procedural sky — the
- *  wireframe still goes on top. */
+/** Backdrop: a black CRT screen — flickering static, a drifting scan band,
+ *  and a cyan wireframe mesh whose vertices drift in slow orbits. Redrawn
+ *  every frame on a fixed canvas. */
 export function paintBackdrop(canvas) {
-  const draw = (img) => {
-    const dpr = Math.min(devicePixelRatio || 1, 1.5);
-    const w = innerWidth, h = innerHeight;
+  const ctx = canvas.getContext('2d');
+
+  // small offscreen buffer for TV static, stretched over the frame each tick
+  const noise = document.createElement('canvas');
+  noise.width = 160; noise.height = 90;
+  const nctx = noise.getContext('2d');
+  const nimg = nctx.createImageData(noise.width, noise.height);
+
+  let w = 0, h = 0, dpr = 1;
+  let pts = [], edges = [];
+
+  const seedRnd = (seed) => () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 2 ** 32; };
+
+  function layout() {
+    dpr = Math.min(devicePixelRatio || 1, 1.5);
+    w = innerWidth; h = innerHeight;
     canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
-    const ctx = canvas.getContext('2d');
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    if (img) {
-      const s = Math.max(w / img.width, h / img.height);
-      ctx.drawImage(img, (w - img.width * s) / 2, (h - img.height * s) / 2, img.width * s, img.height * s);
-    } else {
-      const sky = ctx.createLinearGradient(0, 0, w * 0.3, h);
-      sky.addColorStop(0, '#3d8ea8'); sky.addColorStop(0.4, '#6db8cf'); sky.addColorStop(0.68, '#e8ab8c'); sky.addColorStop(1, '#3d5f7e');
-      ctx.fillStyle = sky; ctx.fillRect(0, 0, w, h);
-      let seed = 7;
-      const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 2 ** 32; };
-      for (let i = 0; i < 34; i++) {
-        const cx = rnd() * w, cy = rnd() * h * 0.85, r = 120 + rnd() * 260;
-        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-        const peach = rnd() > 0.45;
-        g.addColorStop(0, peach ? 'rgba(255,200,165,.75)' : 'rgba(235,248,255,.6)');
-        g.addColorStop(1, 'rgba(255,255,255,0)');
-        ctx.fillStyle = g; ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
-      }
+    const rnd = seedRnd(11);
+    const n = Math.min(70, Math.round((w * h) / 40000));
+    pts = [];
+    for (let i = 0; i < n; i++) {
+      pts.push({ bx: rnd() * w, by: rnd() * h, x: 0, y: 0, amp: 10 + rnd() * 20, phase: rnd() * Math.PI * 2, speed: 0.15 + rnd() * 0.3 });
     }
+    edges = [];
+    for (let i = 0; i < pts.length; i++) {
+      const near = pts
+        .map((q, j) => ({ j, d: (q.bx - pts[i].bx) ** 2 + (q.by - pts[i].by) ** 2 }))
+        .filter((e) => e.j !== i)
+        .sort((a, b) => a.d - b.d)
+        .slice(0, 2);
+      for (const { j } of near) if (j > i) edges.push([i, j]);
+    }
+  }
 
-    // wireframe: scattered vertices joined to their nearest neighbours
-    let seed = 11;
-    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 2 ** 32; };
-    const pts = [];
-    const n = Math.round((w * h) / 26000);
-    for (let i = 0; i < n; i++) pts.push({ x: rnd() * w, y: rnd() * h });
-    ctx.lineWidth = 1.2;
-    ctx.strokeStyle = 'rgba(160,240,255,.55)';
-    ctx.shadowColor = 'rgba(140,232,255,.6)'; ctx.shadowBlur = 4;
-    ctx.beginPath();
+  function drawStatic(alpha) {
+    const data = nimg.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const v = (Math.random() * 255) | 0;
+      data[i] = data[i + 1] = data[i + 2] = v; data[i + 3] = 255;
+    }
+    nctx.putImageData(nimg, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(noise, 0, 0, w, h);
+    ctx.globalAlpha = 1;
+  }
+
+  function frame(t) {
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, h);
+    drawStatic(0.05 + Math.random() * 0.035);
+
+    const secs = t / 1000;
     for (const p of pts) {
-      const near = pts.filter((q) => q !== p).map((q) => ({ q, d: (q.x - p.x) ** 2 + (q.y - p.y) ** 2 })).sort((a, b) => a.d - b.d).slice(0, 3);
-      for (const { q } of near) { ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); }
+      p.x = p.bx + Math.sin(secs * p.speed + p.phase) * p.amp;
+      p.y = p.by + Math.cos(secs * p.speed * 0.8 + p.phase) * p.amp * 0.6;
     }
+
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = 'rgba(150,235,255,.7)';
+    ctx.shadowColor = 'rgba(140,232,255,.85)'; ctx.shadowBlur = 12;
+    ctx.beginPath();
+    for (const [i, j] of edges) { ctx.moveTo(pts[i].x, pts[i].y); ctx.lineTo(pts[j].x, pts[j].y); }
     ctx.stroke();
     ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(200,245,255,.5)';
-    for (const p of pts) ctx.fillRect(p.x - 1, p.y - 1, 2, 2);
 
-    // readability: darken, and fade toward the bottom
-    ctx.fillStyle = 'rgba(6,10,18,.12)'; ctx.fillRect(0, 0, w, h);
-    const fade = ctx.createLinearGradient(0, h * 0.55, 0, h);
-    fade.addColorStop(0, 'rgba(6,10,18,0)'); fade.addColorStop(1, 'rgba(6,10,18,.42)');
-    ctx.fillStyle = fade; ctx.fillRect(0, 0, w, h);
-  };
+    ctx.fillStyle = 'rgba(210,248,255,.85)';
+    for (const p of pts) ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
 
-  const img = new Image();
-  img.onload = () => draw(img);
-  img.onerror = () => draw(null);
-  img.src = './bg.jpg';
-  let t = 0;
-  window.addEventListener('resize', () => { clearTimeout(t); t = setTimeout(() => draw(img.complete && img.naturalWidth ? img : null), 150); });
+    // a faint scan band drifting down the screen, CRT-refresh style
+    const bandY = ((secs * 90) % (h + 60)) - 30;
+    const band = ctx.createLinearGradient(0, bandY - 30, 0, bandY + 30);
+    band.addColorStop(0, 'rgba(160,240,255,0)');
+    band.addColorStop(0.5, 'rgba(160,240,255,.06)');
+    band.addColorStop(1, 'rgba(160,240,255,0)');
+    ctx.fillStyle = band; ctx.fillRect(0, 0, w, h);
+
+    // vignette toward the edges, like a tube's curvature
+    const vig = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.4, w / 2, h / 2, Math.max(w, h) * 0.8);
+    vig.addColorStop(0, 'rgba(0,0,0,0)'); vig.addColorStop(1, 'rgba(0,0,0,.32)');
+    ctx.fillStyle = vig; ctx.fillRect(0, 0, w, h);
+
+    requestAnimationFrame(frame);
+  }
+
+  layout();
+  requestAnimationFrame(frame);
+
+  let rt;
+  window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(layout, 150); });
 }

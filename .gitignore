@@ -15,3 +15,6 @@ Thumbs.db
 audit/probe-data-*/
 audit-test-output.txt
 .agents/
+
+# An operator install writes its node.env beside the code; never commit one
+/node.env

@@ -63,7 +63,38 @@ export function applyStakes(peers, stakes) {
   for (const p of peers) {
     const s = stakes[p.nodeId];
     if (!s || !s.active) continue;
-    out.push({ ...p, operator: s.operator.toLowerCase(), standing: Number(s.amount / 10n ** 18n), staked: true });
+    // `eligible` (NodeStake v3 witnessEligible) gates the witness panel; absent on a v2 contract → the panel draw treats the node as eligible.
+    out.push({ ...p, operator: s.operator.toLowerCase(), standing: Number(s.amount / 10n ** 18n), staked: true, ...(typeof s.eligible === 'boolean' ? { eligible: s.eligible } : {}) });
   }
   return out;
+}
+
+// ------------------------------------------------------------ v3: lock, eligibility, delegate (BUILD-SPEC v0.3 §2.2)
+export const NODE_OF = 'nodeOf(bytes32)';
+export const WITNESS_ELIGIBLE = 'witnessEligible(bytes32)';
+export const DELEGATE_OF = 'delegateOf(bytes32)';
+export const SET_DELEGATE = 'setDelegate(bytes32,address)';
+export const ADMIN_IS_CONTRACT = 'adminIsContract()';
+export const MAY_ACT_FOR = 'mayActFor(bytes32,address)';
+export const mayActForCall = (contract, nodeIdHex, who) => ({ to: contract, data: selector(MAY_ACT_FOR) + nodeKeyBytes32(nodeIdHex).slice(2) + addrWord(who) });
+export const nodeOfCall = (contract, nodeIdHex) => ({ to: contract, data: selector(NODE_OF) + nodeKeyBytes32(nodeIdHex).slice(2) });
+export const witnessEligibleCall = (contract, nodeIdHex) => ({ to: contract, data: selector(WITNESS_ELIGIBLE) + nodeKeyBytes32(nodeIdHex).slice(2) });
+export const delegateOfCall = (contract, nodeIdHex) => ({ to: contract, data: selector(DELEGATE_OF) + nodeKeyBytes32(nodeIdHex).slice(2) });
+export const adminIsContractCall = (contract) => ({ to: contract, data: selector(ADMIN_IS_CONTRACT) });
+/** The operator's wallet signs this: name the hot key the node runs with. */
+export const setDelegateCalldata = (nodeIdHex, delegate) => selector(SET_DELEGATE) + nodeKeyBytes32(nodeIdHex).slice(2) + addrWord(delegate);
+export const decodeBool = (hex) => BigInt('0x' + (hex.replace(/^0x/, '') || '0')) === 1n;
+/** Decode nodeOf: (operator, delegate, amount, bondedSince, unbondAt, active, eligible). A v2
+ *  contract answers standingOf-shaped data or reverts; the caller labels the read. */
+export function decodeNode(hex) {
+  const d = hex.replace(/^0x/, '');
+  if (d.length < 448) throw new Error('short nodeOf result');
+  const word = (i) => d.slice(i * 64, (i + 1) * 64);
+  const zero = '0x0000000000000000000000000000000000000000';
+  const addr = (i) => { const a = '0x' + word(i).slice(24); return a === zero ? null : a; };
+  return {
+    operator: addr(0), delegate: addr(1), amount: BigInt('0x' + word(2)),
+    bondedSince: Number(BigInt('0x' + word(3))), unbondAt: Number(BigInt('0x' + word(4))),
+    active: BigInt('0x' + word(5)) === 1n, eligible: BigInt('0x' + word(6)) === 1n,
+  };
 }

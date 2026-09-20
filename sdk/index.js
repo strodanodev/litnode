@@ -16,7 +16,12 @@
  *
  *  The bundled artifact must be a single ES module with no imports; this
  *  file and everything it re-exports are dependency-free so tools/
- *  bundle-title.mjs can inline them. */
+ *  bundle-title.mjs can inline them.
+ *
+ *  The other halves: sdk/client.js is what the game's CLIENT imports (the
+ *  arcade launch, the shell's signature, the input recorder, settlement);
+ *  sdk/bridge/ settles matches from a game that already runs on its own
+ *  backend; sdk/host/ runs the node. docs/PUBLISHERS.md is the map. */
 export { defineTitle, defineAttestedTitle, eloLeaderboard, winnerTakesCredits, titleHash } from '../titles/title.js';
 
 /** Linear interpolation, the one helper every balance mapping wants. */
