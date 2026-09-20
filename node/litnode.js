@@ -45,8 +45,16 @@ import { descriptorHash as descriptorHashOf } from './settle.js';
 // browser (net::ERR_FAILED, seen live 17 Sep 2026 on Find match).
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-private-network': 'true', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '600' };
 const json = (res, status, body) => {
-  res.writeHead(status, { 'content-type': 'application/json', ...CORS });
-  res.end(JSON.stringify(body));
+  // A second answer on the same response (a route that wrote, then threw,
+  // then hit the handler's catch) must be a no-op, never a throw: an
+  // ERR_HTTP_HEADERS_SENT escaping the async handler is an unhandled
+  // rejection and took the desktop node down twice on 20 Sep 2026 — each
+  // crash rotating both tunnel hostnames.
+  if (res.headersSent || res.writableEnded || res.destroyed) return;
+  try {
+    res.writeHead(status, { 'content-type': 'application/json', ...CORS });
+    res.end(JSON.stringify(body));
+  } catch { try { res.destroy(); } catch { /* gone */ } }
 };
 const readBody = (req) => new Promise((resolve, reject) => {
   let s = '';
@@ -285,8 +293,13 @@ export async function createNode({
     if (ok) peersKnown.add(s.url); else { peersKnown.delete(s.url); log(`seed ${s.url} did not prove key ${s.nodeId.slice(0, 12)} (${reason}); ignored`); emit('seed-refused', { url: s.url, nodeId: s.nodeId, reason }); }
     return ok;
   };
-  let announceRetry = null;
-  const announceNow = () => {
+  let announceRetry = null, announceDebounce = null;
+  // Coalesce: the node tunnel and the relay tunnel come up a second apart,
+  // and an announce sent between them published the node URL with NO relay
+  // (seen 20 Sep 2026: "server offline" for the length of the rate-limit
+  // window). Wait a few seconds so one transaction carries both.
+  const announceNow = () => { clearTimeout(announceDebounce); announceDebounce = setTimeout(announceSend, 4000); };
+  const announceSend = () => {
     if (!announcer || !announce) return;
     announcer.sync(addr, wsAddr ?? '').then((r) => {
       if (r === 'sent' || r === 'error' || r === 'not-delegated' || r === 'unfunded') log(`announce: ${r}${announcer.status().lastError ? ` — ${announcer.status().lastError}` : ''}`);

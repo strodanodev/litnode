@@ -11,14 +11,30 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
   const blocks = [];
   let lastError = null;
 
-  const call = async (method, params) => {
-    const r = await fetchImpl(rpc, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }),
-    });
-    const j = await r.json();
-    if (j.error) throw new Error(`${method}: ${j.error.message}`);
-    return j.result;
+  // Liteforge's gateway answers 502/530 with an HTML page now and then. A
+  // transient answer (5xx, non-JSON, network) is retried a few times with a
+  // growing pause; a JSON-RPC error (a revert, a bad argument) is not.
+  const call = async (method, params, tries = 4) => {
+    for (let i = 1; ; i++) {
+      try {
+        const r = await fetchImpl(rpc, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }),
+          signal: AbortSignal.timeout(15_000),
+        });
+        let j;
+        if (typeof r.text === 'function') {
+          const text = await r.text();
+          try { j = JSON.parse(text); } catch { throw Object.assign(new Error(`${method}: HTTP ${r.status} non-JSON reply from the RPC gateway`), { transient: true }); }
+        } else j = await r.json(); // a test fake with only json()
+        if (j.error) throw new Error(`${method}: ${j.error.message}`);
+        return j.result;
+      } catch (e) {
+        const transient = e.transient || e.name === 'TimeoutError' || e.name === 'AbortError' || /fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN/.test(String(e.message));
+        if (!transient || i >= tries) throw e;
+        await new Promise((res) => setTimeout(res, 1000 * i));
+      }
+    }
   };
 
   /** Poll the head; keep a short window of blocks for beacon selection. */

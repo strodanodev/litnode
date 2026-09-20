@@ -3,9 +3,25 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.8.3] — 2026-09-20 — stay up
+
+Protocol **2** (unchanged). Every restart of a quick-tunnel node rotates
+its hostnames and blinds its peers for a directory cycle, so not dying is
+the availability feature. Seen live twice on 20 Sep: a handler wrote a
+response, threw, and the catch block's second write escaped as an unhandled
+rejection (`ERR_HTTP_HEADERS_SENT`) that ended the process.
 
 ### Fixed
+- **The node never exits on a handler error or an unhandled rejection.**
+  `json()` is a no-op once headers are sent; `cli.mjs` logs unhandled
+  rejections and uncaught exceptions and keeps running (the relay's policy).
+- **An announce waits for both tunnels.** Node and relay tunnels come up a
+  second apart; an announce between them published the node URL with no
+  relay, and the rate limit held that for minutes ("server offline"). Sends
+  are debounced 4 s so one transaction carries both.
+- **The node's own RPC calls retry transient gateway answers** (5xx, HTML
+  instead of JSON, timeouts) with a growing pause — the tools got this
+  earlier today; the node's announcer and stake reads now have it too.
 - **A node that loses every fresh peer re-reads NodeDirectory at once**
   (rate-limited to once a minute) instead of on the 10-minute cycle. Seen
   live: the seed restarted on a new quick-tunnel hostname and its two peers

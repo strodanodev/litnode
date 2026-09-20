@@ -83,6 +83,14 @@ const node = await createNode({
 });
 if (tui) tui.attach(node);
 else console.log(`health: ${node.addr}/health   cabinet: ${node.addr}/`);
+// Last-resort safety net: a rejection nobody caught (a poll that failed, a
+// handler bug) must not end the process. Ending it rotates the quick-tunnel
+// hostnames and blinds every peer for a directory cycle; logging it does
+// not. Same policy as the Agent Fighter relay. Registered only here, never
+// in createNode, so tests that spin up many nodes do not stack listeners.
+process.on('unhandledRejection', (reason) => console.error(`[fatal] unhandledRejection (kept alive):`, reason));
+process.on('uncaughtException', (err) => console.error(`[fatal] uncaughtException (kept alive):`, err));
+
 // Record the PID beside the identity, so restart-node.cmd / stop-node.cmd can
 // end THIS process rather than the wrapper (a scheduled task's End only
 // stops cmd.exe; the node kept running and held the port).
