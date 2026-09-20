@@ -3,6 +3,13 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- **The dashboard's  key checks for a release before applying.** It used to
+  apply the version from the last hourly check, so pressing it right after a
+  release installed the previous one.
+
 ## [0.9.0] — 2026-09-20 — players sign
 
 Protocol **3**. Nodes on protocol 2 are heard, listed as incompatible, and

@@ -168,7 +168,10 @@ export function createTui({ chainId = null } = {}) {
         if (k === 'q' || k === '') { await stop(); await node.stop().catch(() => {}); process.exit(0); }
         if (k === 'l') { showLog = !showLog; dirty = true; }
         if (k === 'g') { showGossip = !showGossip; dirty = true; }
-        if (k === 'u') { const s = node.updater?.status(); if (s?.available) { log(`updating to ${s.latest}…`); node.updater.apply().then(() => node.restart()).catch((e) => log(`update failed: ${e.message}`)); } else log('no update available'); }
+        // Check first, then apply: the hourly check can be an hour stale, and
+        // pressing u right after a release used to install the PREVIOUS one
+        // (seen 20 Sep 2026: "updating to 0.8.3" while 0.9.0 was out).
+        if (k === 'u') { log('checking for a release…'); (node.updater?.check() ?? Promise.resolve()).then(() => { const s = node.updater?.status(); if (s?.available) { log(`updating to ${s.latest}…`); return node.updater.apply().then(() => node.restart()); } log(`no update available (installed ${s?.version ?? '?'}, latest ${s?.latest ?? '?'})`); }).catch((e) => log(`update failed: ${e.message}`)); }
         if (k === 'p') { paused = !paused; dirty = true; }
       });
     }
