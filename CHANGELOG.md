@@ -5,6 +5,8 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-09-22 — settlement v1.0: every ranked match on chain
+
 ### Added
 - **docs/PUBLISHER-BONDS.md** — spec for publisher bonds: a title the
   publisher owns (ERC-721, vault flag for later tokenisation), host grants
