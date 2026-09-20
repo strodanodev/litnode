@@ -9,6 +9,14 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 - **The dashboard's `u` key checks for a release before applying.** It used to
   apply the version from the last hourly check, so pressing it right after a
   release installed the previous one.
+- **Release zips are named by version, not date.** Two releases cut on one
+  day shared asset names, and a CDN edge still holding the earlier zip under
+  that name failed a node's sha256 check on the later one (`updated failed
+  sha256 mismatch`). `litnode-<kind>-v<version>[-win-x64].zip` from here on;
+  `npm run release` picks up only the current version's zips.
+- **LAN-only nodes no longer try to announce.** A node without a public
+  https address (no tunnel, no domain) logged `announce: not-delegated`
+  every cycle. Nothing to announce, so it stays quiet.
 
 ## [0.9.0] — 2026-09-20 — players sign
 

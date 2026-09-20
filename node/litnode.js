@@ -301,6 +301,10 @@ export async function createNode({
   const announceNow = () => { clearTimeout(announceDebounce); announceDebounce = setTimeout(announceSend, 4000); };
   const announceSend = () => {
     if (!announcer || !announce) return;
+    // Only a node with a public https address is worth announcing (a seed
+    // behind a tunnel or a real domain). A LAN-only node used to try anyway
+    // and log "not delegated" every cycle — noise, not a fault.
+    if (!/^https:\/\//.test(addr ?? '')) return;
     announcer.sync(addr, wsAddr ?? '').then((r) => {
       if (r === 'sent' || r === 'error' || r === 'not-delegated' || r === 'unfunded') log(`announce: ${r}${announcer.status().lastError ? ` — ${announcer.status().lastError}` : ''}`);
       // A change that arrived while a send was in flight, or inside the

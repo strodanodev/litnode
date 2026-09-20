@@ -44,12 +44,10 @@ if (key.publicKey !== RELEASE_PUBKEY) { console.error(`release key ${key.publicK
 console.log(`release ${tag}: packing…`);
 execFileSync(process.execPath, [join(root, 'tools', 'pack.mjs'), '--all'], { stdio: 'inherit' });
 execFileSync(process.execPath, [join(root, 'tools', 'pack.mjs'), '--all', '--runtime'], { stdio: 'inherit' });
-const zips = readdirSync(dist).filter((f) => /^litnode-(portable|operator)-\d{4}-\d{2}-\d{2}(-win-x64)?\.zip$/.test(f));
-// keep only the newest date stamp per (kind, flavour)
-const stamp = (f) => /(\d{4}-\d{2}-\d{2})/.exec(f)[1];
-const latestStamp = zips.map(stamp).sort().at(-1);
+// Only this version's zips (pack.mjs names them litnode-<kind>-v<version>[-win-x64].zip).
+const zips = readdirSync(dist).filter((f) => f.startsWith('litnode-') && f.endsWith('.zip') && f.includes(`-v${pkg.version}`));
 const files = {};
-for (const f of zips.filter((f) => stamp(f) === latestStamp)) {
+for (const f of zips) {
   const buf = readFileSync(join(dist, f));
   files[f] = { sha256: createHash('sha256').update(buf).digest('hex'), size: statSync(join(dist, f)).size };
 }

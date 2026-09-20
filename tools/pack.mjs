@@ -1,6 +1,6 @@
 /** Build the portable zips.
- *    node tools/pack.mjs             → dist/litnode-portable-<date>.zip   (any node: laptop, handheld, volunteer)
- *    node tools/pack.mjs --operator  → dist/litnode-operator-<date>.zip   (+ chain tooling, node.env, scheduled task)
+ *    node tools/pack.mjs             → dist/litnode-portable-v<version>.zip   (any node: laptop, handheld, volunteer)
+ *    node tools/pack.mjs --operator  → dist/litnode-operator-v<version>.zip   (+ chain tooling, node.env, scheduled task)
  *    node tools/pack.mjs --all       → both
  *    node tools/pack.mjs --all --runtime[=v22.19.0]
  *        also vendors the official Node.js win-x64 runtime as runtime/node.exe,
@@ -14,7 +14,10 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const stamp = new Date().toISOString().slice(0, 10);
+// Zips are named by VERSION, not date: two releases cut on one day carried
+// the same asset names, and a CDN edge that still held the earlier zip
+// under that name failed a node's sha256 check on the later one.
+const stamp = 'v' + (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version ?? '0.0.0');
 const dist = join(root, 'dist');
 const args = process.argv.slice(2);
 const kinds = args.includes('--all') ? ['portable', 'operator'] : args.includes('--operator') ? ['operator'] : ['portable'];
