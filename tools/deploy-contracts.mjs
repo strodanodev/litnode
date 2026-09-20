@@ -60,11 +60,14 @@ if (!(quorum > 0 && quorum <= 10_000)) { console.error('--quorum is basis points
 const { ethers } = await import('ethers');
 const solc = (await import('solc')).default;
 const previous = existsSync(outPath) ? JSON.parse(readFileSync(outPath, 'utf8')) : null;
-// --fresh is resumable: a file that already carries `migratedFrom` IS the new
-// generation, half-deployed (Caldera's gateway 502s mid-run) — continue it
-// rather than archiving it and starting over. Archive names come from the
-// previous set's own deployedAt, so a re-run never makes a second copy.
-const resuming = fresh && previous?.migratedFrom;
+// The contract GENERATION this tool deploys. --fresh archives any file of an
+// older generation and starts a new set; it RESUMES a file of this generation
+// (half-deployed: Caldera's gateway 502s mid-run) rather than archiving it.
+// v2 files carried `migratedFrom` from the v1 → v2 move, and "has migratedFrom"
+// was the old resume test — which resumed the v2 set on 22 Sep 2026 and put a
+// MatchBook against NodeStake v2. Generations are explicit now.
+const GENERATION = 3;
+const resuming = fresh && previous?.generation === GENERATION;
 if (fresh && previous && !resuming) {
   const stamp = String(previous.deployedAt ?? new Date().toISOString()).replace(/[:.]/g, '-');
   const archived = join(dirname(outPath), `deployed.testnet.${stamp}.json`);
@@ -72,8 +75,10 @@ if (fresh && previous && !resuming) {
   console.log(`--fresh: previous deployment archived as ${archived}`);
 }
 const deployed = previous && (!fresh || resuming) ? previous : {};
-if (fresh && previous && !resuming) deployed.migratedFrom = { NodeStake: previous.NodeStake?.address ?? null, EpochAnchor: previous.EpochAnchor?.address ?? null, ERC6699Registry: previous.ERC6699Registry?.address ?? null, NodeDirectory: previous.NodeDirectory?.address ?? null, deployedAt: previous.deployedAt ?? null };
-if (resuming) console.log(`--fresh: resuming the v2 deployment already in ${outPath}`);
+if (fresh && previous && !resuming) deployed.migratedFrom = { generation: previous.generation ?? (previous.NodeStake?.version ?? 1), NodeStake: previous.NodeStake?.address ?? null, EpochAnchor: previous.EpochAnchor?.address ?? null, ERC6699Registry: previous.ERC6699Registry?.address ?? null, NodeDirectory: previous.NodeDirectory?.address ?? null, deployedAt: previous.deployedAt ?? null };
+if (fresh) deployed.generation = GENERATION;
+if (!fresh && previous && (previous.generation ?? (previous.NodeStake?.version ?? 1)) !== GENERATION) { console.error(`${outPath} holds generation ${previous.generation ?? previous.NodeStake?.version ?? 1}; this tool deploys generation ${GENERATION}. Run with --fresh to archive it and deploy the new set.`); process.exit(1); }
+if (resuming) console.log(`--fresh: resuming the generation-${GENERATION} deployment already in ${outPath}`);
 
 /** Caldera's gateway answers 502 now and then. Every chain call and every
  *  transaction is retried a few times rather than abandoning the run; a

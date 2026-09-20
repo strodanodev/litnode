@@ -56,6 +56,7 @@ export function createMatchBook({
   const escalation = new Map();             // matchId → { panel[], escalatedAt }
   const blockTs = new Map();                // block number → timestamp (seconds), for the hour a Finalized event belongs to
   const proposedHours = new Set();          // epochs this node already proposed (a restart re-tries; the contract refuses harmlessly)
+  const committed = new Set();              // matchIds (chain keys) this node committed — a settle without a commit would only revert
 
   // ---------------------------------------------------------------- send
   let nonce = null;
@@ -93,11 +94,21 @@ export function createMatchBook({
     const panel = descriptor.panel ?? [];
     if (panel.length !== 3) { lastError = `commit ${descriptor.matchId.slice(0, 12)}: the draw seated ${panel.length} witnesses, MatchBook needs 3 — placed casual-only`; emit('commit-skipped', { matchId: descriptor.matchId, reason: lastError }); return null; }
     const dh = descriptorHashOf(descriptor);
-    return trySend(mb.commitCalldata(descriptor.matchId, dh, descriptor.rulesetId, nodeId, panel), 'commit', descriptor.matchId);
+    const tx = await trySend(mb.commitCalldata(descriptor.matchId, dh, descriptor.rulesetId, nodeId, panel), 'commit', descriptor.matchId);
+    if (tx) committed.add(mb.matchIdBytes32(descriptor.matchId));
+    return tx;
   };
   /** A ranked, placed match settled here: put the result on chain. */
   const settle = async (delta, ledger) => {
-    const panel = panels.get(mb.matchIdBytes32(delta.matchId))?.panel ?? ledger.descriptor?.body?.panel ?? [];
+    const key = mb.matchIdBytes32(delta.matchId);
+    if (!committed.has(key) && !panels.has(key)) {
+      // no commit went out for this placement (the mesh could not seat three witnesses, or the send failed):
+      // the match settled locally and stays local; a settle on chain would only revert with WrongStatus
+      log(`matchbook: ${delta.matchId.slice(0, 12)} settled locally only — it was never committed on chain (${lastError ?? 'no commit'})`);
+      emit('settle-skipped', { matchId: delta.matchId, reason: 'not committed' });
+      return null;
+    }
+    const panel = panels.get(key)?.panel ?? ledger.descriptor?.body?.panel ?? [];
     const custodians = [nodeId, ...panel];
     const tx = await trySend(mb.settleCalldata(delta.matchId, { resultHash: delta.resultHash, ledger, buildHash: delta.buildHash, participants: delta.participants, scores: delta.scores, custodians }), 'settle', delta.matchId);
     if (tx) mine.set(mb.matchIdBytes32(delta.matchId), { matchId: delta.matchId, settledAt: Date.now(), status: 'settled', ledger });

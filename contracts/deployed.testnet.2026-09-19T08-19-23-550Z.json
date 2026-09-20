@@ -1,0 +1,125 @@
+{
+  "migratedFrom": {
+    "NodeStake": "0x11C984bE3ee572eb7280334501B57c82001F397F",
+    "EpochAnchor": "0x09fBf6A5026b4E02eE9f78222117F97b19eE507A",
+    "ERC6699Registry": "0x66cef65F9F3774989D5F4AFa1fF6a09541835145",
+    "NodeDirectory": "0xf63AA4590fDCa66fD9FA3005C588E9deb09767b4",
+    "deployedAt": "2026-09-17T00:45:43.682Z"
+  },
+  "TestLITVM": {
+    "address": "0x85D309Fe638B639Ae8c9889A5199Fce55B5dBd41",
+    "tx": "0x16f7615690910afb35d54b84da465d29d7b8fd12c952e9b17cd581b63c9bb733",
+    "block": 52403165,
+    "args": []
+  },
+  "NodeStake": {
+    "address": "0x53822d9a334082e88AB70103F58AD65eBEF73801",
+    "tx": "0xf1b3435f663e87ab3107d29a6f758928e4af3b554152217ca2fd0ad68552aa0e",
+    "block": 52403667,
+    "args": [
+      "0x85D309Fe638B639Ae8c9889A5199Fce55B5dBd41",
+      "1000000000000000000",
+      "60",
+      "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27",
+      "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27"
+    ],
+    "minStake": "1000000000000000000",
+    "unbondingPeriod": 1200,
+    "version": 3,
+    "lockTerm": 600,
+    "eligibilityAge": 120,
+    "admin": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378"
+  },
+  "ERC6699Registry": {
+    "address": "0x4062626DB36CE24752ED7a3e8c5FD7fE2ceFaB02",
+    "tx": "0x72a40670defcb1366b32f0f799d5c2de6018c678c02a86cd07cdaf7978d0411f",
+    "block": 52403694,
+    "args": [
+      "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27"
+    ],
+    "version": 2
+  },
+  "EpochAnchor": {
+    "address": "0x87d9fB5FC60140B3e7A63FC657c1969baAf7d6eD",
+    "tx": "0xebf797f793e64b75cd2a3ced1730d02627f3dcab6744d7d2b5bfe1c24773ad98",
+    "block": 52403774,
+    "args": [
+      "0x53822d9a334082e88AB70103F58AD65eBEF73801",
+      "2",
+      "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27"
+    ],
+    "version": 3,
+    "quorum": 2,
+    "quorumBps": 5000
+  },
+  "ERC6699RegistryV2": {
+    "address": "0x4062626DB36CE24752ED7a3e8c5FD7fE2ceFaB02"
+  },
+  "PlayerProfile": {
+    "address": "0xCdB1901aA9f4bc5dfd7F62c68B9d06247229B112",
+    "tx": "0xb1dd3e842a73e3b8068bcc5803d2769e19aff6ea50f1d95c53fedd042a7ca554",
+    "block": 52403825,
+    "args": []
+  },
+  "NodeBadge": {
+    "address": "0x036f11E25d2A352f1B2DDc621c64aa22276D5f6e",
+    "tx": "0x32be3630ea137b579225f094f5e03bdd232a33c54d9565d9c5c508307ae5c4f5",
+    "block": 52403893,
+    "args": [
+      "0x53822d9a334082e88AB70103F58AD65eBEF73801"
+    ]
+  },
+  "NodeDirectory": {
+    "address": "0x278e4550F8a45B5D7d630a606d577F9Fb6cBE4c1",
+    "tx": "0x8354c19f221c5fbf92e03dcb39b2008876d53f4ddd887c4a3bd74174fe6e72ea",
+    "block": 52403947,
+    "args": [
+      "0x53822d9a334082e88AB70103F58AD65eBEF73801"
+    ]
+  },
+  "firstNode": {
+    "nodeId": "5b703f1288765c0ca3734ab0625df161121ef45a9eabafaaae539be1add95151",
+    "bonded": "1.0"
+  },
+  "chainId": 4441,
+  "rpc": "https://liteforge.rpc.caldera.xyz/http",
+  "deployedAt": "2026-09-19T08:19:23.550Z",
+  "deployer": "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27",
+  "TitleRegistry": {
+    "address": "0x449655415B9Be10a983f4B37C051F21151F664DB",
+    "tx": "0x6b35789b80df2f4182a4d2b96669017a12597859743301095bd259371af7f3b5",
+    "block": 52944083,
+    "args": [
+      "60"
+    ],
+    "activationDelay": 60
+  },
+  "ReleaseRegistry": {
+    "address": "0xF2dbcdc62a94772D2CfBce8208fF79bBc1997118",
+    "tx": "0x9b7847faa9363cc4c79bbbf3d23ea691f7eff41c9151db85c1756dbb80f50115",
+    "block": 52945404,
+    "args": [
+      "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
+      "60"
+    ],
+    "activationDelay": 60,
+    "admin": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378"
+  },
+  "MatchBook": {
+    "address": "0xAbA3A0e2E8695CAbe5EfeFa35DfCC230486C8876",
+    "tx": "0xb6ba4f2bd64ba4abe1856a2be1ae4b69a81fcff939d073ec104a06ddb6c132a1",
+    "block": 52945416,
+    "args": [
+      "0x53822d9a334082e88AB70103F58AD65eBEF73801",
+      "[object Object]",
+      "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378"
+    ],
+    "settleWindowS": 60,
+    "attestWindowS": 120,
+    "escalationWindowS": 300,
+    "drawDelayBlocks": 2,
+    "hostSlashBps": 1000,
+    "witnessSlashBps": 500,
+    "admin": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378"
+  }
+}

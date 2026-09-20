@@ -1,77 +1,121 @@
 {
   "migratedFrom": {
-    "NodeStake": "0x11C984bE3ee572eb7280334501B57c82001F397F",
-    "EpochAnchor": "0x09fBf6A5026b4E02eE9f78222117F97b19eE507A",
-    "ERC6699Registry": "0x66cef65F9F3774989D5F4AFa1fF6a09541835145",
-    "NodeDirectory": "0xf63AA4590fDCa66fD9FA3005C588E9deb09767b4",
-    "deployedAt": "2026-09-17T00:45:43.682Z"
+    "generation": 3,
+    "NodeStake": "0x53822d9a334082e88AB70103F58AD65eBEF73801",
+    "EpochAnchor": "0x87d9fB5FC60140B3e7A63FC657c1969baAf7d6eD",
+    "ERC6699Registry": "0x4062626DB36CE24752ED7a3e8c5FD7fE2ceFaB02",
+    "NodeDirectory": "0x278e4550F8a45B5D7d630a606d577F9Fb6cBE4c1",
+    "deployedAt": "2026-09-19T08:19:23.550Z"
   },
+  "generation": 3,
   "TestLITVM": {
-    "address": "0x85D309Fe638B639Ae8c9889A5199Fce55B5dBd41",
-    "tx": "0x16f7615690910afb35d54b84da465d29d7b8fd12c952e9b17cd581b63c9bb733",
-    "block": 52403165,
+    "address": "0x263dc221445901a4954e879AaAf18cfc547cc330",
+    "tx": "0x8e53b179a507fb542a761fe058d6d7dd0395f47e19f0af0eecd2892003ce12a0",
+    "block": 52951287,
     "args": []
   },
   "NodeStake": {
-    "address": "0x53822d9a334082e88AB70103F58AD65eBEF73801",
-    "tx": "0xf1b3435f663e87ab3107d29a6f758928e4af3b554152217ca2fd0ad68552aa0e",
-    "block": 52403667,
+    "address": "0x3CFe2D006d946A1E0E5Cf6B3E0958aFc3fF73717",
+    "tx": "0xe84ec82b31377c4fcf7efc34fe459ae1e13b29be2cd4690beb334c38352d4982",
+    "block": 52951311,
     "args": [
-      "0x85D309Fe638B639Ae8c9889A5199Fce55B5dBd41",
+      "0x263dc221445901a4954e879AaAf18cfc547cc330",
       "1000000000000000000",
-      "60",
-      "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27",
-      "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27"
+      "600",
+      "120",
+      "1200",
+      "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
+      "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378"
     ],
     "minStake": "1000000000000000000",
-    "unbondingPeriod": 60,
-    "version": 2
+    "lockTerm": 600,
+    "eligibilityAge": 120,
+    "unbondingPeriod": 1200,
+    "admin": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
+    "version": 3
   },
   "ERC6699Registry": {
-    "address": "0x4062626DB36CE24752ED7a3e8c5FD7fE2ceFaB02",
-    "tx": "0x72a40670defcb1366b32f0f799d5c2de6018c678c02a86cd07cdaf7978d0411f",
-    "block": 52403694,
+    "address": "0x38DF2543e039E775D3f674f7414df43e4eF2f883",
+    "tx": "0xe0a8e93867ffd48061209f638a5871abdfed008eab40f4ac0f447a4f7aa10fe0",
+    "block": 52951327,
     "args": [
-      "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27"
+      "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378"
     ],
     "version": 2
   },
   "EpochAnchor": {
-    "address": "0x87d9fB5FC60140B3e7A63FC657c1969baAf7d6eD",
-    "tx": "0xebf797f793e64b75cd2a3ced1730d02627f3dcab6744d7d2b5bfe1c24773ad98",
-    "block": 52403774,
+    "address": "0x919e9500785ab077d2058490a465F05bD8238a64",
+    "tx": "0x4725852f9cb03882b6ed2c045749092cb68fb0f3563c66b3b3958b82ddc83d38",
+    "block": 52951358,
     "args": [
-      "0x53822d9a334082e88AB70103F58AD65eBEF73801",
-      "2",
-      "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27"
+      "0x3CFe2D006d946A1E0E5Cf6B3E0958aFc3fF73717",
+      "5000",
+      "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378"
     ],
-    "version": 2,
-    "quorum": 2
+    "version": 3,
+    "quorumBps": 5000
   },
   "ERC6699RegistryV2": {
-    "address": "0x4062626DB36CE24752ED7a3e8c5FD7fE2ceFaB02"
+    "address": "0x38DF2543e039E775D3f674f7414df43e4eF2f883"
   },
   "PlayerProfile": {
-    "address": "0xCdB1901aA9f4bc5dfd7F62c68B9d06247229B112",
-    "tx": "0xb1dd3e842a73e3b8068bcc5803d2769e19aff6ea50f1d95c53fedd042a7ca554",
-    "block": 52403825,
+    "address": "0xe2cf46ab11eAfB18c1933409E35ae68CEce88882",
+    "tx": "0x64dac8a0dc4ad848ad0b670a02e9a54b9d2b2fbe29024c914f4ba7960ceef101",
+    "block": 52951368,
     "args": []
   },
   "NodeBadge": {
-    "address": "0x036f11E25d2A352f1B2DDc621c64aa22276D5f6e",
-    "tx": "0x32be3630ea137b579225f094f5e03bdd232a33c54d9565d9c5c508307ae5c4f5",
-    "block": 52403893,
+    "address": "0x6129faE9c919dbDEC778b127DB3b12002D0d9a3a",
+    "tx": "0x4470345157f4118af3a7772634c62771f68e85b28a600fbcb046aa3ef21f29b7",
+    "block": 52951383,
     "args": [
-      "0x53822d9a334082e88AB70103F58AD65eBEF73801"
+      "0x3CFe2D006d946A1E0E5Cf6B3E0958aFc3fF73717"
     ]
   },
   "NodeDirectory": {
-    "address": "0x278e4550F8a45B5D7d630a606d577F9Fb6cBE4c1",
-    "tx": "0x8354c19f221c5fbf92e03dcb39b2008876d53f4ddd887c4a3bd74174fe6e72ea",
-    "block": 52403947,
+    "address": "0xac0C73008028E3eAA05Bc5C72f0C233F94b4E3df",
+    "tx": "0x554b342dd280d346bcf37a7f1272395e35ba73562a92b441c206c1aebc84771d",
+    "block": 52951400,
     "args": [
-      "0x53822d9a334082e88AB70103F58AD65eBEF73801"
+      "0x3CFe2D006d946A1E0E5Cf6B3E0958aFc3fF73717"
     ]
+  },
+  "ReleaseRegistry": {
+    "address": "0x1a647C99625F3D6576657854E4a52507Db759555",
+    "tx": "0x1c172aaea0c8e8f2b5b9866358db8223477c607693b45c03dca31e5c5dd0ad98",
+    "block": 52951427,
+    "args": [
+      "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
+      "60"
+    ],
+    "activationDelay": 60,
+    "admin": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378"
+  },
+  "TitleRegistry": {
+    "address": "0x4A0de8EB216CC4445A767ed25c4f154d0f904489",
+    "tx": "0x445c830ed9a16fc91130bb948dd67bed8f7b1d31a8eaa0c41bd54e8dd7a1a3c8",
+    "block": 52951441,
+    "args": [
+      "60"
+    ],
+    "activationDelay": 60
+  },
+  "MatchBook": {
+    "address": "0x90D642d1f1Cb00EBFeB2268dd13Dee32A2852e5b",
+    "tx": "0xf0b6984ea18459cbfe1cd8ccadd245c38e62f1abc41c6b9d11cca3e6dda64e04",
+    "block": 52951473,
+    "args": [
+      "0x3CFe2D006d946A1E0E5Cf6B3E0958aFc3fF73717",
+      "[object Object]",
+      "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378"
+    ],
+    "settleWindowS": 60,
+    "attestWindowS": 120,
+    "escalationWindowS": 300,
+    "drawDelayBlocks": 2,
+    "hostSlashBps": 1000,
+    "witnessSlashBps": 500,
+    "admin": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378"
   },
   "firstNode": {
     "nodeId": "5b703f1288765c0ca3734ab0625df161121ef45a9eabafaaae539be1add95151",
@@ -79,15 +123,6 @@
   },
   "chainId": 4441,
   "rpc": "https://liteforge.rpc.caldera.xyz/http",
-  "deployedAt": "2026-09-19T08:19:23.550Z",
-  "deployer": "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27",
-  "TitleRegistry": {
-    "address": "0x449655415B9Be10a983f4B37C051F21151F664DB",
-    "tx": "0x6b35789b80df2f4182a4d2b96669017a12597859743301095bd259371af7f3b5",
-    "block": 52944083,
-    "args": [
-      "60"
-    ],
-    "activationDelay": 60
-  }
+  "deployedAt": "2026-09-20T22:34:07.928Z",
+  "deployer": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378"
 }

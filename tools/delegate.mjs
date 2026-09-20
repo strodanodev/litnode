@@ -65,15 +65,18 @@ async function send({ to, data = '0x', value = 0n }) {
   throw new Error(`tx ${hash} not mined in 60 s`);
 }
 
+async function main() {
 try {
   console.log(`operator ${from} · ${fmt(await rpc('eth_getBalance', [from, 'latest']))} zkLTC · NodeStake v3 ${stake}`);
   const before = decodeNode(await rpc('eth_call', [nodeOfCall(stake, nodeId), 'latest']));
-  if (!before.operator) { console.error(`node ${nodeId.slice(0, 12)}… is not bonded on this NodeStake`); process.exit(1); }
-  if (before.operator.toLowerCase() !== from.toLowerCase()) { console.error(`node ${nodeId.slice(0, 12)}… is bonded by ${before.operator}, not by this key`); process.exit(1); }
+  if (!before.operator) { console.error(`node ${nodeId.slice(0, 12)}… is not bonded on this NodeStake`); process.exitCode = 1; return; }
+  if (before.operator.toLowerCase() !== from.toLowerCase()) { console.error(`node ${nodeId.slice(0, 12)}… is bonded by ${before.operator}, not by this key`); process.exitCode = 1; return; }
   if ((before.delegate ?? ZERO).toLowerCase() === delegate.toLowerCase()) console.log(`delegate already ${clear ? 'cleared' : delegate}`);
   else { const h = await send({ to: stake, data: setDelegateCalldata(nodeId, delegate) }); console.log(`${clear ? 'cleared the delegate of' : `delegated ${delegate} for`} node ${nodeId.slice(0, 12)}… (tx ${h})`); }
   if (fund && !clear) { const h = await send({ to: delegate, value: wei(fund) }); console.log(`sent ${fund} zkLTC to ${delegate} (tx ${h})`); }
   const after = decodeNode(await rpc('eth_call', [nodeOfCall(stake, nodeId), 'latest']));
   console.log(`bond: ${fmt(after.amount)} tLITVM · since ${new Date(after.bondedSince * 1000).toISOString()} · active ${after.active} · witness-eligible ${after.eligible} · delegate ${after.delegate ?? 'unset'}`);
   if (after.delegate) console.log(`delegate balance ${fmt(await rpc('eth_getBalance', [after.delegate, 'latest']))} zkLTC`);
-} catch (e) { const m = String(e?.message ?? e); console.error('✗ ' + m + (/revert/i.test(m) ? ' (a revert here usually means OPERATOR_KEY is not the wallet that bonded this node)' : '')); process.exit(1); }
+} catch (e) { const m = String(e?.message ?? e); console.error('✗ ' + m + (/revert/i.test(m) ? ' (a revert here usually means OPERATOR_KEY is not the wallet that bonded this node)' : '')); process.exitCode = 1; }
+}
+await main();

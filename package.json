@@ -36,7 +36,8 @@
     "transfer": "node tools/transfer-operator.mjs",
     "test:contracts": "node --test demo/contracts.test.mjs demo/release-registry.test.mjs demo/title-registry.test.mjs demo/matchbook.test.mjs demo/matchbook-vm.test.mjs demo/matchbook-node.test.mjs demo/deploy.test.mjs",
     "delegate": "node tools/delegate.mjs",
-    "release:registry": "node tools/release-registry.mjs"
+    "release:registry": "node tools/release-registry.mjs",
+    "enroll": "node tools/enroll.mjs"
   },
   "engines": {
     "node": ">=20"

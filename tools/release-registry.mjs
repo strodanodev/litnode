@@ -60,8 +60,9 @@ async function rpc(method, params, tries = 6) {
 }
 const show = (it, st) => console.log(`${it.name}: ${st.registered ? `${st.revoked ? 'REVOKED' : st.active ? 'active' : 'pending'} · ${st.version} · activates ${new Date(st.activatesAt * 1000).toISOString()}` : 'not registered'}`);
 
+async function main() {
 try {
-  if (cmd === 'status') { for (const it of items) show(it, decodeStatus(await rpc('eth_call', [statusOfCall(reg, it.zipHash), 'latest']))); process.exit(0); }
+  if (cmd === 'status') { for (const it of items) show(it, decodeStatus(await rpc('eth_call', [statusOfCall(reg, it.zipHash), 'latest']))); return; }
   const delay = Number(decodeUint(await rpc('eth_call', [activationDelayCall(reg), 'latest'])));
   const activates = opt('--activates') ? Math.floor(Date.parse(opt('--activates')) / 1000) : Math.floor(Date.now() / 1000) + delay + 30; // + a little for mining
   const rawKey = (process.env.ADMIN_KEY ?? process.env.DEPLOYER_KEY ?? '').trim();
@@ -69,7 +70,7 @@ try {
   for (const it of items) {
     const data = cmd === 'register' ? registerCalldata(it.zipHash, it.version, it.protocol, activates) : revokeCalldata(it.zipHash);
     if (calldataOnly) { console.log(`${it.name} -> to ${reg}\n${data}`); continue; }
-    if (!key) { console.error('ADMIN_KEY not set (or pass --calldata to print what the multisig should send)'); process.exit(1); }
+    if (!key) { console.error('ADMIN_KEY not set (or pass --calldata to print what the multisig should send)'); process.exitCode = 1; return; }
     const from = addressOf(key), chainId = BigInt(deployed.chainId);
     const cur = decodeStatus(await rpc('eth_call', [statusOfCall(reg, it.zipHash), 'latest']));
     if (cmd === 'register' && cur.registered) { console.log(`${it.name}: already registered`); show(it, cur); continue; }
@@ -83,4 +84,6 @@ try {
     console.log(`${cmd === 'register' ? 'registered' : 'revoked'} ${it.name} (tx ${hash})`);
     show(it, decodeStatus(await rpc('eth_call', [statusOfCall(reg, it.zipHash), 'latest'])));
   }
-} catch (e) { const m = String(e?.message ?? e); console.error('✗ ' + m + (/revert/i.test(m) ? ' (a revert here usually means the key is not the registry admin, or activatesAt is inside the delay)' : '')); process.exit(1); }
+} catch (e) { const m = String(e?.message ?? e); console.error('✗ ' + m + (/revert/i.test(m) ? ' (a revert here usually means the key is not the registry admin, or activatesAt is inside the delay)' : '')); process.exitCode = 1; }
+}
+await main();

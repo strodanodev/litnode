@@ -41,6 +41,12 @@ history on the contract that enforces it.
 | when | what | block | file |
 |---|---|---|---|
 | 2026-09-21 | v3 contracts written and compile-tested; not deployed | — | `demo/contracts.test.mjs` |
+| 2026-09-22 | first `--fresh` run RESUMED the v2 set (the old resume test was "file carries `migratedFrom`", which the v1→v2 move had left): ReleaseRegistry `0xF2dbcdc6…` and MatchBook `0xAbA3A0e2…` deployed against NodeStake **v2** — abandoned, unusable. Tool fixed: generations are explicit (`generation: 3`), a v2 file is archived. | — | `deployed.testnet.2026-09-19T08-19-23-550Z.json` (the archived v2 set, carrying the two strays) |
+| 2026-09-22 | **generation 3 deployed** from wallet `0x04bE2b954346324Ee54c4B4c0189DF5bb577a378` (admin + treasury of every contract; an EOA — `/health` says `admin: eoa`): TestLITVM `0x263dc221445901a4954e879AaAf18cfc547cc330`, NodeStake v3 `0x3CFe2D006d946A1E0E5Cf6B3E0958aFc3fF73717`, ERC6699Registry `0x38DF2543e039E775D3f674f7414df43e4eF2f883`, EpochAnchor v3 `0x919e9500785ab077d2058490a465F05bD8238a64` (quorum 5000 bps), PlayerProfile `0xe2cf46ab11eAfB18c1933409E35ae68CEce88882`, NodeBadge `0x6129faE9c919dbDEC778b127DB3b12002D0d9a3a`, NodeDirectory `0xac0C73008028E3eAA05Bc5C72f0C233F94b4E3df`, ReleaseRegistry `0x1a647C99625F3D6576657854E4a52507Db759555` (delay 60 s), TitleRegistry `0x4A0de8EB216CC4445A767ed25c4f154d0f904489` (publisher-auth workstream), MatchBook `0x90D642d1f1Cb00EBFeB2268dd13Dee32A2852e5b` (named an adjudicator) | 52951358 ± | `deployed.testnet.json` (current) |
+| 2026-09-22 | desktop node `5b703f12…` bonded 1 tLITVM on NodeStake v3 from `0x04bE…a378` — locked until 2026-09-20T22:44:02Z, witness-eligible from 22:36:02Z. Its v2 bond (from W2 `0x7cE7…D27`) stays on the archived set. | — | — |
+| 2026-09-22 | desktop node `5b703f12…`: delegate `0x7467246301DF4e45c446a98AcB037c85315b560d` set on NodeStake v3 and funded, re-delegated as announcer on NodeDirectory v3, enrolled in the MatchBook pool (1 enrolled). Authority snapshot after: no wallet can slash; every admin = `0x04bE…a378` (EOA) | 52967595 | `audit/authority-52967595.json` |
+| 2026-09-22 | TitleRegistry moved with the set (`0x4496…64DB` on v2 → `0x4A0d…4489` on generation 3). Titles minted on the v2 registry are not carried over: re-mint with the publisher tool. | — | — |
+| 2026-09-22 | cabinet/config.js `CHAIN` → generation 3 (NodeStake, TestLITVM, EpochAnchor, MatchBook, PlayerProfile, NodeBadge, NodeDirectory). Not yet redeployed to Vercel. | — | — |
 
 ---
 

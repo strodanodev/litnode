@@ -35,9 +35,15 @@ test('deploy tool: refuses windows the bond cannot cover; deploys v3 + registry 
   assert.match(r.out, /unbondingPeriod \(10s\) must exceed the MatchBook windows \(900s\)/);
   assert.ok(!existsSync(outPath), 'nothing written');
 
-  // 2. the real parameters deploy the whole set
+  // 2. the real parameters deploy the whole set — starting from a v2 file that carries `migratedFrom` (the v1 → v2
+  //    move left one), which the old resume test mistook for a half-deployed new set on 22 Sep 2026
   writeFileSync(cfgPath, JSON.stringify({ ...base, rpc: http.url }));
+  const v2 = { chainId: 4441, rpc: http.url, deployedAt: '2026-09-19T00:00:00.000Z', migratedFrom: { NodeStake: '0x' + '11'.repeat(20) }, NodeStake: { address: '0x' + '22'.repeat(20), version: 2 }, EpochAnchor: { address: '0x' + '33'.repeat(20), version: 2 }, TestLITVM: { address: '0x' + '44'.repeat(20) } };
+  writeFileSync(outPath, JSON.stringify(v2));
   r = await run(env);
+  assert.doesNotMatch(r.out, /resuming/, 'a v2 file is archived, not resumed');
+  assert.equal(readdirSync(tmp).filter((f) => f.startsWith('deployed.testnet.')).length, 1, 'the v2 file was archived');
+  { const d0 = JSON.parse(readFileSync(outPath, 'utf8')); assert.equal(d0.generation, 3); assert.equal(d0.migratedFrom.generation, 2); assert.notEqual(d0.NodeStake.address.toLowerCase(), v2.NodeStake.address, 'a NEW NodeStake'); assert.notEqual(d0.TestLITVM.address.toLowerCase(), v2.TestLITVM.address, 'a NEW token too: --fresh means the whole set'); }
   assert.equal(r.code, 0, r.out.slice(-3000));
   assert.match(r.out, /WARNING: admin = the deployer wallet/);
   assert.match(r.out, /MatchBook named an adjudicator on NodeStake/);
@@ -55,7 +61,11 @@ test('deploy tool: refuses windows the bond cannot cover; deploys v3 + registry 
   assert.equal(r.code, 0, r.out.slice(-2000));
   const deployedCount = Object.keys(d).filter((k) => d[k]?.address && d[k]?.tx).length; // every contract the tool deploys (TitleRegistry belongs to the publisher-auth work)
   assert.equal((r.out.match(/: already at/g) ?? []).length, deployedCount, `every contract skipped (${deployedCount})`);
-  assert.equal(readdirSync(tmp).filter((f) => f.startsWith('deployed.testnet.')).length, 0, 'nothing archived on a plain re-run');
+  assert.equal(readdirSync(tmp).filter((f) => f.startsWith('deployed.testnet.')).length, 1, 'nothing more archived on a plain re-run');
+  // a plain run against a file of another generation is refused with a pointer to --fresh
+  writeFileSync(join(tmp, 'v2.json'), JSON.stringify(v2));
+  r = await run({ ...env, DEPLOY_OUT: join(tmp, 'v2.json') }, ['--quorum', '5000']);
+  assert.notEqual(r.code, 0); assert.match(r.out, /holds generation 2; this tool deploys generation 3. Run with --fresh/);
 
   // 4. a node boots on the written set and reports the v3 facts on /health
   const node = await createNode({ dataDir: join(tmp, 'node'), rpc: http.url, offline: false, chainFetch: globalThis.fetch, nodeStake: d.NodeStake.address, releaseRegistry: d.ReleaseRegistry.address, matchBook: d.MatchBook.address, matchBookWindows: { attestWindow: d.MatchBook.attestWindowS, escalationWindow: d.MatchBook.escalationWindowS }, chainId: d.chainId, heartbeatMs: 300, operator: 'op', roles: ['mesh', 'host', 'settler'], updates: false, announce: false });

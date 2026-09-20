@@ -82,16 +82,19 @@ export const CHAIN = {
   name: 'litVM LiteForge',
   chainId: 4441,
   rpc: 'https://liteforge.rpc.caldera.xyz/http',
-  NodeStake: '0x53822d9a334082e88AB70103F58AD65eBEF73801',
-  TestLITVM: '0x85D309Fe638B639Ae8c9889A5199Fce55B5dBd41',
-  EpochAnchor: '0x87d9fB5FC60140B3e7A63FC657c1969baAf7d6eD',
+  // Generation 3 (Settlement v1.0), deployed 20 Sep 2026 22:34 UTC — contracts/deployed.testnet.json, contracts/MIGRATION.md
+  NodeStake: '0x3CFe2D006d946A1E0E5Cf6B3E0958aFc3fF73717',
+  TestLITVM: '0x263dc221445901a4954e879AaAf18cfc547cc330',
+  EpochAnchor: '0x919e9500785ab077d2058490a465F05bD8238a64',
+  /** Every ranked match on chain (BUILD-SPEC v0.3 §11): the cabinet can fold the ladder from RPC alone (protocol/matchbook.js). */
+  MatchBook: '0x90D642d1f1Cb00EBFeB2268dd13Dee32A2852e5b',
   /** Set after `npm run deploy:testnet` writes it to contracts/deployed.testnet.json.
    *  null = "Sign in with wallet" stays hidden; keys are players (docs/WALLET-IDENTITY.md). */
-  PlayerProfile: '0xCdB1901aA9f4bc5dfd7F62c68B9d06247229B112',
-  NodeBadge: '0x036f11E25d2A352f1B2DDc621c64aa22276D5f6e',
+  PlayerProfile: '0xe2cf46ab11eAfB18c1933409E35ae68CEce88882',
+  NodeBadge: '0x6129faE9c919dbDEC778b127DB3b12002D0d9a3a',
   /** The seed list on chain. Set after deploy; then a visitor with no node
    *  reads the mesh through the freshest bonded seed (docs: decentralized bootstrap). */
-  NodeDirectory: '0x278e4550F8a45B5D7d630a606d577F9Fb6cBE4c1',
+  NodeDirectory: '0xac0C73008028E3eAA05Bc5C72f0C233F94b4E3df',
   explorer: 'https://liteforge.explorer.caldera.xyz',
   token: 'tLITVM',
 };
