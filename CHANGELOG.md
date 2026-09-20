@@ -6,7 +6,7 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Fixed
-- **The dashboard's  key checks for a release before applying.** It used to
+- **The dashboard's `u` key checks for a release before applying.** It used to
   apply the version from the last hourly check, so pressing it right after a
   release installed the previous one.
 
