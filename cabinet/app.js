@@ -20,6 +20,8 @@ import { paintBackdrop } from './bg.js';
 import { sample, loadHistory, slots, uptimePct, hoursOnline, fmtDuration, ring, strip, heatmap } from './uptime.js';
 import { readStake } from './chain.js';
 import * as wallet from './wallet.js';
+import * as air from './air.js';
+import * as nodeops from './nodeops.js';
 import * as seeds from './seeds.js';
 import { CHAIN } from './config.js';
 
@@ -264,16 +266,49 @@ const styleTag = (s) => `<span class="style" style="--sc:${STYLES[s]?.color ?? '
 const RELEASES = 'https://github.com/strodanodev/litnode/releases/latest';
 const nodeHint = () => (S.online ? '' : !S.checked ? '<div class="empty">Connecting to the node…</div>' : `<div class="empty">No node on this machine. The arcade reads the mesh through your own node — <a class="link" href="${RELEASES}" target="_blank" rel="noopener">get litnode</a> (Windows, nothing to install), run <span class="mono">start-node.cmd</span>, reload. <a class="link" href="#/node">Details ›</a></div>`);
 
+// Universal login (docs/UNIVERSAL-LOGIN.md): AIR signs the player in, the
+// node gives the account a litVM proxy wallet + profile and binds this key.
+const Ai = { busy: '', error: '', me: air.current() };
+function airLine() {
+  if (!air.configured() || !player.kp) return '';
+  if (Ai.busy) return `<div class="sub">${esc(Ai.busy)}</div>`;
+  const s = Ai.me.session;
+  if (Ai.me.loggedIn && s?.address) {
+    const who = Ai.me.email ?? s.name ?? Ai.me.id?.slice(0, 8) ?? 'AIR';
+    return `<div class="sub">AIR <b>${esc(who)}</b> · profile <b>${esc(s.name ?? `#${s.tokenId}`)}</b> · litVM <span class="mono" title="${esc(s.address)}">${s.address.slice(0, 6)}…${s.address.slice(-4)}</span>${s.custody === 'elsewhere' ? ' <span class="dim">(held by another node)</span>' : ''} <button class="link" id="air-out">sign out</button>${Ai.error ? `<div class="dim">${esc(Ai.error)}</div>` : ''}</div>`;
+  }
+  if (Ai.me.loggedIn) return `<div class="sub">AIR <b>${esc(Ai.me.email ?? Ai.me.id?.slice(0, 8) ?? '')}</b> · <button class="btn sm" id="air-link">Get my litVM profile</button> <button class="link" id="air-out">sign out</button>${Ai.error ? `<div class="dim">${esc(Ai.error)}</div>` : ''}</div>`;
+  return `<div class="sub"><button class="btn sm" id="air-btn">Sign in with AIR</button> <span class="dim">Google, email or a wallet · a litVM profile is made for you</span>${Ai.error ? `<div class="dim">${esc(Ai.error)}</div>` : ''}</div>`;
+}
+/** AIR dialog → node session (proxy wallet + profile + this key bound). */
+async function signInWithAir() {
+  Ai.error = '';
+  try {
+    Ai.busy = 'opening AIR…'; render();
+    if (!Ai.me.loggedIn) await air.login();
+    Ai.me = air.current();
+    if (!S.online) throw new Error('no node to ask — the profile is minted by your node (or the seed)');
+    Ai.busy = 'your node is setting up your litVM profile (first time: three transactions)…'; render();
+    Ai.me.session = await air.nodeSession(nodeUrl(), { playerKey: player.id, name: player.name.replace(/[^A-Za-z0-9 _.-]/g, '').slice(0, 32) || null });
+    if (Ai.me.session.name && !load('cabinet.name')) { player.name = Ai.me.session.name; renderChrome(); }
+    await refreshBinding();
+  } catch (e) { Ai.error = e?.message ?? String(e); }
+  Ai.busy = ''; render();
+}
+async function signOutAir() { Ai.busy = 'signing out…'; render(); await air.logout(); Ai.me = air.current(); Ai.busy = ''; render(); }
+
 /** The wallet row under the key: bound → who owns it; unbound → sign in. */
 function walletLine() {
-  if (!wallet.configured()) return '';
+  if (!wallet.configured()) return airLine();
   if (!player.kp) return '<div class="sub dim">No key on this page (insecure context), so nothing to bind.</div>';
   const b = Wl.binding;
   if (Wl.busy) return `<div class="sub">${esc(Wl.busy)}</div>`;
-  if (b?.active) return `<div class="sub">profile <b>${esc(Wl.profile?.name ?? `#${b.tokenId}`)}</b> · wallet <span class="mono" title="${esc(b.owner)}">${b.owner.slice(0, 6)}…${b.owner.slice(-4)}</span></div>`;
+  if (b?.active && !(Ai.me.session?.address && b.owner === Ai.me.session.address)) return airLine() + `<div class="sub">profile <b>${esc(Wl.profile?.name ?? `#${b.tokenId}`)}</b> · wallet <span class="mono" title="${esc(b.owner)}">${b.owner.slice(0, 6)}…${b.owner.slice(-4)}</span></div>`;
+  if (b?.active) return airLine();
   if (b && !b.active) return '<div class="sub" style="color:var(--bad,#ff7b8a)">this key was revoked by its profile owner — nodes refuse it</div>';
-  if (!wallet.hasWallet()) return '<div class="sub dim">Install a wallet (MetaMask) to bind this key to a litVM Games profile.</div>';
-  return `<div class="sub"><button class="btn sm" id="wallet-btn">Sign in with wallet</button> <span class="dim">one transaction: a soulbound profile owns this key</span>${Wl.error ? `<div class="dim">${esc(Wl.error)}</div>` : ''}</div>`;
+  const own = !wallet.hasWallet() ? '<div class="sub dim">…or install a wallet (MetaMask) to bind this key yourself.</div>'
+    : `<div class="sub"><button class="btn sm" id="wallet-btn">Bind with my own wallet</button> <span class="dim">one transaction: a soulbound profile owns this key</span>${Wl.error ? `<div class="dim">${esc(Wl.error)}</div>` : ''}</div>`;
+  return airLine() + own;
 }
 /** Connect, then register (no profile yet) or bindKey (profile exists, new device). */
 async function signInWithWallet() {
@@ -580,6 +615,47 @@ async function updateNode() {
     alert('the node did not come back in 2 minutes — check its window or litnode.log');
   } catch (e) { alert(`update: ${e.message}`); render(); }
 }
+// ---- operator actions (cabinet/nodeops.js): the operator's wallet signs bond / delegate / transfer.
+const Op = { account: null, info: null, busy: '', error: '', lastTx: null };
+const tok = (wei) => fmtTok(Number(wei / 10n ** 14n) / 10_000);
+function operatorPanel(h) {
+  if (!nodeops.available()) return '<div class="sub dim">Install a wallet (MetaMask) on litVM to bond this node, delegate its announcer or transfer it — or use the CLI: <span class="mono">npm run bond -- &lt;nodeId&gt;</span>.</div>';
+  if (Op.busy) return `<div class="sub">${esc(Op.busy)}</div>`;
+  const err = Op.error ? `<div class="sub" style="color:var(--bad,#ff7b8a)">${esc(Op.error)}</div>` : '';
+  const tx = Op.lastTx ? `<div class="sub dim">last tx <span class="mono">${esc(Op.lastTx.slice(0, 14))}…</span>${CHAIN.explorer ? ` · <a class="link" target="_blank" rel="noopener" href="${esc(CHAIN.explorer)}/tx/${esc(Op.lastTx)}">explorer</a>` : ''}</div>` : '';
+  if (!Op.account) return `<div class="sub"><button class="btn sm" id="op-connect">Connect operator wallet</button> <span class="dim">the wallet that bonds this node; nothing is sent until you confirm</span></div>${err}`;
+  const i = Op.info; const me = Op.account;
+  const mine = !!i?.bonded && i.operator === me;
+  const ann = h.directory?.announcer?.address?.toLowerCase() ?? null;
+  const rows = [
+    `<dt>wallet</dt><dd class="mono">${esc(me)}${i?.balance != null ? ` · ${tok(i.balance)} tLITVM` : ''}</dd>`,
+    `<dt>bond</dt><dd>${i ? (i.bonded ? `${tok(i.amount)} tLITVM by <span class="mono">${esc(i.operator.slice(0, 10))}…</span>${mine ? ' (you)' : ''}` : `none · minimum ${tok(i.minStake)} tLITVM`) : 'reading…'}</dd>`,
+    ann ? `<dt>announcer</dt><dd class="mono">${esc(ann.slice(0, 10))}… ${i?.announcer === ann ? '<span class="dim">delegated</span>' : '<span class="dim">not delegated</span>'}</dd>` : '',
+  ].join('');
+  const acts = [
+    i && !i.bonded ? '<button class="btn sm primary" id="op-bond">Bond this node</button>' : '',
+    i && !i.bonded && CHAIN.TestLITVM && i.balance != null && i.balance < i.minStake ? '<button class="btn sm" id="op-faucet">Faucet tLITVM</button>' : '',
+    mine && ann && i.announcer !== ann ? '<button class="btn sm" id="op-delegate">Delegate + fund announcer</button>' : '',
+    mine ? '<button class="btn sm" id="op-transfer">Transfer operator…</button>' : '',
+  ].filter(Boolean).join(' ');
+  return `<dl class="kv">${rows}</dl><div class="sub">${acts || '<span class="dim">nothing to do from this wallet</span>'}</div>${tx}${err}`;
+}
+async function opRun(what) {
+  const h = S.health; if (!h) return;
+  Op.error = '';
+  try {
+    if (what === 'connect' || !Op.account) { Op.busy = 'connecting wallet…'; render(); Op.account = await nodeops.connectOperator(); }
+    const step = (m) => { Op.busy = m; render(); };
+    if (what === 'faucet') { step('faucet — confirm in your wallet'); Op.lastTx = await nodeops.faucet(Op.account); }
+    if (what === 'bond') { step('bonding…'); Op.lastTx = await nodeops.bond(Op.account, h.nodeId, { onStep: step }); }
+    if (what === 'delegate') { step('delegating…'); Op.lastTx = await nodeops.delegateAnnouncer(Op.account, h.nodeId, h.directory.announcer.address, { onStep: step }); }
+    if (what === 'transfer') { const to = prompt('Transfer this node to which operator address? (0x…, 40 hex)'); if (!to) { Op.busy = ''; render(); return; } step('transfer — confirm in your wallet'); Op.lastTx = await nodeops.transferOperator(Op.account, h.nodeId, to.trim()); }
+    step('reading the chain…');
+    Op.info = await nodeops.inspect(h.nodeId, Op.account);
+    if (what !== 'connect') readStake(h.nodeId).then((st) => { S.stake = st; render(); });
+  } catch (e) { Op.error = e?.message ?? String(e); }
+  Op.busy = ''; render();
+}
 function renderNode() {
   const h = S.health;
   const status = h ? `<dl class="kv">
@@ -603,6 +679,7 @@ function renderNode() {
           <tr><td>Hours observed up</td><td class="num">${fmtTok(hoursOnline(S.uptime, 7 * 24 * 6))} h</td><td class="dim">this dashboard, while open — not a mesh figure</td></tr>
         </tbody></table><div class="source">There is no rewards contract on litVM; nothing accrues. Bond and wallet figures are read live from ${esc(CHAIN.name)} (chain ${CHAIN.chainId}); NodeStake ${CHAIN.NodeStake.slice(0, 10)}…</div>`, '', 's6')}
       ${panel('This node', status, h?.update?.available ? (isLoopbackNode() ? '<button class="btn sm primary" id="update-btn">Update node</button>' : '<span class="dim">update from the node\'s own machine</span>') : '', 's6')}
+      ${h ? panel('Operator', operatorPanel(h), '', 's6') : ''}
       ${panel('Run a node', `<p>The arcade is a peer network: this page talks to the mesh through a node on <b>your</b> machine, the way a torrent client is the peer. Every node verifies and witnesses matches for everyone.</p><ol class="steps">
           <li><a class="link" href="${RELEASES}" target="_blank" rel="noopener">Download the latest release</a> — the <span class="mono">-win-x64</span> zip carries its own runtime; nothing to install. Releases are signed; the node checks the signature on every update.</li>
           <li>Unzip anywhere. Double-click <span class="mono">start-node.cmd</span>. Give it a name and the seed URL of a node that is already running.</li>
@@ -614,6 +691,7 @@ function renderNode() {
     </div>`;
   $('node-edit2')?.addEventListener('click', editNode);
   $('update-btn')?.addEventListener('click', updateNode);
+  for (const w of ['connect', 'faucet', 'bond', 'delegate', 'transfer']) $(`op-${w}`)?.addEventListener('click', () => opRun(w));
   $('seeds-refresh')?.addEventListener('click', () => { S.seedsAt = 0; findSeed().then(render); });
 }
 
@@ -649,7 +727,7 @@ window.addEventListener('hashchange', navigate);
 
 // One delegated click handler for everything rendered from templates.
 document.addEventListener('click', (e) => {
-  const t = e.target.closest('[data-play],[data-queue],[data-mm-stop],[data-mm-reset],[data-mm-launch],[data-lb],[data-style],#name-btn,#avatar-btn,#wallet-btn');
+  const t = e.target.closest('[data-play],[data-queue],[data-mm-stop],[data-mm-reset],[data-mm-launch],[data-lb],[data-style],#name-btn,#avatar-btn,#wallet-btn,#air-btn,#air-link,#air-out');
   if (!t) return;
   if (t.id === 'wallet-btn') { signInWithWallet(); return; }
   if (t.dataset.play) { e.preventDefault(); const g = GAMES.find((x) => x.id === t.dataset.play); if (g) play(g); }
@@ -662,6 +740,8 @@ document.addEventListener('click', (e) => {
   else if (t.dataset.lb) { lbTab = t.dataset.lb; render(); }
   else if (t.dataset.style) { styleFilter = t.dataset.style; render(); }
   else if (t.id === 'name-btn') setName();
+  else if (t.id === 'air-btn' || t.id === 'air-link') signInWithAir();
+  else if (t.id === 'air-out') signOutAir();
   else if (t.id === 'avatar-btn') $('avatar-file').click();
 });
 
@@ -737,6 +817,7 @@ refreshBinding().then(render);
 // proven seed at once. (Stamping seedsAt here used to make findSeed() wait
 // a full minute: a visitor with no node saw NODE OFFLINE for 60 s.)
 if (seeds.configured()) findSeed().then(render);
+if (air.configured() && air.remembered()) air.rehydrate().then(() => { Ai.me = air.current(); render(); }).catch(() => {});
 setInterval(() => refreshBinding().then(render), 60_000);
 pollNode();
 setInterval(pollNode, 5000);

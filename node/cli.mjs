@@ -78,6 +78,9 @@ const node = await createNode({
   courts: Object.fromEntries((env.COURTS ?? '').split(';').map((x) => x.trim()).filter(Boolean).map((x) => { const [rid, keys] = x.split(':'); return [rid, list(keys)]; })),
   // RELAY_KEYS=<pubkey>,… — relays whose signed submissions this host settles as 'relay' provenance (tools/af-watch.mjs prints its key).
   relayKeys: list(env.RELAY_KEYS),
+  // Universal login (docs/UNIVERSAL-LOGIN.md): on whenever PlayerProfile is set; AIR=0 turns it off.
+  // AIR_PARTNER_ID pins tokens to one partner app (recommended); AIR_JWKS_URL overrides the key set.
+  air: env.AIR === '0' ? null : { partnerId: env.AIR_PARTNER_ID ?? null, jwksUrl: env.AIR_JWKS_URL || undefined },
   log: tui ? tui.log : (m) => console.log(`${stamp()} ${m}`),
   onEvent: tui ? tui.event : plainEvent,
 });

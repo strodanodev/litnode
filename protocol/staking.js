@@ -24,6 +24,24 @@ export const standingCall = (contract, nodeIdHex) => ({
   data: selector(STANDING_OF) + nodeKeyBytes32(nodeIdHex).slice(2),
 });
 
+// ------------------------------------------------------------ writes (the cabinet builds these; the operator's wallet signs)
+export const STAKE = 'stake(bytes32,uint256)';
+export const TRANSFER_OPERATOR = 'transferOperator(bytes32,address)';
+export const UNSTAKE = 'unstake(bytes32)';
+export const WITHDRAW = 'withdraw(bytes32)';
+export const MIN_STAKE = 'minStake()';
+const uintWord = (n) => BigInt(n).toString(16).padStart(64, '0');
+const addrWord = (a) => { const h = String(a).replace(/^0x/, '').toLowerCase(); if (!/^[0-9a-f]{40}$/.test(h)) throw new Error('bad address'); return h.padStart(64, '0'); };
+export const minStakeCall = (contract) => ({ to: contract, data: selector(MIN_STAKE) });
+export const stakeCalldata = (nodeIdHex, amountWei) => selector(STAKE) + nodeKeyBytes32(nodeIdHex).slice(2) + uintWord(amountWei);
+export const transferOperatorCalldata = (nodeIdHex, to) => selector(TRANSFER_OPERATOR) + nodeKeyBytes32(nodeIdHex).slice(2) + addrWord(to);
+export const unstakeCalldata = (nodeIdHex) => selector(UNSTAKE) + nodeKeyBytes32(nodeIdHex).slice(2);
+export const withdrawCalldata = (nodeIdHex) => selector(WITHDRAW) + nodeKeyBytes32(nodeIdHex).slice(2);
+/** The stake token (TestLITVM on testnet): approve the stake contract, and the open faucet. */
+export const approveCalldata = (spender, amountWei) => selector('approve(address,uint256)') + addrWord(spender) + uintWord(amountWei);
+export const faucetCalldata = () => selector('faucet()');
+export const balanceOfCall = (token, address) => ({ to: token, data: selector('balanceOf(address)') + addrWord(address) });
+
 /** Decode (address operator, uint256 amount, bool active). */
 export function decodeStanding(hex) {
   const d = hex.replace(/^0x/, '');

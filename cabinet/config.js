@@ -6,6 +6,13 @@
  *  public seed; locally it is the node next to this folder. */
 export const NODE_URL = 'http://127.0.0.1:7801';
 
+/** Universal login (docs/UNIVERSAL-LOGIN.md). The partner id is a public
+ *  client identifier (the AIR dashboard pins it to allowed domains:
+ *  arcade.litvm.games, litvm.games). buildEnv 'sandbox' | 'production' must
+ *  match the environment that partner was created in. Unset partnerId hides
+ *  the button. ?airenv= overrides buildEnv for a test. */
+export const AIR = { partnerId: '62e01755-138f-4e58-9cdc-fab71e037afd', buildEnv: new URLSearchParams(location.search).get('airenv') || 'sandbox' };
+
 /** The first three titles. Each opens in the cabinet's iframe on PLAY (all
  *  three allow framing). `cover` is a capture of the game's own title screen
  *  (covers/, 960×540); `logo` is an optional overlay for covers whose logo is

@@ -5,7 +5,35 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-### Changed
+## [0.10.0] — 2026-09-21 — universal login
+
+Protocol 3, unchanged. Node + cabinet.
+
+### Added
+- **Sign in with AIR (universal login) — docs/UNIVERSAL-LOGIN.md.** The
+  cabinet loads AIR Kit (vendored `cabinet/vendor/airkit.esm.js`, Apache-2.0)
+  and posts the session token to its node. The node verifies it against AIR's
+  JWKS (`node/air.js`, ported from Agent Fighter's relay), keeps a **litVM
+  proxy wallet** for the AIR account (`node/proxy.js`, `<dataDir>/proxies/`),
+  sponsors it from the announcer key, mints the account's PlayerProfile with
+  the AIR user id bound as `airKey(sub)` (`protocol/air.js`), and binds the
+  browser's player key to it. Any node resolves an AIR id to its wallet with
+  one `ownerOfKey`; only the node holding the key signs for it (`custody`).
+  Endpoints `GET /air`, `POST /air/session`, `POST /air/revoke`,
+  `GET /air/resolve`. node.env: `AIR_PARTNER_ID` (pin tokens to our partner
+  app), `AIR_JWKS_URL`, `AIR=0`. `demo/air.test.mjs` covers the verifier and
+  the whole first-sign-in flow against a mocked chain.
+- **Operator actions on the Nodes page** (`cabinet/nodeops.js`): connect the
+  operator's wallet and bond this node (approve + stake at the contract
+  minimum), take testnet tLITVM from the faucet, delegate and fund the
+  announcer, transfer the node to another operator. Calldata from
+  `protocol/staking.js` (new `stakeCalldata`, `transferOperatorCalldata`,
+  `unstakeCalldata`, `withdrawCalldata`, `approveCalldata`, `faucetCalldata`,
+  `minStakeCall`, `balanceOfCall`) and `protocol/directory.js`; the wallet signs.
+
+### Fixed
+- **A BigInt anywhere in a JSON reply killed the response after its headers
+  went out** (the client saw "other side closed"). Replies stringify BigInts.
 - **The cabinet re-reads NodeDirectory every 15 s while its node is
   unreachable** (once a minute while one answers). A seed behind a quick
   tunnel announces its new hostname within seconds of a restart; visitors

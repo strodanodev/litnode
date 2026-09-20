@@ -22,6 +22,9 @@ import { createUpdater, RESTART_EXIT } from './update.js';
 import { createTunnel } from './tunnel.js';
 import { keepMapped } from './upnp.js';
 import { createAnnouncer } from './announce.js';
+import { createAirVerifier } from './air.js';
+import { createProxyWallets } from './proxy.js';
+import { randomPrivateKey, addressOf } from '../protocol/evm.js';
 import { liveSeeds } from '../protocol/directory.js';
 // The SDK ships in the release zip. An install that an OLDER updater brought
 // to this build may lack it (0.6.x copy lists predate sdk/): a static import
@@ -53,7 +56,8 @@ const json = (res, status, body) => {
   if (res.headersSent || res.writableEnded || res.destroyed) return;
   try {
     res.writeHead(status, { 'content-type': 'application/json', ...CORS });
-    res.end(JSON.stringify(body));
+    // A BigInt anywhere in a body would throw here, AFTER the headers went out — the reply then dies mid-air. Stringify it.
+    res.end(JSON.stringify(body, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)));
   } catch { try { res.destroy(); } catch { /* gone */ } }
 };
 const readBody = (req) => new Promise((resolve, reject) => {
@@ -98,6 +102,10 @@ export async function createNode({
   courts = {},
   // Relay keys whose signed submissions this host accepts as 'relay' provenance.
   relayKeys = [],
+  // Universal login (docs/UNIVERSAL-LOGIN.md): verify AIR Kit session tokens
+  // and keep litVM proxy wallets for AIR accounts. Needs playerProfile and a
+  // chain. { partnerId, jwksUrl } — partnerId pins tokens to one partner app.
+  air = null,
   heartbeatMs = EPOCH_MS / 2, log = () => {}, onEvent = () => {},
 }) {
   // Every observable thing the node does goes through emit(): the TUI draws
@@ -266,6 +274,7 @@ export async function createNode({
   let chainSeeds = [];          // liveSeeds() from NodeDirectory, refreshed every 10 min, or at once when lonely
   let lastDirectoryRead = 0;
   let announcer = null;
+  let airVerifier = null, proxies = null; // universal login (set below when configured)
   const readDirectory = async () => {
     if (!nodeDirectory || offline) return;
     lastDirectoryRead = Date.now();
@@ -709,6 +718,26 @@ export async function createNode({
       }
       // The bootstrap list as this node last read it from NodeDirectory.
       if (req.method === 'GET' && url.pathname === '/seeds') return json(res, 200, { source: nodeDirectory ? (chainSeeds.length ? 'chain' : 'chain-empty') : 'unset', seeds: chainSeeds });
+      // ---- universal login (docs/UNIVERSAL-LOGIN.md): an AIR session token
+      // becomes a litVM proxy wallet + PlayerProfile with the AIR id bound.
+      if (url.pathname === '/air') return json(res, 200, { enabled: !!proxies, ...(airVerifier ? airVerifier.status() : {}), ...(proxies ? proxies.status() : {}) });
+      if (req.method === 'GET' && url.pathname === '/air/resolve') {
+        const sub = url.searchParams.get('sub');
+        if (!sub) return json(res, 400, { error: 'sub= required' });
+        if (!proxies) return json(res, 200, { sub, enabled: false, profile: null });
+        try { return json(res, 200, { sub, enabled: true, profile: await proxies.resolve(sub) }); } catch (e) { return json(res, 502, { error: e.message }); }
+      }
+      if (req.method === 'POST' && (url.pathname === '/air/session' || url.pathname === '/air/revoke')) {
+        if (!proxies) return json(res, 404, { error: 'universal login is not enabled on this node (AIR_PARTNER_ID / PlayerProfile)' });
+        let body; try { body = await readBody(req); } catch (e) { return json(res, 400, { error: e.message }); }
+        let who; try { who = await airVerifier.verify(body.token); } catch (e) { return json(res, 401, { error: `air token: ${e.message}` }); }
+        const playerKey = typeof body.playerKey === 'string' && /^[0-9a-f]{64}$/i.test(body.playerKey) ? body.playerKey.toLowerCase() : null;
+        try {
+          if (url.pathname === '/air/revoke') { if (!playerKey) return json(res, 400, { error: 'playerKey required' }); return json(res, 200, await proxies.revoke({ sub: who.sub, playerKey })); }
+          const r = await proxies.session({ sub: who.sub, email: who.email, playerKey, name: typeof body.name === 'string' ? body.name : null });
+          return json(res, 200, { ...r, email: who.email, airAddress: who.address });
+        } catch (e) { log(`air: ${url.pathname} for ${who.sub.slice(0, 8)}…: ${e.message}`); return json(res, 502, { error: e.message }); }
+      }
       if (req.method === 'GET' && url.pathname === '/profile') {
         const pid = url.searchParams.get('player');
         if (!pid) return json(res, 400, { error: 'player= required' });
@@ -776,6 +805,16 @@ export async function createNode({
     tunnels.node?.stop();
     await new Promise((r) => server.close(r));
     throw e;
+  }
+  if (air && playerProfile && !offline) {
+    // The sponsor is the announcer key (<dataDir>/announcer.json): one key the
+    // operator already funds. Created here when there is no directory to announce to.
+    const sponsorPath = join(dataDir, 'announcer.json');
+    if (!existsSync(sponsorPath)) writeFileSync(sponsorPath, JSON.stringify({ privateKey: randomPrivateKey() }, null, 2) + '\n');
+    const sponsorKey = JSON.parse(readFileSync(sponsorPath, 'utf8'));
+    airVerifier = createAirVerifier({ jwksUrl: air.jwksUrl, partnerId: air.partnerId ?? null, fetchImpl: chainFetch });
+    proxies = createProxyWallets({ dataDir, chainId: chainId ?? 4441, rpc: chain.rpc, playerProfile, sponsor: { privateKey: sponsorKey.privateKey, address: addressOf(sponsorKey.privateKey) }, log, emit });
+    log(`air: universal login on · partner ${air.partnerId ?? 'any'} · sponsor ${addressOf(sponsorKey.privateKey)}`);
   }
   if (nodeDirectory && !offline) {
     announcer = createAnnouncer({ dataDir, nodeId, contract: nodeDirectory, chainId: chainId ?? 4441, rpc: chain.rpc, log, emit });
