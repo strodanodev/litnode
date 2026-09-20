@@ -3,6 +3,23 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.8.1] — 2026-09-20 — ship the live contract set
+
+Protocol **2** (unchanged). Canary.
+
+### Fixed
+- **The release carries the v2 contract addresses.** 0.8.0 was cut on 17 Sep,
+  two days before the v2 set was deployed (19 Sep), so its zips ship the
+  retired v1 addresses in `contracts/deployed.testnet.json` — and an update
+  replaces `contracts/` as code. A node updated to 0.8.0 would have read the
+  old NodeStake and announced on the old NodeDirectory. 0.8.1 is the same
+  code with the live addresses (`contracts/MIGRATION.md`). Nodes on 0.8.0
+  should update before bonding or announcing anything.
+
+### Docs
+- README, SPEC, remediation and HOST-YOUR-TITLE record the live v2 set and
+  what is still pending on it (laptop bonds, minter/progressor, ).
+
 ## [0.8.0] — 2026-09-17 — the build-audit remediation
 
 Protocol version **2**. Nodes on 0.7.x and earlier are heard, listed as
