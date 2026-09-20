@@ -5,6 +5,12 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+- **The cabinet re-reads NodeDirectory every 15 s while its node is
+  unreachable** (once a minute while one answers). A seed behind a quick
+  tunnel announces its new hostname within seconds of a restart; visitors
+  used to wait up to a minute on NODE OFFLINE.
+
 ## [0.9.1] — 2026-09-20 — phantom placements
 
 Protocol 3, unchanged. A node fix; update every node.

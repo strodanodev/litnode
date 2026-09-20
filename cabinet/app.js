@@ -85,9 +85,11 @@ $('avatar-file').addEventListener('change', async (e) => {
 
 // ═══════════════════════════════════════════════ node state ══
 const S = { online: false, checked: false, health: null, boards: {}, stats: {}, deltas: {}, peers: [], snapshot: null, uptime: {}, stake: null, seeds: [], seedsAt: 0, viaSeed: null };
-/** No local node → read NodeDirectory and try the seeds. Runs at most once a minute. */
+/** No local node → read NodeDirectory and try the seeds. Runs at most once a
+ *  minute while a node answers; every 15 s while none does (a seed behind a
+ *  quick tunnel re-announces a new hostname within seconds of a restart). */
 async function findSeed() {
-  if (S.online || localStorage.getItem('cabinet.nodeUrl') || servedByNode() || !seeds.configured() || Date.now() - S.seedsAt < 60_000) return;
+  if (S.online || localStorage.getItem('cabinet.nodeUrl') || servedByNode() || !seeds.configured() || Date.now() - S.seedsAt < (S.checked && !S.online ? 15_000 : 60_000)) return;
   S.seedsAt = Date.now();
   S.seeds = await seeds.chainSeeds();
   const s = await seeds.reachableSeed(S.seeds);
@@ -486,7 +488,7 @@ function renderMatchmaking(g) {
         <div><dt>witness</dt><dd class="mono">${c.witness ? short(c.witness, 16) : 'none (single operator)'}</dd></div>
         <div><dt>verdict</dt><dd>${c.ok ? `<span class="res w">ACCEPT</span> — the host is the one the rule produces${m.disputes?.length ? ` (${m.disputes.length} node(s) disputed)` : ''}` : `<span class="res l">REFUSE</span> — ${esc(c.reason)}`}</dd></div>
       </dl>
-      <div class="hero-actions">${c.ok ? (MM.host?.wsAddr ? '<button class="btn primary" data-mm-launch>Launch on this host</button>' : `<span class="dim">host ${short(m.host ?? '', 12)} advertises no relay (wsAddr) — placed, not playable from here</span>`) : '<span class="dim">not launching against a host the rule did not produce</span>'}<button class="btn" data-mm-reset>Clear</button></div>
+      <div class="hero-actions">${c.ok ? (MM.host ? `<button class="btn primary" data-mm-launch>Launch on this host</button>${MM.host.wsAddr ? '' : `<span class="dim">host ${short(m.host ?? '', 12)} advertises no relay (wsAddr): the title brings its own transport</span>`}` : `<span class="dim">host ${short(m.host ?? '', 12)} is not in the snapshot — placed, not launchable from here</span>`) : '<span class="dim">not launching against a host the rule did not produce</span>'}<button class="btn" data-mm-reset>Clear</button></div>
       <div class="source">paired after ${(MM.waitedMs / 1000).toFixed(1)} s · snapshot root ${short(m.snapshotRoot ?? '', 12)}${c.sameSnapshot === false ? ' · eligible set moved since the draw' : ''}</div>`;
   el.innerHTML = panel('Find match', body, '', 'mm');
 }
@@ -653,7 +655,10 @@ document.addEventListener('click', (e) => {
   if (t.dataset.play) { e.preventDefault(); const g = GAMES.find((x) => x.id === t.dataset.play); if (g) play(g); }
   else if (t.dataset.queue) { e.preventDefault(); const g = GAMES.find((x) => x.id === t.dataset.queue); if (g) findMatch(g); }
   else if ('mmStop' in t.dataset || 'mmReset' in t.dataset) stopMatchmaking();
-  else if ('mmLaunch' in t.dataset) { if (MM.game && MM.check?.ok) play(MM.game, { matchId: MM.match.matchId, host: MM.match.host, witness: MM.check.witness, wsAddr: MM.host?.wsAddr ?? null, beacon: MM.match.beacon, participants: MM.match.participants }); }
+  // Everything a title needs to run and settle the placed match (sdk/client.js):
+  // the host's address to POST /ledger to, the build to sign for, the mode the
+  // node will require, the participant order the log is recorded in.
+  else if ('mmLaunch' in t.dataset) { if (MM.game && MM.check?.ok) play(MM.game, { matchId: MM.match.matchId, host: MM.match.host, hostAddr: MM.host?.addr ?? null, witness: MM.check.witness, wsAddr: MM.host?.wsAddr ?? null, beacon: MM.match.beacon, beaconSource: MM.match.beaconSource ?? null, participants: MM.match.participants, mode: MM.match.mode ?? null, buildHash: MM.match.buildHash ?? null, rulesetId: MM.match.rulesetId ?? MM.game.rulesetId ?? null }); }
   else if (t.dataset.lb) { lbTab = t.dataset.lb; render(); }
   else if (t.dataset.style) { styleFilter = t.dataset.style; render(); }
   else if (t.id === 'name-btn') setName();
@@ -662,7 +667,7 @@ document.addEventListener('click', (e) => {
 
 // ═══════════════════════════════════════════════ play ══
 // Shell → game: { type:'cabinet:init', version:1, player:{id,guest,name}, node:{url,online}, game:{id,title},
-//                 match?:{matchId, host, witness, wsAddr, beacon, participants} }   ← present when launched from a verified placement
+//                 match?:{matchId, host, hostAddr, witness, wsAddr, beacon, beaconSource, participants, mode, buildHash, rulesetId} }   ← present when launched from a verified placement
 // Game → shell: { type:'cabinet:hello' } (ask for init) · { type:'cabinet:exit' }
 let current = null, currentMatch = null;
 const frame = $('game');
@@ -696,11 +701,12 @@ function play(g, match = null) {
   $('play-title').textContent = g.title;
   $('play-status').textContent = match ? `${g.badge} · match ${short(match.matchId, 10)} · host ${short(match.host, 10)}` : g.badge;
   const u = new URL(g.url);
-  if (match?.wsAddr && g.id === 'agent-fighter') {
-    // Agent Fighter: relay override, friendly-room rendezvous keyed on the
-    // mesh match (both placed players derive the same code), and the key
-    // this match was placed under — the relay pins it into the ledger.
-    u.searchParams.set('ws', match.wsAddr);
+  if (match) {
+    // Every placed title gets the same launch (sdk/client.js parseLaunch):
+    // the relay to join when the host fronts one, a friendly-room code keyed
+    // on the mesh match (both placed players derive the same code), and the
+    // key this match was placed under — a relay pins it into the ledger.
+    if (match.wsAddr) u.searchParams.set('ws', match.wsAddr);
     u.searchParams.set('room', roomCodeFor(match.matchId));
     if (player.kp) u.searchParams.set('player', player.id);
     // What the title needs to ask this shell for a ledger signature at match
