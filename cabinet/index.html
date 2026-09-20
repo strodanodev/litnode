@@ -59,5 +59,15 @@
   <input type="file" id="avatar-file" accept="image/*" hidden />
 
   <script type="module" src="./app.js"></script>
+  <dialog id="ask" class="ask">
+    <form method="dialog" id="ask-form">
+      <div class="ask-h"><span class="ask-title" id="ask-title">—</span></div>
+      <label class="ask-label" id="ask-label" for="ask-input">—</label>
+      <input id="ask-input" class="ask-input" autocomplete="off" spellcheck="false" />
+      <div class="ask-hint dim" id="ask-hint"></div>
+      <div class="ask-row"><button type="button" class="btn" id="ask-cancel">Cancel</button><button type="submit" class="btn primary" id="ask-ok">OK</button></div>
+    </form>
+  </dialog>
+  <div id="working" class="working" hidden><span class="spin"></span><span id="working-text"></span></div>
 </body>
 </html>

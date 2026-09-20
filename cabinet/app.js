@@ -78,7 +78,34 @@ async function loadPlayer() {
   catch { id = load('cabinet.guest') || 'guest' + Array.from(crypto.getRandomValues(new Uint8Array(28)), (b) => b.toString(16).padStart(2, '0')).join(''); store('cabinet.guest', id); guest = true; }
   return { id, kp, guest, name: load('cabinet.name') || `PLAYER_${id.slice(0, 6).toUpperCase()}`, avatar: load('cabinet.avatar') || identicon(id, 160) };
 }
-const setName = () => { const v = prompt('Display name', player.name); if (v && v.trim()) { player.name = v.trim().slice(0, 24); store('cabinet.name', player.name); renderChrome(); render(); } };
+/** In-page prompt. window.prompt() is ugly, blocked in PWA windows on some
+ *  platforms and unstyled everywhere; this is the same contract — a string
+ *  or null — with the cabinet's own chrome, validation and Esc/Enter. */
+function ask({ title = 'cabinet', label, value = '', placeholder = '', pattern = null, maxlength = null, hint = '', ok = 'OK' }) {
+  return new Promise((resolve) => {
+    const d = $('ask'), inp = $('ask-input');
+    $('ask-title').textContent = title; $('ask-label').textContent = label; $('ask-hint').textContent = hint; $('ask-ok').textContent = ok;
+    inp.value = value; inp.placeholder = placeholder || ' ';
+    if (pattern) inp.setAttribute('pattern', pattern); else inp.removeAttribute('pattern');
+    if (maxlength) inp.setAttribute('maxlength', String(maxlength)); else inp.removeAttribute('maxlength');
+    let answer = null;
+    const done = () => { d.removeEventListener('close', done); resolve(answer); };
+    d.addEventListener('close', done);
+    $('ask-form').onsubmit = (e) => { e.preventDefault(); if (!inp.checkValidity()) { inp.reportValidity(); return; } answer = inp.value; d.close(); };
+    $('ask-cancel').onclick = () => { answer = null; d.close(); };
+    inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); $('ask-form').requestSubmit(); } };
+    d.showModal(); inp.focus(); inp.select();
+  });
+}
+/** A busy line: spinner + what is happening. */
+const busy = (t) => `<div class="sub"><span class="busy"><span class="spin"></span>${esc(t)}</span></div>`;
+/** The fixed pill: whichever flow is working right now, wherever the player is looking. */
+function renderWorking() {
+  const t = Ai.busy || Wl.busy || Op.busy || '';
+  $('working').hidden = !t; $('working-text').textContent = t;
+  $('me-chip').classList.toggle('busy-chip', !!Ai.busy);
+}
+const setName = async () => { const v = await ask({ title: 'profile', label: 'Display name', value: player.name, maxlength: 24, hint: 'shown in the arcade and on ladders' }); if (v && v.trim()) { player.name = v.trim().slice(0, 24); store('cabinet.name', player.name); renderChrome(); render(); } };
 $('avatar-file').addEventListener('change', async (e) => {
   const f = e.target.files?.[0]; if (!f) return;
   try { player.avatar = await fileToAvatar(f); store('cabinet.avatar', player.avatar); renderChrome(); render(); } catch { /* ignore */ }
@@ -273,7 +300,7 @@ const nodeHint = () => (S.online ? '' : !S.checked ? '<div class="empty">Connect
 const Ai = { busy: '', error: '', me: air.current() };
 function airLine() {
   if (!air.configured() || !player.kp) return '';
-  if (Ai.busy) return `<div class="sub">${esc(Ai.busy)}</div>`;
+  if (Ai.busy) return busy(Ai.busy);
   const s = Ai.me.session;
   if (Ai.me.loggedIn && s?.address) {
     const who = Ai.me.email ?? s.name ?? Ai.me.id?.slice(0, 8) ?? 'AIR';
@@ -304,7 +331,7 @@ function walletLine() {
   if (!wallet.configured()) return airLine();
   if (!player.kp) return '<div class="sub dim">No key on this page (insecure context), so nothing to bind.</div>';
   const b = Wl.binding;
-  if (Wl.busy) return `<div class="sub">${esc(Wl.busy)}</div>`;
+  if (Wl.busy) return busy(Wl.busy);
   if (b?.active && !(Ai.me.session?.address && b.owner === Ai.me.session.address)) return airLine() + `<div class="sub">profile <b>${esc(Wl.profile?.name ?? `#${b.tokenId}`)}</b> · wallet <span class="mono" title="${esc(b.owner)}">${b.owner.slice(0, 6)}…${b.owner.slice(-4)}</span></div>`;
   if (b?.active) return airLine();
   if (b && !b.active) return '<div class="sub" style="color:var(--bad,#ff7b8a)">this key was revoked by its profile owner — nodes refuse it</div>';
@@ -323,8 +350,9 @@ async function signInWithWallet() {
       Wl.busy = `adding this device to ${Wl.profile.name} — confirm in your wallet`; render();
       await wallet.bindKey(Wl.account, player.id);
     } else {
-      const name = prompt('Profile name (1–32 letters, digits, space _ . -)', player.name.replace(/[^A-Za-z0-9 _.-]/g, '').slice(0, 32) || 'player');
-      if (!name) { Wl.busy = ''; render(); return; }
+      Wl.busy = ''; render();
+      const name = await ask({ title: 'mint profile', label: 'Profile name', value: player.name.replace(/[^A-Za-z0-9 _.-]/g, '').slice(0, 32) || 'player', pattern: '[A-Za-z0-9 _.\\-]{1,32}', maxlength: 32, hint: '1–32 letters, digits, space _ . -  ·  soulbound on litVM', ok: 'Mint' });
+      if (!name || !name.trim()) { render(); return; }
       Wl.busy = 'minting your profile — confirm in your wallet'; render();
       await wallet.register(Wl.account, player.id, name.trim());
     }
@@ -654,7 +682,7 @@ async function opRun(what) {
     if (what === 'faucet') { step('faucet — confirm in your wallet'); Op.lastTx = await nodeops.faucet(Op.account); }
     if (what === 'bond') { step('bonding…'); Op.lastTx = await nodeops.bond(Op.account, h.nodeId, { onStep: step }); }
     if (what === 'delegate') { step('delegating…'); Op.lastTx = await nodeops.delegateAnnouncer(Op.account, h.nodeId, h.directory.announcer.address, { onStep: step }); }
-    if (what === 'transfer') { const to = prompt('Transfer this node to which operator address? (0x…, 40 hex)'); if (!to) { Op.busy = ''; render(); return; } step('transfer — confirm in your wallet'); Op.lastTx = await nodeops.transferOperator(Op.account, h.nodeId, to.trim()); }
+    if (what === 'transfer') { Op.busy = ''; render(); const to = await ask({ title: 'transfer node', label: 'New operator address', placeholder: '0x…', pattern: '0x[0-9a-fA-F]{40}', hint: 'the bond and the listing move with it', ok: 'Transfer' }); if (!to) { render(); return; } step('transfer — confirm in your wallet'); Op.lastTx = await nodeops.transferOperator(Op.account, h.nodeId, to.trim()); }
     step('reading the chain…');
     Op.info = await nodeops.inspect(h.nodeId, Op.account);
     if (what !== 'connect') readStake(h.nodeId).then((st) => { S.stake = st; render(); });
@@ -710,6 +738,7 @@ function parseRoute() {
   return ['games', 'leaderboards', 'characters', 'inventory', 'node'].includes(name) ? { name } : { name: 'home' };
 }
 function render() {
+  renderWorking();
   switch (route.name) {
     case 'home': renderHome(); break;
     case 'games': renderGames(); break;
@@ -813,7 +842,7 @@ $('play-tab').addEventListener('click', () => { if (current) window.open(frame.s
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && current) exit(); });
 
 // ═══════════════════════════════════════════════ boot ══
-const editNode = () => { const v = prompt('litnode URL', nodeUrl()); if (v != null) { store('cabinet.nodeUrl', v.trim().replace(/\/$/, '') || undefined); pollNode(); } };
+const editNode = async () => { const v = await ask({ title: 'node', label: 'litnode URL', value: nodeUrl(), placeholder: 'https://…', hint: 'the node this cabinet talks to · blank = the directory picks one' }); if (v != null) { store('cabinet.nodeUrl', v.trim().replace(/\/$/, '') || undefined); pollNode(); } };
 $('node-edit').addEventListener('click', editNode);
 
 paintBackdrop($('bg'));

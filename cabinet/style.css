@@ -83,6 +83,28 @@ h1, h2, h3, h4 { font-family: var(--head); margin: 0; letter-spacing: -.01em; }
 .btn.exit:hover { border-color: var(--red); color: var(--red); }
 .btn:disabled { opacity: .4; cursor: default; }
 .btn.sm { padding: 5px 10px; font-size: 10px; }
+/* in-page prompt (replaces window.prompt: PWAs and frames show it badly) */
+.ask { border: 1px solid var(--edge2); background: var(--glass3); backdrop-filter: blur(22px); color: var(--fg); padding: 0; width: min(440px, calc(100vw - 32px)); box-shadow: 0 30px 80px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.08); }
+.ask::backdrop { background: rgba(6,9,15,.62); backdrop-filter: blur(6px); }
+.ask[open] { animation: ask-in .18s ease-out; }
+@keyframes ask-in { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+.ask form { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px 20px; }
+.ask-h { display: flex; align-items: center; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--edge); }
+.ask-h::before { content: ''; width: 8px; height: 8px; background: var(--peach); }
+.ask-title { font-family: var(--mono); font-size: 11px; letter-spacing: .2em; text-transform: uppercase; color: var(--fg2); }
+.ask-label { font-size: 15px; color: var(--fg); margin-top: 4px; }
+.ask-input { font: 600 18px/1.2 var(--mono); letter-spacing: .04em; padding: 12px 14px; color: var(--fg); background: rgba(6,9,15,.55); border: 1px solid var(--edge2); outline: none; width: 100%; }
+.ask-input:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px var(--cyan-dim); }
+.ask-input:invalid:not(:placeholder-shown) { border-color: var(--red, #ff7b8a); }
+.ask-hint { font-size: 12px; min-height: 1em; }
+.ask-row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+/* loading: inline spinner on busy lines + a fixed pill that follows the player around */
+.spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--edge2); border-top-color: var(--cyan); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.busy { display: inline-flex; align-items: center; gap: 8px; color: var(--cyan); }
+.working { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 10px; padding: 10px 16px; border: 1px solid var(--edge2); background: var(--glass3); backdrop-filter: blur(16px); font-family: var(--mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--fg2); box-shadow: 0 10px 30px rgba(0,0,0,.5); animation: ask-in .18s ease-out; max-width: calc(100vw - 32px); }
+.working[hidden] { display: none; }
+.me-chip.busy-chip .me-name { color: var(--cyan); }
 .link { background: none; border: 0; color: var(--cyan); cursor: pointer; padding: 0; font: inherit; }
 .token { display: inline-block; padding: 5px 9px; border: 1px solid var(--edge2); background: rgba(6,9,15,.5); font-family: var(--mono); font-size: 11px; color: var(--cyan); letter-spacing: .02em; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

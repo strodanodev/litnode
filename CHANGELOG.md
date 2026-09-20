@@ -6,6 +6,11 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Changed
+- **Cabinet prompts and loading.** Display name, mint-profile name, node
+  URL and operator transfer use an in-page dialog (validated, Enter/Esc)
+  instead of `window.prompt`, which PWA windows show badly. Busy lines get a
+  spinner and a fixed "working" pill follows the player while AIR sign-in,
+  the node's profile setup, a wallet transaction or an operator action runs.
 - **Sign-in is asked for when it matters, once.** The header chip reads
   "· SIGN IN" and opens AIR; Find match signs in first and goes straight to
   the queue (a closed dialog queues as a guest); a launched title gets a
@@ -14,6 +19,101 @@ follows [Keep a Changelog](https://keepachangelog.com/).
   carries `air:{id,email,address,tokenId,name}`. Binding your own wallet is
   folded under "advanced". A remembered identity is dropped when AIR says
   the session ended.
+
+### Added
+- **Settlement v1.0, phase 1 — no single key** (BUILD-SPEC v0.3 §2.2–2.4;
+  contracts written, compile-tested, NOT deployed — `contracts/MIGRATION.md`
+  v2 → v3). `NodeStake` v3: a bond is LOCKED for `lockTerm` before
+  `unstake()`; a key can be drawn to attest only once its bond is older than
+  `eligibilityAge` (`witnessEligible`); `setDelegate` names the hot EVM key
+  the node runs with (gas only, never the bond); `slash()` is callable only by
+  adjudicator CONTRACTS named by `admin` — the slasher wallet is gone;
+  `adminIsContract()` so `/health` can say whether `admin` is a multisig
+  behind a timelock (`admin: contract`) or a wallet (`admin: eoa`).
+  `standingOf` is unchanged, so every reader keeps working. `ReleaseRegistry`:
+  a release zip's sha256 must be registered by `admin` and be ACTIVE
+  (`activationDelay` after registration, revocable at once) before a node
+  applies it; `node/update.js` asks the chain at check AND at apply, refuses
+  unregistered / pending / revoked / unreadable, and reports
+  `update.registry` (`unset` with no registry). `protocol/release.js`,
+  `protocol/staking.js` (v3 reads and `setDelegate`), `node/chain.js`
+  (`nodeInfo`, `releaseStatus`, `stakeAdminIsContract`), `/health.bond`
+  (`eligible`, `delegate`, `bondedSince`), `RELEASE_REGISTRY` in
+  `node.env`. Tools: `npm run delegate`, `npm run release:registry`;
+  `deploy:testnet` deploys v3 + the registry, refuses an `unbondingPeriod`
+  that does not exceed the MatchBook windows, and warns on an EOA admin.
+  Tests: `demo/contracts.test.mjs` (every .sol compiles; hand-encoded
+  selectors match solc), `demo/release-registry.test.mjs`.
+- **Settlement v1.0, phase 2 — `MatchBook` contract and protocol** (BUILD-SPEC
+  v0.3 §11.2–11.3; compile-tested, NOT deployed; the node does not send yet).
+  `contracts/MatchBook.sol`: `commit` (host's delegate, before play; three
+  panel keys must be `witnessEligible`, distinct, under operators other than
+  the host's and each other's) → `settle` (result commitment, ledger sha256,
+  build, participants, scores, custodians — all in the event) → `attest` by
+  panel keys (a different hash is a dispute) → `finalize` (≥2 agree and no
+  dissent → final; any dissent or <2 → escalated) → `escalate` (anyone posts
+  the ledger bytes, sha256 must match; nine drawn from the enrolled pool,
+  stake-weighted, one seat per operator, excluding both panels' operators;
+  too few → void, nobody slashed) → `resolve` (stake-weighted strict majority
+  of the nine; every key on either panel that voted against it and a host the
+  majority rejected are slashed through NodeStake v3 — MatchBook has no
+  slash of its own). `protocol/matchbook.js`: identifier→bytes32 mapping in
+  one place, calldata for every call, reads, `eth_getLogs` filter and log
+  decoders, and `chainDeltas`/`foldChain` — the ladder as a fold over the
+  event log in block order with `official` (finalized) and `pending` views.
+  Deploy tool deploys it and names it an adjudicator; `deploy.testnet.json`
+  carries the windows and slash sizes. Tests: `demo/matchbook.test.mjs`.
+- **BUILD-SPEC v0.3**: the chain as the index. Per ranked match `commit` →
+  `settle` → `attest` ×3 → `dispute`/escalation on a `MatchBook` contract
+  (specified, phase 2); ladders fold over finalized on-chain events in block
+  order so every node and the cabinet from RPC alone derive the same tables;
+  operators pay gas from a delegated hot key and earn a per-match fee split
+  (phase 3); Elo stays off chain. The v0.2 model (delta advertisements over
+  gossip, each node's ladder = its own hosted matches, one slasher/release/
+  publisher key) is documented as wrong at scale and replaced, not patched.
+  Decisions and sequencing in §0, §2.3, §6, §9, §11, §17.
+- **Two publisher paths** (docs/PUBLISHERS.md). *Bring your backend*:
+  `npm run bridge` (`sdk/bridge/`) settles matches from a game that
+  already runs elsewhere — `assess` picks replayable vs attested, `key`
+  makes the relay/court identity and prints the `RELAY_KEYS`/`COURTS`
+  line, `serve` is an authenticated webhook the publisher's server posts
+  to, `watch`/`backfill` follow a source through an adapter (`jsonl`,
+  `http`, `agent-fighter`, or the publisher's own), `submit` and `check`
+  do one match and read back what the mesh made of it. *Build from
+  scratch*: `sdk/client.js` — `parseLaunch`, `connectShell` (the
+  cabinet's `cabinet:init`/`cabinet:sign` protocol), `createSim`,
+  `createRecorder`, `externalAgents`, `settle`. Skills `migrate-a-title`
+  and `build-a-title`; docs/BRING-YOUR-BACKEND.md, docs/BUILD-FROM-SCRATCH.md,
+  docs/WEBSITE-COPY.md (site and litepaper copy against the code).
+  `demo/publisher.test.mjs` runs both paths against live nodes.
+- **`npm run bridge -- resolve` and `--node auto`**: find the live node for a
+  title through NodeDirectory on chain (bonded, fresh, proves its key,
+  hosts the ruleset, settles), so a publisher's server is never pinned
+  to a rotating tunnel hostname. Pickle Brawl's court is migrated on it
+  (docs/BRING-YOUR-BACKEND.md, worked example).
+- **Cabinet launches every placed title the same way** (`?ws&room&player&match&build`,
+  previously Agent Fighter only), passes `hostAddr`, `mode`, `buildHash`
+  and `rulesetId` in `cabinet:init.match`, and no longer refuses to launch
+  a placed title whose host fronts no relay.
+- **`npm run host` — the node-hosting harness** (`sdk/host/`, docs/HOST-A-NODE.md,
+  the `host-a-node` skill). `init` writes `node.env` and the identity;
+  `doctor` preflights runtime, port, files, RPC, seeds and clock; `start
+  --detach` runs the node under a cross-platform supervisor (relaunch on
+  crash, at once after a signed update); `status`/`next`/`verify` read
+  the node and the chain and name the one next command — configure →
+  identity → running → current → hosting → connected → reachable → bonded →
+  announced → service; `bond`, `announce` and `publish` wrap the chain
+  tools with the key from the shell only; `install-service` registers a
+  scheduled task, a `systemd --user` unit or a LaunchAgent for this
+  install and refuses to touch one that belongs to another. Every command
+  is non-interactive, idempotent, takes `--json`, and exits 0/1/2/3.
+  `demo/host.test.mjs` covers it, including the CLI end to end.
+
+### Fixed
+- **`npm run node` with `HOST=0.0.0.0` advertised `http://0.0.0.0:<port>`**
+  in its heartbeat; it now advertises the LAN IPv4, as `start-node.cmd`
+  already computed for the zips.
+- `node.env` at the repository root is ignored by git.
 
 ## [0.10.0] — 2026-09-21 — universal login
 
