@@ -15,7 +15,7 @@
  *  overwritten on Windows, so a new runtime lands in runtime.new/ and
  *  start-node.cmd swaps it on relaunch. Zero dependencies. */
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { opened } from '../protocol/keys.js';
@@ -29,6 +29,10 @@ export const RESTART_EXIT = 75; // start-node.cmd relaunches on this code
 
 /** What gets replaced by an update. Everything else in the folder is the operator's. */
 export const CODE = ['node', 'protocol', 'sdk', 'cabinet', 'rulesets', 'tools', 'contracts', 'titles', 'start-node.cmd', 'run-node.cmd', 'restart-node.cmd', 'stop-node.cmd', 'run-af-relay.cmd', 'run-af-watch.cmd', 'install-task.cmd', 'allow-firewall.cmd', 'update.cmd', 'node.env.example', 'README.md', 'package.json'];
+
+/** Never copied from a zip, whatever it ships: an operator's state and the
+ *  things the updater manages separately. */
+export const PROTECTED = new Set(['data', 'runtime', 'node_modules', 'node.env', 'litnode.log', 'af-watch.log', 'litnode-relay.log']);
 
 /** A release replaces contracts/ as code, but an install can hold a NEWER
  *  contract set than the release was cut with — 0.8.0 shipped the v1
@@ -135,12 +139,16 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
     file: latest ? pickFile(latest.files, { root }) : null, keys: acceptedKeys(), retired: persisted.retired, canRollback: existsSync(join(root, '.previous', 'node')),
   });
 
-  /** Download, verify, unpack, copy code over the install. Returns what changed. */
-  const apply = async () => {
+  /** Download, verify, unpack, copy code over the install. Returns what changed.
+   *  `force` re-applies the current release even when nothing is newer —
+   *  the REPAIR path: an install updated by an older updater whose copy
+   *  list predates a directory the new code imports (0.6.x → 0.8.x missed
+   *  sdk/) fills the gap by applying its own release again. */
+  const apply = async ({ force = false } = {}) => {
     if (applying) throw new Error('update already in progress');
     if (!latest) await check();
     const s = status();
-    if (!s.available) throw new Error(s.lastError ?? `already on ${version}`);
+    if (!s.available && !(force && latest && latest.version === version)) throw new Error(s.lastError ?? `already on ${version}`);
     if (!s.file) throw new Error('no zip in this release matches this install');
     applying = true;
     try {
@@ -162,12 +170,19 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
       if (!top) throw new Error('zip has no node/ directory');
       const src = join(stage, top);
       const changed = [];
+      // What gets copied: every CODE item the zip carries, PLUS any top-level
+      // DIRECTORY the zip ships that this list does not know yet (except the
+      // protected ones). A release may add a folder; an updater that predates
+      // it must still install it, or the new code cannot start.
+      const items = [...CODE];
+      for (const n of readdirSync(src)) if (!items.includes(n) && !PROTECTED.has(n) && !n.startsWith('.') && statSync(join(src, n)).isDirectory()) items.push(n);
       // keep what we replace, so rollback() needs no network
       const prev = join(root, '.previous');
       rmSync(prev, { recursive: true, force: true }); mkdirSync(prev, { recursive: true });
-      for (const item of CODE) if (existsSync(join(root, item))) cpSync(join(root, item), join(prev, item), { recursive: true });
+      for (const item of items) if (existsSync(join(root, item))) cpSync(join(root, item), join(prev, item), { recursive: true });
       writeFileSync(join(prev, 'VERSION'), `${version}\n`);
-      for (const item of CODE) {
+      writeFileSync(join(prev, 'ITEMS.json'), JSON.stringify(items));
+      for (const item of items) {
         if (!existsSync(join(src, item))) continue;
         rmSync(join(root, item), { recursive: true, force: true });
         cpSync(join(src, item), join(root, item), { recursive: true });
@@ -197,8 +212,16 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
     const stash = join(root, '.stash');
     rmSync(stash, { recursive: true, force: true });
     if (existsSync(join(root, 'contracts', 'deployed.testnet.json'))) { mkdirSync(join(stash, 'contracts'), { recursive: true }); cpSync(join(root, 'contracts', 'deployed.testnet.json'), join(stash, 'contracts', 'deployed.testnet.json')); }
-    for (const item of CODE) {
-      if (!existsSync(join(prev, item))) continue;
+    const recorded = existsSync(join(prev, 'ITEMS.json'));
+    const items = recorded ? JSON.parse(readFileSync(join(prev, 'ITEMS.json'), 'utf8')) : CODE;
+    for (const item of items) {
+      if (!existsSync(join(prev, item))) {
+        // Recorded as replaced but absent before the update: the update ADDED
+        // it, so rolling back removes it. (Legacy .previous without a record
+        // cannot tell "added" from "unshipped": leave it.)
+        if (recorded && existsSync(join(root, item))) { rmSync(join(root, item), { recursive: true, force: true }); changed.push(`${item} (removed)`); }
+        continue;
+      }
       rmSync(join(root, item), { recursive: true, force: true });
       cpSync(join(prev, item), join(root, item), { recursive: true });
       changed.push(item);

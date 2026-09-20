@@ -23,7 +23,14 @@ import { createTunnel } from './tunnel.js';
 import { keepMapped } from './upnp.js';
 import { createAnnouncer } from './announce.js';
 import { liveSeeds } from '../protocol/directory.js';
-import { check as conformance, staticCheck } from '../sdk/conformance.mjs';
+// The SDK ships in the release zip. An install that an OLDER updater brought
+// to this build may lack it (0.6.x copy lists predate sdk/): a static import
+// would crash at link time on every relaunch, forever. Load it dynamically
+// and, when it is missing, start anyway and repair by re-applying the
+// current release (node/update.js apply({force})).
+let conformance = null, staticCheck = null, sdkMissing = null;
+try { ({ check: conformance, staticCheck } = await import('../sdk/conformance.mjs')); }
+catch (e) { sdkMissing = e?.code === 'ERR_MODULE_NOT_FOUND' ? 'sdk/ is missing from this install' : `sdk failed to load: ${e.message}`; }
 import { createSandbox } from './sandbox.js';
 import { RELEASE_PUBKEY } from './update.js';
 import { PROTOCOL_VERSION } from '../protocol/version.js';
@@ -100,6 +107,16 @@ export async function createNode({
   // Checked hourly; applied only on request, and only from this machine.
   const updater = createUpdater({ root, version: version ?? '0.0.0', releaseUrl, channel: releaseChannel, dataDir, log });
   const checkUpdates = async () => { if (!updates || !version) return; const before = updater.status().available; await updater.check(); const s = updater.status(); if (s.available && !before) emit('update', { version: s.version, latest: s.latest }); };
+  // Self-repair: this build started without a directory it needs. Re-apply
+  // the current release (which carries it) and restart; until then no build
+  // is verified or loaded, and /health says `repair`.
+  if (sdkMissing) {
+    log(`REPAIR: ${sdkMissing} — re-applying release ${version} to fill it`);
+    (async () => {
+      try { await updater.check(); const r = await updater.apply({ force: true }); log(`repair: applied ${r.to} (${r.changed.join(', ')}); restarting`); restart(); }
+      catch (e) { log(`repair failed: ${e.message} — unzip the current release over this folder and restart`); }
+    })();
+  }
   const isLoopback = (req) => /^(::1|127\.\d+\.\d+\.\d+|::ffff:127\.\d+\.\d+\.\d+)$/.test(req.socket.remoteAddress ?? '');
   const restart = () => { log('restarting to run the new build'); emit('restart', {}); setTimeout(() => { if (onRestart) onRestart(); else process.exit(RESTART_EXIT); }, 300); };
 
@@ -160,6 +177,7 @@ export async function createNode({
     if (expectedHash && actual !== expectedHash) throw new Error(`ruleset hash mismatch: expected ${expectedHash.slice(0, 12)} got ${actual.slice(0, 12)}`);
     if (builds.has(actual)) { const b = builds.get(actual); if (current) loaded.set(b.rulesetId, b); return b; }
     if (refused.has(actual)) throw new Error(`ruleset ${actual.slice(0, 12)} refused earlier: ${refused.get(actual)}`);
+    if (sdkMissing) throw new Error(`cannot verify builds: ${sdkMissing} (repair in progress)`);
     const st = staticCheck(source);
     if (!st.ok) {
       const failed = st.checks.filter((c) => !c.ok && !c.warn).map((c) => `${c.name}${c.detail ? ` (${c.detail})` : ''}`);
@@ -517,7 +535,7 @@ export async function createNode({
       }
       if (req.method === 'GET' && url.pathname === '/health') {
         const s = currentSnapshot();
-        return json(res, 200, { nodeId, operator, roles, region, addr, protocol: PROTOCOL_VERSION, epoch: s.epoch, peers: s.peers.length, incompatible: incompatible.size, rulesets: buildHashes(), buildsHeld: builds.size, refused: refused.size, staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null, chain: chain.status(), profiles: profileState(), version, update: updater.status(),
+        return json(res, 200, { nodeId, operator, roles, region, addr, protocol: PROTOCOL_VERSION, epoch: s.epoch, peers: s.peers.length, incompatible: incompatible.size, rulesets: buildHashes(), buildsHeld: builds.size, refused: refused.size, staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null, chain: chain.status(), profiles: profileState(), version, repair: sdkMissing, update: updater.status(),
           sandbox: sandbox.status(), trust: { policy: titleTrust, publishers: trustedPublishers, relayKeys, courts: Object.keys(courts) }, registry: registry ? 'chain' : erc6699 ? 'offline' : 'unset',
           wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, upnp: upnpCtl?.status() ?? null,
           directory: nodeDirectory ? { contract: nodeDirectory, seeds: chainSeeds.length, announcer: announcer?.status() ?? null } : null, startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt,

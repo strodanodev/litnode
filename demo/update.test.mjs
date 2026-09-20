@@ -75,6 +75,32 @@ test('update: a release never replaces a newer contract set (apply and rollback)
   void zip; // the fixture's own zip is superseded by the rebuilt one above
 });
 
+test('update: a directory the copy list does not know is still installed; force re-applies the current release', async () => {
+  const releaseKey = await generateKeypair();
+  const { root, zipName } = fixture();
+  const build = join(tmp, 'build', 'litnode-portable-2026-01-01');
+  mkdirSync(join(build, 'newdir'), { recursive: true }); writeFileSync(join(build, 'newdir', 'x.mjs'), 'export const x = 1;');
+  mkdirSync(join(build, 'data'), { recursive: true }); writeFileSync(join(build, 'data', 'leak.json'), '{}'); // protected: never copied
+  execFileSync(tar, ['-a', '-cf', join(tmp, 'build', zipName), '-C', join(tmp, 'build'), 'litnode-portable-2026-01-01']);
+  const zip2 = readFileSync(join(tmp, 'build', zipName));
+  const body = { version: '0.2.0', date: '2026-01-01T00:00:00Z', notes: 'n', files: { [zipName]: { sha256: sha(zip2), size: zip2.length } } };
+  const env = await seal(RELEASE_TAG, body, releaseKey);
+  let u = createUpdater({ root, version: '0.1.0', releaseUrl: RELEASE, pubkey: releaseKey.publicKey, fetchImpl: serve(env, zipName, zip2) });
+  const r = await u.apply();
+  assert.ok(r.changed.includes('newdir'), `newdir installed: ${r.changed.join(', ')}`);
+  assert.ok(existsSync(join(root, 'newdir', 'x.mjs')));
+  assert.ok(!existsSync(join(root, 'data', 'leak.json')), 'data/ is protected');
+  assert.equal(readFileSync(join(root, 'data', 'n', 'identity.json'), 'utf8'), '{"secret":true}');
+  // Repair path: an install already on 0.2.0 that lost newdir re-applies its own release.
+  rmSync(join(root, 'newdir'), { recursive: true, force: true });
+  u = createUpdater({ root, version: '0.2.0', releaseUrl: RELEASE, pubkey: releaseKey.publicKey, fetchImpl: serve(env, zipName, zip2) });
+  await assert.rejects(() => u.apply(), /already on 0.2.0/, 'without force nothing newer means nothing to do');
+  const rr = await u.apply({ force: true });
+  assert.equal(rr.to, '0.2.0'); assert.ok(existsSync(join(root, 'newdir', 'x.mjs')), 'force re-applied the current release');
+  const rb = u.rollback();
+  assert.ok(!existsSync(join(root, 'newdir')), 'rollback removes what the recorded item list installed'); void rb;
+});
+
 test('update: version compare and zip choice', () => {
   assert.ok(newer('0.2.0', '0.1.9')); assert.ok(newer('1.0.0', '0.9.9')); assert.ok(!newer('0.4.0', '0.4.0')); assert.ok(!newer('0.3.9', '0.4.0'));
   const files = { 'litnode-portable-2026-01-01.zip': {}, 'litnode-portable-2026-01-01-win-x64.zip': {}, 'litnode-operator-2026-01-01.zip': {}, 'litnode-operator-2026-01-01-win-x64.zip': {} };

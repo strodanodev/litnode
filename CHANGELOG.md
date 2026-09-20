@@ -3,6 +3,24 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.8.2] — 2026-09-20 — survive an update by an older updater
+
+Protocol **2** (unchanged). **Every node still on 0.6.x should update by
+unzipping this release over its folder rather than through `/update`**:
+their updater's copy list predates `sdk/`, so a self-update lands on 0.8.x
+without it. 0.8.1 crashed at import on every relaunch in that state (seen on
+the desktop: `ERR_MODULE_NOT_FOUND sdk/conformance.mjs`, fixed by hand).
+
+### Fixed
+- **A node missing `sdk/` starts, reports `repair` on `/health`, refuses to
+  verify any build, re-applies its own release (`apply({force})`) and
+  restarts on the completed install.** The SDK import is dynamic.
+- **An update installs every top-level directory the zip ships**, not only
+  a fixed list (`data/`, `runtime/`, `node_modules/`, `node.env` and logs
+  stay protected). Rollback restores exactly what was recorded
+  (`.previous/ITEMS.json`). A future release can add a folder without
+  stranding installs whose updater predates it.
+
 ## [0.8.1] — 2026-09-20 — ship the live contract set
 
 Protocol **2** (unchanged). Canary.
