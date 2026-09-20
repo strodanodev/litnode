@@ -1,8 +1,30 @@
 # Publisher bonds — titles, host grants, escalation
 
-Status: **spec, nothing built.** Decisions taken 21 Sep 2026; contracts and
-cabinet flows follow this document. Reasoning that led here is in the
-session notes; only the decisions are kept.
+Status: **§1 built (21 Sep 2026), the rest spec.** `contracts/TitleRegistry.sol`,
+`protocol/title.js`, `tools/title-registry.mjs` (`npm run publish:title`),
+the node's trust gate and `/titles.published`, `demo/title-registry.test.mjs`.
+Three decisions taken the same day simplify §1 against the text below,
+and the code follows the decisions, not the text:
+
+- **Freely transferable, from day one.** No soulbound flag, no `setVault`
+  (§1.4). A hand-over is an ERC-721 `transferFrom`; whoever holds the token
+  is the publisher, whether an EOA or a multisig. Nothing else moves.
+- **No stake tier and no signature at mint.** `register(rulesetId,
+  buildHash)` is first-come; the holder's registration IS the vouch, so
+  nodes load a peer's build when the chain says it is the title's active
+  build instead of checking `TRUSTED_PUBLISHERS` (which stays as an
+  operator override). A publisher bond (§1.3) is deferred until there is
+  something on chain for it to back.
+- **A publisher must run a host.** The arcade lists a registered title only
+  while a bonded node carrying the `host` role, bonded from the wallet
+  that holds the token, hosts it (`/titles.published`). Registered but
+  unhosted = not listed, nothing lost; the fix is "start your node".
+
+Retunes wait `activationDelay` (60 s testnet) as ReleaseRegistry's do; a
+title's first build is active at once. Revoking a build stops peers loading
+it and nothing else — settled deltas stay replayable in the build they
+settled with. Host grants (§2–3), AIR signing (§4), escalation seats (§5),
+revenue share (§6) and the Publisher tab (§7) are unbuilt.
 
 ## 0. Why
 
@@ -186,11 +208,28 @@ The profile mint (UNIVERSAL-LOGIN.md) showed the shape: an installed PWA
 cannot open the wallet extension, and a player signed in with AIR has a
 litVM proxy wallet held by their node. Publisher actions use the same path.
 
+Built (21 Sep 2026), as two endpoints on the node that holds the proxy —
+`node/proxy.js publish/bond`, the cabinet's Publisher panel on the Nodes
+page, `demo/title-registry.test.mjs`:
+
 ```
-POST /air/title/mint      { token, rulesetId, name }                 → node: stake title tier + mint from the proxy wallet
-POST /air/title/hosting   { token, rulesetId, hosting }              → node: setHosting
-POST /air/title/grant     { token, rulesetId, nodeKey, validUntil }  → node: proxy signs the EIP-712 HostGrant, returns {grant, sig}
-POST /air/title/revoke    { token, rulesetId, nodeKey }
+POST /air/publish   { token, action: register|set-build|revoke|transfer, rulesetId, buildHash?, to?, activatesAt? }
+                    → the proxy claims the title / adds a build / revokes one / transfers the ERC-721
+POST /air/bond      { token }   → the proxy bonds THIS node (faucet if short, approve, stake, delegate the announcer)
+```
+
+`buildHash` defaults to the build the node serves for the title: a
+publisher publishes what their host runs. The title is a plain ERC-721 in
+the proxy's custody; **Transfer…** to a multisig takes it out of the node's
+hands. Bonding from the proxy is what satisfies "the holder runs a host":
+the same wallet holds the title and operates the bonded host, so
+`/titles.published` is true with no extra rule. Still spec below: hosting
+settings, grants, the title stake and its sponsor cap.
+
+```
+POST /air/title/hosting   { token, rulesetId, hosting }              → node: setHosting            (spec)
+POST /air/title/grant     { token, rulesetId, nodeKey, validUntil }  → node: proxy signs the EIP-712 HostGrant (spec)
+POST /air/title/revoke    { token, rulesetId, nodeKey }                                             (spec)
 ```
 
 - The node verifies the AIR token against JWKS as today, resolves the AIR

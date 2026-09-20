@@ -42,6 +42,17 @@ first; it is the rulebook, and every rule in it is enforced by code you can run.
    `node.env` RULESETS, comma-separated, on an operator install). Confirm
    `GET /health` shows the rulesetId and `GET /titles` lists it with its
    display. Bond the node (`npm run bond`); unbonded hosts are never placed.
+   To bring the node itself up — configure, run supervised, bond, publish,
+   verify — use the `host-a-node` skill (`npm run host -- init --rulesets
+   ./rulesets/<name>.v1.js …`).
+   **Claim the title on chain** from the wallet that bonded that node:
+   `PUBLISHER_KEY=0x… npm run publish:title -- register rulesets/<name>.v1.js`
+   (`--calldata` prints what a multisig should send). The title is an
+   ERC-721 the wallet holds; other nodes load the build because the chain
+   says so, and `GET /titles` shows `published: true` only while a bonded
+   `host`-role node bonded from the holder's wallet hosts it. A retune is
+   `set-build` (active after the registry delay), `revoke` is immediate, a
+   hand-over is `transfer <rulesetId> <to>` or any wallet's NFT transfer.
 
 7. **Wire the client.** The arcade opens `display.url` with
    `?ws=<relay>&room=<LIT-…>&player=<key>`; the client queues via

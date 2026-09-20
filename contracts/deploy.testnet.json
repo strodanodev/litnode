@@ -3,15 +3,44 @@
   "chainId": 4441,
   "rpc": "https://liteforge.rpc.caldera.xyz/http",
   "evmVersion": "shanghai",
-  "TestLITVM": { "faucetAmount": "1000 tLITVM", "faucetCooldown": "1 day" },
+  "admin": null,
+  "adminNote": "The multisig behind a timelock that holds admin on NodeStake, ReleaseRegistry, EpochAnchor and ERC6699Registry. null = the deployer wallet, an EOA — the deploy tool warns and /health says admin: eoa (BUILD-SPEC v0.3 §2.3).",
+  "treasury": null,
+  "TestLITVM": {
+    "faucetAmount": "1000 tLITVM",
+    "faucetCooldown": "1 day"
+  },
   "NodeStake": {
+    "version": 3,
     "token": "<TestLITVM address after deploy>",
     "minStake": "1000000000000000000",
     "minStakeHuman": "1 tLITVM — proof-of-mechanism minimum; raise before any real operator onboarding",
-    "unbondingPeriod": 60,
-    "unbondingPeriodHuman": "60 seconds — long enough to observe the unbonding state in a demo, not a security parameter",
-    "slasher": "<deployer address on testnet>",
-    "treasury": "<deployer address on testnet>"
+    "lockTerm": 600,
+    "lockTermHuman": "10 minutes — unstake() is refused before the bond is this old. Proposed mainnet: 30 days",
+    "eligibilityAge": 120,
+    "eligibilityAgeHuman": "2 minutes — a bond younger than this can host casual but cannot be drawn to attest. Proposed mainnet: 7 days",
+    "unbondingPeriod": 1200,
+    "unbondingPeriodHuman": "20 minutes — must exceed MatchBook.totalWindow() (900 s at the testnet windows); the deploy tool refuses otherwise. Proposed mainnet: 14 days",
+    "slasher": "REMOVED in v3 — slash() is callable only by adjudicator contracts named by admin"
+  },
+  "ReleaseRegistry": {
+    "activationDelay": 60,
+    "activationDelayHuman": "60 seconds between register() and the earliest activatesAt. Proposed mainnet: 24 hours"
+  },
+  "TitleRegistry": {
+    "activationDelay": 60,
+    "activationDelayHuman": "60 seconds between setBuild() and the earliest activatesAt for a RETUNE; a title's first build is active at once. No admin: the token holder is the publisher. Proposed mainnet: 24 hours"
+  },
+  "MatchBook": {
+    "status": "written, compile-tested, behaviour-tested in-process (demo/matchbook-vm.test.mjs); not deployed",
+    "settleWindowS": 60,
+    "attestWindowS": 120,
+    "escalationWindowS": 300,
+    "drawDelayBlocks": 2,
+    "hostSlashBps": 1000,
+    "witnessSlashBps": 500,
+    "slashHuman": "host 10% of its bond when the escalation panel rejects its result; a panel key 5% when it voted against the majority",
+    "note": "NodeStake.unbondingPeriod must exceed MatchBook.totalWindow() = settle + 2×attest + 2×escalation = 900 s at these values; the deploy tool refuses otherwise"
   },
   "note": "Testnet-only values. One faucet pull (1000 tLITVM) funds 1000 node bonds at this minimum."
 }

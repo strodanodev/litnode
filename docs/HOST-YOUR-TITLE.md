@@ -8,6 +8,10 @@ your matches settle into the same epoch roots as Agent Fighter, and your
 players carry one profile and one ladder history across every title.
 
 This page is the rulebook. The Claude Code skill `host-a-title` walks it.
+Which path you are on — a game that already runs on your backend, or one
+you are starting — is [PUBLISHERS.md](PUBLISHERS.md); the client side of a
+new title is [BUILD-FROM-SCRATCH.md](BUILD-FROM-SCRATCH.md), settling an
+existing one is [BRING-YOUR-BACKEND.md](BRING-YOUR-BACKEND.md).
 
 ## The five-minute version
 
@@ -68,12 +72,26 @@ reaches for the world by any spelling fails at run time, and a title that
 spins or allocates without bound is killed without touching the node.
 `display` is a warning: hosting works without it, listing does not.
 
-**1b. A publisher's signature** — nodes load a build from a PEER only when
-`{rulesetId, buildHash}` is signed by a key in their `TRUSTED_PUBLISHERS`
-(`npm run sign:build -- rulesets/<id>.js`; the default trusted key is the
-litVM release key). An operator's own `RULESETS` load regardless, and an
-operator may run `TITLE_TRUST=open`. This is the honest state of a sandbox
-without a track record: capability-restricted, not proven escape-free.
+**1b. The title on chain** — `TitleRegistry`: a title is an ERC-721
+whose holder is the publisher (`tokenId = keccak256(rulesetId)`, first
+come). Nodes load a build from a PEER when the chain says it is
+registered under its title and active: `npm run publish:title -- register
+rulesets/<id>.js` from the wallet that will hold the title (a multisig
+works the same way), or — signed in with AIR on your own node — **Claim**
+in the cabinet's Publisher panel, where your AIR account's litVM wallet
+holds it and can bond the node too (docs/UNIVERSAL-LOGIN.md). A retune is `set-build`, active after the registry's
+delay; `revoke` is immediate; a hand-over is an ERC-721 transfer from any
+wallet — no signer lists, no admin. The older gate still works as an
+operator's override: a build signed (`npm run sign:build`) by a key in
+that node's `TRUSTED_PUBLISHERS` loads without the chain, an operator's
+own `RULESETS` load regardless, and `TITLE_TRUST=open` takes any
+conformant build. The sandbox is still the boundary: capability-restricted,
+not proven escape-free.
+
+**1c. The publisher runs a host** — the arcade lists a registered title
+only while a bonded node with the `host` role, bonded from the wallet that
+holds the token, hosts it (`GET /titles` → `published`). Registered and
+unhosted is not an error; it is unlisted until your node is up.
 
 **2. Bytes pinned by hash** — `buildHash = H('ruleset', bytes)`. Nodes
 advertise the hash, fetch each other's builds by it, and refuse a body that
@@ -150,6 +168,8 @@ Said plainly, so the SDK does not imply otherwise:
 
 ```
 sdk/index.js               defineTitle, defineAttestedTitle, defineBalance, seededRandom, lerp, clamp, ladders
+sdk/client.js              the game client: parseLaunch, connectShell, createSim, createRecorder, settle
+sdk/bridge/                settle matches from an existing backend: npm run bridge (serve | watch | submit | check)
 sdk/conformance.mjs        the suite (CLI + the node's gate)
 sdk/bundle.mjs             one-file artifact (esbuild, no minify)
 sdk/template/title.mjs     the scaffold: TUG, a complete replayable title

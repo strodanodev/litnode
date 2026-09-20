@@ -1,6 +1,6 @@
 # Arcade Node — build spec
 
-BUILD-SPEC v0.2 · 12 September 2026 · working document
+BUILD-SPEC v0.3 · 21 September 2026 · working document
 
 Scope: the V1 Arcade — one open-source product that hosts our in-house titles
 first and is composable for any title that enters the litVM ecosystem. Where
@@ -11,6 +11,20 @@ the test that exercises it; anything without a test is specified, not built.
 Companion documents: the litVM Games whitepaper (litvm.games/whitepaper) is
 the charter; the litVM chain docs (docs.litvm.com) fix the chain facts; the
 client spec v0.6 is the longer-range architecture; this is the build.
+
+**What changed in v0.3.** The 21 Sep 2026 capability audit (`audit/`) found
+that the v0.2 settlement model does not survive its own targets: deltas were
+*advertised* over gossip, never replicated, so every node's ladder was a fold
+over the matches *it* hosted and the hosted cabinet showed whichever seed
+answered; the gossip payload grew with every delta ever settled and hit the
+4 MB body limit within hours at 10,000 players; every witness replayed every
+match; and the keys that mattered — slasher, release, publisher, deployer —
+were each one wallet. v0.3 replaces that model with **the chain as the
+index** (§6, §11): every ranked match is committed, settled and attested on
+litVM by transaction; ladders fold over finalized on-chain events, so any
+node, or the cabinet from RPC alone, derives the same tables; and no single
+key holds authority (§2.3). Node hosting is opened to anyone whose stake is
+locked (§2.2). Sequencing is in §17.
 
 ---
 
@@ -35,6 +49,14 @@ client spec v0.6 is the longer-range architecture; this is the build.
 | Wallet-bound player profile (soulbound ERC-721, `ownerOfKey` read like `standingOf`), node badge NFT: contracts compile, node reads/refuses/folds by owner, cabinet signs in | **Built, undeployed** | `demo/profile.test.mjs`, `demo/cabinet.test.mjs`; `docs/WALLET-IDENTITY.md` build order step 4 |
 | Peer-to-peer gameplay transport | Specified | — |
 | SDK extraction, title template, conformance suite | Specified | — |
+| **Settlement v1.0 — phase 1: no single key.** `NodeStake` v3 (locked term, witness eligibility age, delegated hot key, adjudicator contracts instead of a slasher wallet, `admin` meant for a multisig behind a timelock); `ReleaseRegistry` (a release is a build hash registered on chain and active only after a delay; the node refuses any other) | **Built, undeployed** | `demo/contracts.test.mjs` (compile + ABI), `demo/release-registry.test.mjs`, `demo/update.test.mjs` |
+| **Titles as ERC-721s** (21 Sep 2026): `TitleRegistry` — one token per `rulesetId`, the holder is the publisher (EOA or multisig, hand-over = transfer, no admin); the holder registers build hashes (first active at once, retunes after a delay, revoke immediate); a node loads a peer's build when the chain says so instead of from a static `TRUSTED_PUBLISHERS` list; the arcade lists a title only while its holder runs a bonded host (`/titles.published`) | **Built, undeployed** | `demo/title-registry.test.mjs` (in-process EVM + a host, three witnesses and a hand-over), `docs/PUBLISHER-BONDS.md` |
+| **Settlement v1.0 — phase 2: `MatchBook`.** The contract (`commit` → `settle` → `attest` ×3 → `finalize` → `escalate`/`resolve` with a nine-seat stake-weighted panel and slashing through NodeStake v3), `protocol/matchbook.js` (calldata, reads, event decoding, and the fold over the log into official / pending ladders in block order) | **Contract and protocol built and behaviour-tested on an in-process EVM, undeployed; node not yet sending** | `demo/matchbook-vm.test.mjs` (every branch executed: lock, top-up age, adjudicator-only slash, commit refusals, windows, happy path, liveness extension, escalation against and for the host with slashes accounted to the treasury, void on too few nodes, expiry, the two attacks), `demo/matchbook.test.mjs`, `demo/contracts.test.mjs` |
+| **Phase 2, node side** (`node/matchbook.js`): the drawn host commits before play and settles from its delegated key; the three drawn seats read the log, fetch the ledger from the host, check its sha256 against the chain, replay and attest what they reached; the host finalizes, feeds an escalation with the ledger it keeps, resolves; `/leaderboard` folds the chain log (`source: chain`, `scope=official|pending`); gossip carries no delta advertisements; placed players leave the queue; `/match/:id/chain`; `/health.matchBook` | **Built, undeployed** — five litnodes bonded and delegated on the real contracts over an in-process RPC (`demo/lib/rpc-evm.mjs`) run the whole lifecycle | `demo/matchbook-node.test.mjs` |
+| **EpochAnchor v3 + automatic proposal.** Delegate or operator proposes; support is bonded stake; a root finalizes at `quorumBps` of the active stake; the tree is over the hour's chain-finalized set (`protocol/matchbook.js chainEpoch`), so every node computes the same root and the settler proposes it itself after the freeze; `/epoch` and `/proof` serve it; the proof verifies on chain | **Built, undeployed** | `demo/matchbook-vm.test.mjs` (stake-weighted quorum; two 1-token nodes cannot outvote a 3-token one), `demo/matchbook-node.test.mjs` (a witness computes the host's root; the settler's proposal finalizes; the node's proof verifies on chain) |
+| **The migration, dry-run.** `tools/deploy-contracts.mjs --fresh` executed unchanged against the in-process chain over HTTP: refuses an unbonding period shorter than MatchBook's windows before sending anything, deploys the whole set, names MatchBook an adjudicator, bonds the local node, is idempotent on re-run, and a node boots on the written file | **Built** | `demo/deploy.test.mjs` |
+| Phase 2, still open: the cabinet showing `pending` beside `official`, the relay-attested (Agent Fighter) path onto MatchBook, a sandbox worker pool, append-only ledger storage | Specified | — |
+| **Settlement v1.0 — phase 3: open hosting.** Anyone bonds and hosts; per-match fee split to host and attesting witnesses; obligatory custody by the drawn witnesses with on-chain custody challenges | Specified | — |
 
 Production today: the Agent Fighter match server on Railway, its client on
 Vercel, its database on Supabase. **Railway stays until the node mesh can carry
@@ -50,15 +72,25 @@ Three requirements, in order.
 | R1 | A publisher runs a node and gets a backend: matches settled, ladders, credits, stats | Node settles; the title's existing relay hosts until P2P lands |
 | R2 | Several nodes form a mesh behind statically deployed frontends | Signed gossip, no required seed, placement is a pure function |
 | R3 | ERC-6699 characters and hourly epoch roots settled on litVM Liteforge | Manifest and tree built; contracts compiled; chain writes prepared by the node, broadcast by the operator |
+| R4 | **Every ranked match provable on chain**, by transaction, not by an off-chain proof against a root someone may or may not have anchored | `MatchBook`: commit, settle, attest ×3, dispute, finality — one event log any reader folds (§6, §11) |
+| R5 | **Anyone can run a node and help secure the network**, and no few operators or single key can compromise it | Locked stake as the insurance (§2.2); no single key with authority (§2.3); k=3 stake-weighted witness draw; contract-driven slashing (§11) |
 
 Plus the constraint the product exists for: **peer-to-peer node infrastructure
 is not optional.** Gameplay runs between players, nodes verify and settle, and
 a node going dark costs latency to settlement, never a match.
 
-**Non-goals for V1.** A reserve or token economics, TEE agent inference,
-persistent worlds, on-chain registry writes from the node, Wasm rulesets,
-obligatory replica sets. Each is a seam (§1.3) with a stated reference
-behaviour.
+The lesson R5 is written against is Ronin (March 2022): the bridge was not
+lost because it had few nodes but because five keys controlled the thing
+that moved value, four sat with one company, nothing on chain could catch a
+bad withdrawal, and one social-engineered laptop was enough. Node count is
+the symptom; key concentration and unverifiable authority are the disease.
+Every authority in this design is therefore either a contract rule, a
+multisig behind a timelock, or a bonded key whose misuse costs its bond.
+
+**Non-goals for V1.** A reserve or token economics beyond the per-match fee
+split (§11.4), TEE agent inference, persistent worlds, on-chain registry
+writes from the node, Wasm rulesets, an on-chain rating. Each is a seam
+(§1.3) with a stated reference behaviour.
 
 ---
 
@@ -72,7 +104,7 @@ node/       the daemon anyone runs: identity, gossip, verify, settle, serve
 sdk/        defineTitle, defineBalance, services helpers, the ruleset bundler
 arcade/     the static lobby: list titles, queue, launch, show ladders
 titles/     in-house titles as the first contributions, not special cases
-contracts/  ERC6699Registry, NodeStake, TestLITVM, EpochAnchor
+contracts/  ERC6699Registry, NodeStake v3, ReleaseRegistry, MatchBook (spec), EpochAnchor, NodeDirectory, PlayerProfile, NodeBadge, TestLITVM
 demo/       the test suites; all must pass before anything is called shipped
 ```
 
@@ -84,12 +116,15 @@ BROWSER · any origin, no backend of its own
         │  HTTPS: snapshot, queue, match        WebRTC: inputs ↔ peer (V1 target)
         │                                       WSS: relay fallback via a node
         ▼
-NODE PLANE · one daemon per operator, bonded on chain
+NODE PLANE · one daemon per operator, bonded on chain (locked term)
   gossip · placement · signalling · relay fallback · witness replay · settlement
-        │  eth_call: NodeStake, ERC6699Registry, beacon blocks
-        │  anchorEpoch: one root per hour, broadcast by the operator's key
+        │  eth_call: NodeStake, ReleaseRegistry, ERC6699Registry, MatchBook, beacon blocks
+        │  tx from the node's DELEGATED hot key (gas only, never the bond):
+        │    commit · settle · attest · dispute · claim — per ranked match
+        │  tx from the operator's cold key: stake · unstake · setDelegate
         ▼
 litVM LITEFORGE · chain 4441 · zkLTC gas · Arbitrum Orbit
+  MatchBook event log = THE delta set. Ladders fold over it; anyone can.
 
 STUDIO PLANE · the title's own database, unchanged (Supabase for Agent Fighter)
 ```
@@ -106,11 +141,13 @@ test. A contributor replacing the reference runs the same test.
 | Gameplay transport | WebSocket relay through a node (Agent Fighter's) | WebRTC data channels, node as signalling + TURN fallback |
 | Registry source | Signed heartbeat gossip + NodeStake reads | On-chain registry reads |
 | Beacon source | First litVM block after the queue bucket closes | VRF / commit-reveal |
-| Standing | NodeStake bond (§2.2) | Attestation record + bond |
-| Ruleset runtime | Single-file ES module, hash-pinned | Wasm with pinned runtime |
-| Artifact transfer | Fetch by hash from any peer | Deterministic replica sets |
+| Standing | NodeStake v3 locked bond (§2.2) | Attestation record + bond |
+| Ruleset runtime | Single-file ES module, hash-pinned, `--permission` sandbox | Wasm with pinned runtime |
+| Artifact transfer | Fetch by hash from any peer | Obligatory custody by the drawn witnesses, custody challenges on chain (§11.5) |
 | Studio store | memory / Supabase / Firebase drivers | anything with get/set/list |
-| Settlement | Hourly epoch tree, operator broadcasts | same interface, more roots |
+| Delta set | **`MatchBook` events on litVM, in block order** (§6, §11) | same interface; blobs / calldata for ledgers on dispute |
+| Settlement | Per-match `commit` / `settle` / `attest` txs; hourly root over the finalized set | verifiable-VM replay for dispute resolution |
+| Dispute resolution | Stake-weighted majority of drawn witnesses, escalation panel (§11.3) | on-chain replay |
 
 ### 1.4 Roles
 
@@ -120,25 +157,33 @@ separate program: every node runs the same code and its roles are set in
 
 | Node | Bond | Roles | Where | Why |
 |---|---|---|---|---|
-| Operator (publisher) | own wallet | mesh, host, witness, settler | a desktop or VPS that stays up | seeds the mesh, keeps every ledger and build, settles and anchors |
-| Volunteer / guild | own wallet | mesh, witness (+ host) | anyone's machine | verifies other operators' matches; hosts when drawn |
+| Operator (publisher) | own wallet, locked | mesh, host, witness, settler | a desktop or VPS that stays up | seeds the mesh, keeps every ledger and build it touched, settles on chain |
+| Anyone | own wallet, locked | mesh, witness (+ host) | anyone's machine | drawn to attest other operators' matches and earns the attest share; hosts when drawn. **This is the row R5 is for.** |
 | Relay / court | via its operator | host | beside a game's own server | Agent Fighter relay, Pickle Brawl court |
 | Player | none | — | the browser | not a node: signs queue entries and ledgers, reaches nodes over HTTPS/WSS |
 
 Two builds ship from `npm run pack`: `litnode-portable` (any node) and
 `litnode-operator` (the same daemon plus a no-prompt `node.env`, a Windows
 scheduled-task installer, and the chain tooling). A witness must be bonded
-from a different wallet than the host it witnesses.
+from a different wallet than the host it witnesses, and its bond must be
+older than `eligibilityAge` (§2.2) before it can be drawn.
 
 Set in config, additive. A node may not witness a match it hosted or relayed.
 
 | Role | What it does |
 |---|---|
-| `mesh` | Serves rulesets and deltas by hash, gossips, signals WebRTC, directory for browsers |
+| `mesh` | Serves rulesets and ledgers by hash, gossips heartbeats and the open queue bucket, signals WebRTC, directory for browsers |
 | `relay` | WebSocket fallback for players who cannot connect directly; holds the live ledger |
-| `witness` | Verifies ledgers, re-hydrates from the registry, replays, co-signs |
-| `settler` | Builds the hour's tree, prepares anchor calldata |
+| `witness` | When drawn (§5): verifies the ledger, re-hydrates from the registry, replays, sends `attest` (or `dispute`) from its delegated key; keeps the ledger in custody for the season |
+| `settler` | Sends `commit` before play and `settle` after; builds the hour's tree over the finalized set and proposes the root |
 | `agent` | Not implemented. Reports zero. |
+
+**Keys a node holds** (§2.3): its ed25519 node key (identity, never on chain
+as a signer) and one **delegated EVM hot key** funded with gas only, which
+NodeStake v3 records as the key allowed to act for that node key. The bond
+sits with the operator's cold wallet, which the node never sees. A stolen hot
+key can post wrong attestations — and lose the bond for it — which is
+exactly what the bond is for. It cannot move the bond.
 
 ---
 
@@ -156,46 +201,117 @@ tag; a queue signature can never be replayed as a heartbeat.
 | Player | `playerId` = public key, registered against the AIR account | browser storage; AIR is authoritative for progression |
 | Agent | ERC-6699 `tokenId`, controller address | on chain |
 
-### 2.2 Staking LITVM to host a node — built, undeployed
+### 2.2 Staking LITVM to host a node — NodeStake v3, built, undeployed
 
-To deploy or host a node an operator bonds LITVM (the `TestLITVM` mock on
+To host, witness or settle, an operator bonds LITVM (the `TestLITVM` mock on
 Liteforge until the token exists there) in `contracts/NodeStake.sol` behind
-the node's key. `standingOf(nodeKey)` returns the operator address, the bonded
-amount and `active`.
+the node's key. **Trust is insured by the stake**: a node is allowed to do
+exactly what its locked bond can pay for if it lies. `standingOf(nodeKey)`
+still returns `(operator, amount, active)` — every v2 reader keeps working —
+and v3 adds `bondedSince`, `delegateOf` and `witnessEligible`.
 
 What the bond does:
 
 - **Eligibility.** A node whose key is not bonded at or above `minStake`, or
   is unbonding, is not eligible for placement. Nothing in its heartbeat can
   change that.
+- **Locked term.** `stake()` starts a lock of `lockTerm` (a top-up does not
+  restart it; the first bond sets `bondedSince`). `unstake()` reverts before
+  `bondedSince + lockTerm`. A bond that can leave the moment a bad result
+  finalizes is not a bond; the term is what makes the stake insurance rather
+  than a deposit.
+- **Witness eligibility age.** `witnessEligible(nodeKey)` is `active &&
+  now ≥ lastStakedAt + eligibilityAge`. A freshly bonded node can host casual
+  matches and serve the cabinet at once; it cannot be *drawn to attest* a
+  ranked result until its bond has history. Fifty sybils bonded this morning
+  cannot be a panel this afternoon. **A top-up restarts the age** (not the
+  lock): a whale cannot add stake the morning of an escalation to outweigh
+  it. A bond withdrawn and re-staked starts a new lock — unbond-and-rebond
+  does not skip it (found and fixed in the 22 Sep review).
+- **Unbonding outlasts adjudication.** `unbondingPeriod` must exceed the
+  longest `MatchBook` dispute window plus escalation (§11.3), so every match
+  a node touched can still be adjudicated against its stake. The deploy tool
+  refuses parameters where that is not true.
 - **Operator identity.** The operator *is* the staking address. A witness
   "under a different operator" means a different staking address. Two keys
   bonded from one wallet cannot host and witness the same match — asserted in
   `demo/staking.test.mjs`.
+- **Delegated hot key.** `setDelegate(nodeKey, addr)` by the operator names
+  the EVM address the node process runs with. `MatchBook` accepts
+  `commit`/`settle`/`attest`/`dispute` for a node key only from its delegate
+  (or its operator); `NodeDirectory` accepts `announce` the same way (its own
+  delegation is folded into this one). The delegate holds gas, never the
+  bond. Rotating a leaked hot key is one operator transaction; the bond, the
+  node key and its history stay.
 - **Standing.** The bonded amount, in whole tokens, is the standing a manifest
-  can set a floor against. This retires the self-asserted standing in v0.1.
-- **Slashing.** A single testnet slasher (the attestation authority) can cut
-  a bond for attested misbehaviour, with the evidence hash in the event. On
-  mainnet this becomes the agent-and-operator consensus the whitepaper
-  describes. Unbonding takes `unbondingPeriod`, during which slashes for work
-  already done still land.
+  can set a floor against. The witness draw (§5) is weighted by it.
+- **Slashing, by contract, not by a wallet, as a fraction of the bond.**
+  There is no `slasher` address. `slash(nodeKey, bps, reason)` is callable
+  only by an address in `adjudicators` — contracts, set by `admin`:
+  `MatchBook` (a finalized result the node attested against, or a settle it
+  lost), the custody challenger (§11.5). The cut is `bps` of the bond as it
+  stands, so lying costs a whale proportionally what it costs a minnow. The
+  evidence is the calling contract's own state, so every slash is
+  reproducible from chain data alone. Slashed funds go to `treasury`, which
+  is meant to be the fee pool (§11.4).
+- **Bounded admin.** No term or period may exceed `MAX_TERM` (365 days), so
+  an admin — even a compromised one — cannot trap bonds forever.
 
-What the bond does **not** do: pay anyone. The whitepaper (§5.4) is explicit
-that operators earn for serving, not for holding a token. The bond is a
-cost of misbehaviour, not a yield.
+What the bond does **not** do: pay anyone for holding it. The whitepaper
+(§5.4) is explicit that operators earn for serving, not for holding a token.
+Nodes earn the per-match fee split for hosting and attesting (§11.4); the
+bond is the cost of doing that wrong.
 
-Node-side: `protocol/staking.js` builds the `eth_call`, decodes the answer,
+Node-side: `protocol/staking.js` builds the `eth_call`s, decodes the answers,
 and `applyStakes` drops unbonded peers and **replaces** their operator and
-standing with chain values before placement sees them.
+standing with chain values before placement sees them; `witnessEligible` is
+read alongside `standingOf` and gates the witness draw.
 
 **Testnet parameters** (`contracts/deploy.testnet.json`), set to the minimum
 that proves the mechanism and nothing more: `minStake = 1 tLITVM`,
-`unbondingPeriod = 60 s`, slasher and treasury = the deployer. One faucet pull
-(1,000 tLITVM) funds a thousand bonds. These are demonstration values; raise
-them before any operator outside the team bonds a node.
+`lockTerm = 10 min`, `eligibilityAge = 2 min`, `unbondingPeriod = 15 min`
+(> the testnet dispute window + escalation), `admin` and `treasury` = the
+deployer *until the multisig exists* (§2.3). One faucet pull (1,000 tLITVM)
+funds a thousand bonds. **Proposed mainnet parameters**, to be argued in the
+RFC and not before: `lockTerm = 30 days`, `eligibilityAge = 7 days`,
+`unbondingPeriod = 14 days`, `minStake` sized so that a witness slot costs
+more than the largest pot it could steal.
 
-Open until deploy: who holds the testnet slasher key; the real LITVM address
-on Liteforge.
+Open until deploy: the real LITVM address on Liteforge; the multisig.
+
+### 2.3 No single key — the authority map
+
+Every key that could, alone, change a result, ship code to every node, or
+move a bond, and what replaces it:
+
+| Authority | v0.2 | v0.3 |
+|---|---|---|
+| Slash a bond | one `slasher` wallet (the exposed deployer) | `adjudicators` = contracts only; no wallet may slash |
+| Change stake parameters, quorum, adjudicators | `slasher` / `admin` EOA | `admin` = a **multisig behind a timelock** (Safe + a 48 h `TimelockController`, or the equivalent on litVM). The contract only knows an address; the deploy tool prints a loud warning and `/health` reports `admin: eoa` until it is a contract |
+| Ship a release to every node | `RELEASE_PUBKEY`, one ed25519 key, auto-checked hourly | the signature stays; **plus** the release's zip hash must be registered in `ReleaseRegistry` by `admin` with `activatesAt ≥ now + activationDelay` (24 h mainnet, 60 s testnet). A node applies only a release that is signed **and** registered **and** active. Anyone watching the registry has a day to read the diff before any node runs it. (§2.4) |
+| Admit a title build to the mesh | `trustedPublishers` = the same release key | unchanged for now — the sandbox is the boundary (§4); a build cannot touch the bond. Moves to a publisher stake in phase 3 |
+| Finalize an epoch root | `quorum` = a constant count of operators | quorum = a **fraction of active bonded stake**, and the root is over the *finalized* MatchBook set, so proposing a wrong root is a slashable claim (§11.6) |
+| Post on chain for a node | the operator's cold key in a shell | the delegated hot key (§2.2); the cold key only stakes, unstakes and delegates |
+| The deployer key | exposed in a transcript | rotated to W2 on 19 Sep 2026 (`contracts/MIGRATION.md` v1 → v2; the exposed address holds nothing). W2 is still one wallet holding `admin` everywhere; it hands over to the multisig in the v3 migration |
+
+The rule: an authority is a contract rule, a multisig behind a timelock, or a
+bonded key whose misuse costs the bond. Nothing else.
+
+### 2.4 ReleaseRegistry — built, undeployed
+
+`contracts/ReleaseRegistry.sol`. `register(bytes32 zipHash, string version,
+bytes32 protocol, uint64 activatesAt)` by `admin`, `activatesAt ≥ now +
+activationDelay`; `revoke(zipHash)` by `admin` at any time (a bad release is
+pulled faster than it is shipped; revocation needs no delay). `statusOf(
+zipHash)` returns `(registered, active, revoked, version, activatesAt)`.
+
+Node-side (`protocol/release.js`, `node/update.js`): `check()` verifies the
+manifest signature as before, then reads `statusOf(zipHash)` for the zip it
+would download. `apply()` refuses a release that is unregistered, revoked or
+not yet active, and says which. With no chain configured the node keeps the
+v0.2 behaviour and `/health.update.registry` says `unset` — the same honest
+label pattern as staking and profiles. The self-repair path (an install
+missing `sdk/`) obeys the same gate.
 
 ---
 
@@ -204,6 +320,13 @@ on Liteforge.
 Signed heartbeats gossiped between peers (`protocol/snapshot.js`), overlaid
 with NodeStake reads. A heartbeat whose signer is not its `nodeId` is
 discarded. Epochs are 2 s; a peer is fresh while `epoch >= now - 2`.
+
+**What gossip carries (v0.3):** heartbeats, the open and just-closed queue
+buckets, and placement descriptors — everything bounded by *who is online
+now*. It no longer carries delta advertisements: the chain is the index a
+witness reads (§11), so the payload cannot grow with history. The v0.2
+payload advertised every delta ever settled on every tick and would have
+crossed the 4 MB body limit within hours at target load.
 
 `GET /snapshot` returns fresh, bonded peers plus one manifest per `rulesetId`:
 the build held by the most nodes wins, ties break lexicographically, so a
@@ -222,9 +345,16 @@ the adapter as one thing; the manifest records the engine version and commit.
 A node that sees a peer advertising a `buildHash` it lacks fetches the source,
 refuses it unless the bytes hash to the pinned value, caches it, and loads it.
 
-**Limits.** Custody is opportunistic; no replica set, no proof of custody. The
-runtime is an ES module import — fine among bonded operators, not fine when
-registration is permissionless; Wasm with a pinned runtime is the answer.
+**Custody.** Builds are never evicted (§16). Ledgers: the host and the three
+drawn witnesses are the match's named custodians in its `settle` event and
+must serve it for the season, on pain of a custody challenge (§11.5). Before
+phase 3 lands, custody is opportunistic and labelled so.
+
+**Runtime.** Title code runs only in a separate `--permission` process with
+no filesystem, network or child-process access, an empty environment, a
+memory cap and a deadline (`node/sandbox.js`). That is the boundary that
+lets a permissionless node load a build it did not author. Wasm with a
+pinned runtime remains the stronger answer and the seam is kept.
 
 ---
 
@@ -244,6 +374,18 @@ host     = order[0]
 witness  = first in ranked order with role=witness under a different staking
            address and a different node key
 ```
+
+**Witness panel (v0.3, phase 2).** Ranked matches draw **k = 3** witnesses,
+not one: walk the seeded order, weighting each node's draw by its bonded
+amount (`H(seed ‖ nodeId)` scaled by `stake / totalStake`, so a node with
+twice the bond is drawn about twice as often — the cost of a panel seat
+scales with the stake behind it), skipping nodes that are not
+`witnessEligible` (§2.2), share the host's staking address, or already sit
+on the panel. Two of three agreeing on the same `resultHash` finalizes the
+match; the third, if it attested differently, is slashed. The panel is
+recorded in the `commit` event, so "who was supposed to attest" is on chain
+before the match is played. Fewer than three eligible nodes: the match is
+placed casual-only and the cabinet says why.
 
 - One node and fifty nodes are the same code path.
 - Publisher affinity keys on node keys in the manifest, so claiming an
@@ -277,24 +419,54 @@ fix. Offline nodes substitute a labelled local string.
 ```
 QUEUE     Player signs {playerId, rulesetId, tokenId, mode, bucket, region}.
 PAIR      Every node computes the same pairs once the bucket's beacon exists.
-HYDRATE   Each side reads the ERC-6699 tokens, applies the title's balance
-          mapping, builds the hydrationManifest (§8).
+COMMIT    (ranked) The drawn host's delegate sends
+            MatchBook.commit(matchId, descriptorHash, hostKey, panel[3])
+          BEFORE play. The chain now holds who plays, which build, which
+          host, which panel — bound to the beacon block. A ranked match
+          with no commit is unplaceable; the client refuses to launch it.
+HYDRATE   Each side reads the ERC-6699 tokens at the commit's block, applies
+          the title's balance mapping, builds the hydrationManifest (§8).
 PLAY      V1 reference: both clients connect to the drawn relay node, which
           holds a first-write-wins ledger. V1 target: WebRTC peer to peer,
           both clients hold the ledger, the node only signals.
           Every tick is appended to a hash chain: H('tick', prev, {k, inputs}).
 SIGN      At match end each player signs {matchId, ticks, head, buildHash,
           hydrationHash} once. A player who disagrees with the log does not
-          sign; the delta settles as disputed.
+          sign; the delta settles labelled and never becomes official.
 DELTA     { matchId, rulesetId, buildHash, seed, participants, mode,
             hydrationManifest, ticks, head, signatures, finalStateRoot,
-            scores, hostId, hostSig }
-VERIFY    The witness: checks both signatures and walks the chain
-          (protocol/log.js); rebuilds the hydration manifest from the
-          registry and refuses a mismatch (protocol/hydration.js); replays
-          in the pinned build; signs the root it reaches.
-SETTLE    Derived services folded (§9); leaf added to the hour's tree (§11).
+            scores, hostId, hostSig, resultHash }      (protocol/result.js)
+SETTLE    The host replays in the sandbox, computes resultHash, and its
+          delegate sends
+            MatchBook.settle(matchId, resultHash, ledgerHash, participants,
+                             scores, custodians)
+          within settleWindow blocks of the commit. The event IS the delta
+          record: a reader needs no node to learn the result. The ladder
+          shows it at once, labelled `pending` (§9).
+ATTEST    Each panel witness reads the Settled event, fetches the ledger from
+          a custodian, verifies both signatures, walks the chain, rebuilds
+          hydration from the registry at the commit block, replays in the
+          pinned build, and sends attest(matchId, resultHash) for the hash IT
+          reached. A different hash is a dispute(matchId, myResultHash) —
+          the same transaction shape, a different value.
+FINAL     After attestWindow blocks, the contract finalizes the resultHash
+          with 2-of-3 panel agreement (stake-weighted on a tie of counts).
+          A panel member who attested another hash is slashed; a host whose
+          settle lost is slashed and the match is void. No agreement, or a
+          dispute inside the window: ESCALATE (§11.3).
+EPOCH     Anyone proposes the hour's root over the FINALIZED set (§11.6).
 ```
+
+Casual matches skip COMMIT/ATTEST/FINAL: the host settles locally as in
+v0.2, the delta is served from the host and labelled `casual`, never
+official. Attested titles (§7) commit and settle the same way with the
+court's report hash as `ledgerHash`; the panel re-checks the court signature
+and the rulebook, not a replay, and the event says `verifiable: false`.
+
+**Transactions per ranked match:** commit, settle, three attests — five, plus
+a dispute and escalation when something is wrong. Every one of them is a
+claim with stake behind it. Heartbeats, queue entries and gossip stay off
+chain: they secure nothing and would only raise the cost of the ones that do.
 
 **Measured, not asserted** (`demo/af-adapter.test.mjs`, af-core-8):
 
@@ -420,20 +592,44 @@ semantics and bundle hashing, not stats, until the engine reads all four.
 ## 9. Derived services and universal leaderboards
 
 `protocol/derive.js`: leaderboard, credits and stats are a **pure fold over
-the sorted delta set** (by epoch hour, then matchId), idempotent by matchId,
-so two nodes holding the same deltas produce the same digest. Ranked deltas
-without a co-signer are skipped when asked, and reported.
+the delta set**, idempotent by matchId, so two readers holding the same set
+produce the same digest. The fold itself does not change in v0.3; **what
+changes is the set and its order**:
+
+- **The set is the `MatchBook` event log** (§11), read by every node — and by
+  the cabinet straight from RPC when no node answers — never a node's local
+  files. v0.2's ladders were each node's own hosted matches; the hosted
+  cabinet showed whichever seed answered. That is gone.
+- **Order is block order** (`blockNumber`, `logIndex`), which every reader
+  already agrees on. The epoch-hour-then-matchId sort remains for casual
+  and off-chain sets.
+- **Official = finalized.** The official ladder folds `Finalized` results
+  only. A `Settled` result not yet finalized is folded into a second,
+  `pending` view the cabinet shows beside the official one with the label —
+  a player sees their rating move at settle and sees it become official
+  when the window closes, and can re-queue at once. A finalized void (host
+  slashed) is a no-op in the fold; nothing is ever un-folded.
+- **Elo stays off chain.** The contract holds results, not ratings. An
+  on-chain `ratingOf` would make the fold depend on finalization order and
+  need rollback logic for reversals; a reproducible fold with its digest
+  anchored per epoch (§11.6) is as provable and simpler. This is a decision,
+  not a deferral.
+- **Incremental.** A node keeps a cursor `(block, logIndex)` and folds new
+  events as they arrive; `/leaderboard` is a read of the current tables, not
+  a recomputation. A restart replays from the last anchored epoch.
 
 **Per-title ladders are the truth.** Elo does not transfer between games. The
-universal layer is the reputation ledger: co-signed ranked match counts,
+universal layer is the reputation ledger: finalized ranked match counts,
 distinct opponents, win rates by title, seasons aligned to epoch roots — no
-merged rating. Eligibility is enforced in the fold: ranked only, co-signed
+merged rating. Eligibility is enforced in the fold: ranked only, finalized
 only, stasis excluded, distinct-opponent minimums, diminishing returns per
-opponent. Player keys register against AIR identities, and the fold counts
-identities, not keys.
+opponent. Player keys register against PlayerProfile / AIR identities, and
+the fold counts identities, not keys (`applyProfiles`). The reputation
+ledger is specified, not built.
 
 Reads: `GET /leaderboard`, `/credits`, `/stats`, each carrying the derivation
-version so a ladder is `(delta set, version) → tables`.
+version, the cursor they were folded to and `scope` (`official` | `pending`
+| `all`), so a ladder is `(event log to cursor, version) → tables`.
 
 ---
 
@@ -446,16 +642,167 @@ match critical path. Convention today; the SDK build step makes it an error
 
 ---
 
-## 11. Settlement — protocol built, contracts undeployed
+## 11. Settlement — the chain as the index
 
-`protocol/epoch.js`: `leaf = H('leaf', {matchId, rulesetId, buildHash,
-finalStateRoot, hydrationHash, scores, hostId, cosigners[]})`; sha256 binary
-tree over the sorted, deduplicated leaf set; inclusion paths; calldata for
-`anchorEpoch(uint64,bytes32)` with selector `0xbc978154` (derived with keccak
-and asserted by test; v0.1's `0x7e8a0a8b` was wrong).
+### 11.1 Why per-match, on chain
 
-The node prepares calldata and never holds a chain key. The operator
-broadcasts with their own.
+Two requirements decide it (§0.1 R4, R5). A result is *provable* when a
+third party can find it without asking a node that might be gone or lying;
+a network is *secured* by transactions when each transaction puts stake
+behind a claim that a contract can later hold it to. An hourly root over a
+set only one node holds meets neither. So the unit of settlement is the
+ranked match, the record is an event on litVM, and the epoch root becomes a
+checkpoint over what the chain already finalized.
+
+### 11.2 `MatchBook` — specified (phase 2)
+
+```solidity
+struct Match {
+  bytes32 descriptorHash; bytes32 hostKey; bytes32[3] panel;
+  uint64  committedAt;    // block
+  bytes32 resultHash;     bytes32 ledgerHash;
+  uint64  settledAt;      uint8 attests; uint8 disputes;
+  bytes32 finalHash;      uint8 status; // 0 committed 1 settled 2 final 3 void 4 escalated
+}
+function commit (bytes32 matchId, bytes32 descriptorHash, bytes32 hostKey, bytes32[3] panel) external;
+   // by hostKey's delegate/operator; panel keys witnessEligible, distinct operators, ≠ host's
+function settle (bytes32 matchId, bytes32 resultHash, bytes32 ledgerHash,
+                 bytes32[] participants, int64[] scores, bytes32[] custodians) external;
+   // by the committed host, within settleWindow of committedAt; emits Settled with every field
+function attest (bytes32 matchId, bytes32 witnessKey, bytes32 resultHash) external;
+   // by a panel member's delegate, once, within attestWindow of settledAt
+function dispute(bytes32 matchId, bytes32 witnessKey, bytes32 altHash) external; // = attest with ≠ hash
+function finalize(bytes32 matchId) external;   // anyone, after attestWindow; applies §11.3
+function escalate(bytes32 matchId, bytes calldata ledger) external; // anyone; see §11.3
+event Committed(bytes32 indexed matchId, bytes32 indexed hostKey, bytes32 descriptorHash, bytes32[3] panel);
+event Settled  (bytes32 indexed matchId, bytes32 indexed rulesetId, bytes32 resultHash, bytes32 ledgerHash,
+                bytes32[] participants, int64[] scores, bytes32 buildHash, bytes32[] custodians);
+event Attested (bytes32 indexed matchId, bytes32 indexed witnessKey, bytes32 resultHash, bool agrees);
+event Finalized(bytes32 indexed matchId, bytes32 finalHash, uint8 status);
+```
+
+`MatchBook` is an `adjudicator` in NodeStake v3: it slashes directly, from
+its own state, with the matchId as `reason`: the host `hostSlashBps` (10 %
+testnet) when the escalation majority rejects its result, a panel key
+`witnessSlashBps` (5 %) when it voted against the majority. Windows are
+seconds, parameters set by `admin` (multisig): testnet `settleWindow = 60`,
+`attestWindow = 120`, `escalationWindow = 300`, `drawDelay = 2` blocks;
+mainnet proposals in the RFC. `expire(matchId)` — anyone — voids a commit
+never settled or an escalation nobody fed within its window: no state is
+forever. NodeStake's `unbondingPeriod` must exceed `totalWindow()` =
+settle + 2 × attest (one liveness extension) + 2 × escalation (feeding the
+ledger, then the nine); the deploy tool refuses otherwise.
+
+`resultHash` is exactly `protocol/result.js`'s commitment — the same bytes a
+v0.2 witness co-signed — so the node code that computes it does not change;
+what changes is where the signature goes. `descriptorHash` is
+`node/settle.js`'s, over the frozen placement.
+
+### 11.3 Finality and disputes — no human in the loop
+
+At `finalize`:
+
+| Panel outcome | Result |
+|---|---|
+| ≥ 2 attests on the host's `resultHash` and **no dissent** (the third agreed or never answered) | **final**. Nobody slashed: an absent witness forfeits its attest share (§11.4), nothing more. |
+| any attest on another hash — one dissenter is enough | **escalated**, whatever the count. Two panel seats plus the host are not asked to outvote a third on their own word; the nine decide, and the losing side of *either* panel pays. |
+| fewer than 2 attested and no dissent | the attest window is **extended once** (witness liveness is not a dispute); still fewer than 2 afterwards → **escalated**. |
+
+The contract does not adjudicate 2-against-1 by itself in either direction:
+a host with two friendly seats would otherwise finalize over an honest
+third, and two colluding seats would otherwise void an honest host. Every
+disagreement goes to a fresh, larger, random panel.
+
+Escalation is where a contract that cannot replay Agent Fighter gets an
+answer anyway. `finalize()` names a **future block** (`drawDelay` ahead) as
+the seed; once it exists, `escalate(matchId, ledger)` — anyone, typically a
+custodian — posts the full ledger to calldata (its sha256 must be the
+committed `ledgerHash`, so it can no longer be withheld or swapped; ~40 KB
+for a three-minute Agent Fighter match) and the contract draws a **panel of
+nine** from the enrolled pool, seeded by that block's hash, stake-weighted,
+one seat per operator, excluding the original panel, the host and their
+operators, and **snapshots each seat's weight at the draw**. The nine attest
+within `escalationWindow`; the **stake-weighted strict majority of the
+snapshot** decides; every key on either panel that attested against the
+majority is slashed; a host whose result the majority rejected is slashed
+and the match voided. Fewer than nine eligible nodes: the match is voided
+and nobody slashed — the honest answer when the network is too small to
+adjudicate. Two attacks the 22 Sep review found are closed by construction
+and exercised in `demo/matchbook-vm.test.mjs`: a top-up after the draw does
+not move the tally (the snapshot), and the caller of `escalate()` cannot
+choose the seed (the block is named before anyone can act).
+
+What this does and does not protect against, stated: a colluding host plus
+two panel seats can pass a false result only if they also win a random
+nine-seat panel of stake; the cost is the stake behind twelve seats against
+a pot of ten credits. An adversary holding a majority of *all* bonded stake
+can rewrite results — that is true of any stake-secured system and is what
+`minStake` and `lockTerm` are priced against. Sequencer influence over the
+beacon (§5.2) remains the stated gap.
+
+### 11.4 Who pays, who earns
+
+The node's delegated hot key pays gas for commit, settle, attest, dispute
+and claims. Per ranked match a fee `matchFee` (parameter; source: the
+title's pot, or a per-match charge on the players' proxy wallets, to be
+decided per title) accrues in `MatchBook` and is split at finality: host
+share, one attest share per agreeing panel member, the remainder to
+`treasury`. `claim(nodeKey)` pays a node's accrued shares in one
+transaction whenever its operator likes. No paymaster: a treasury that pays
+everyone's gas is a softer single point of failure — when it runs dry,
+settlement stops. Operators fund their own hot key and earn it back by
+serving. This is the loop that makes "anyone can run a node" true rather
+than charitable, and it is phase 3.
+
+### 11.5 Custody
+
+The `Settled` event names the custodians: the host and the panel. Each must
+serve `GET /ledger/:matchId` for the season. A custody challenge is cheap
+because a ledger commits to its ticks: `challenge(matchId, custodianKey,
+tick)` on chain; within `custodyWindow` the custodian answers
+`respond(matchId, tick, entry, proof)` and the contract checks the entry
+against the committed `ledgerHash`. Whether `ledgerHash` stays the hash
+chain head (then the proof is the run of heads from `tick` to the end,
+O(ticks) calldata) or becomes a Merkle root over the entries (O(log ticks))
+is the one open question for the RFC; the Merkle form is the expected
+answer. A missed response is slashed `custodySlash`. Phase 3.
+
+### 11.6 Epoch root — `EpochAnchor` v3, checkpoint over the finalized set
+
+`protocol/matchbook.js chainLeaf`: `leaf = H('leaf3', {matchId, rulesetKey,
+buildHash, resultHash, ledgerHash, participants, scores, hostKey, finalHash,
+status})` — every field from the `Settled` and `Finalized` events, so every
+reader of the log builds the same leaf; a voided match is a leaf too, with
+its status. `chainEpoch`: the sha256 binary tree (`protocol/epoch.js`) over
+the sorted, deduplicated leaves of every match whose `Finalized` event sits
+in a block of that hour; inclusion paths. Since every leaf is already an
+on-chain event, the root is a checkpoint — cheap for a third party to verify
+one match against without an archive node — not the source of truth.
+
+`EpochAnchor` v3: `propose(epoch, root, nodeKey)` by the key's delegate or
+operator; support is the sum of the proposing nodes' bonded amounts; the
+root finalizes when its support reaches `quorumBps` of `NodeStake.
+totalActive` (v2's count of operators, which one entity funding N stakes
+could manufacture, is retired). One proposal per node key per epoch. The
+settler proposes each frozen hour it holds finalized matches for, from its
+delegate, on its own (`node/matchbook.js propose`); `tools/anchor-epoch.mjs`
+is the manual path and the finality check. Slashing a contradicting root is
+NOT built: a contract cannot enumerate the hour's finalized set to prove a
+root wrong, so `EpochAnchor` is not an adjudicator. A wrong proposal from
+a minority of stake simply never finalizes.
+
+### 11.7 Load, stated
+
+Target: 10,000 active players across ten titles, ~4-minute matches — roughly
+10–35k ranked matches an hour. Five transactions per match is ~14–50 tx/s
+sustained, plus ~40 KB of calldata per escalation. **This number has not been
+checked against Liteforge**, whose gas cap is 32M per block on demand at
+~250 ms; the on-chain `Settled` event with participants and scores is
+~1–2 KB of log data. The fallback if the chain cannot take it: keep
+`commit` per match (the security-bearing one that must precede play) and
+batch `settle`/`attest` as per-minute Merkle roots — still provable per match
+by proof, ~10× fewer transactions. The question to Caldera is item 1c of §17
+and blocks phase 2 parameters, not phase 2 code.
 
 | | |
 |---|---|
@@ -497,7 +844,7 @@ client and a community can rehost a dead publisher's frontend.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/snapshot` | Bonded fresh peers, manifests, root |
-| POST | `/gossip` | Merge heartbeats, queue, match descriptors, deltas |
+| POST | `/gossip` | Merge heartbeats, queue, match descriptors (deltas until phase 2 lands; then never) |
 | POST | `/queue` | Signed queue entry |
 | GET | `/match?playerId=` | The pair a player belongs to, with placement |
 | GET | `/ruleset/:rulesetId` | Ruleset source, verified by hash |
@@ -506,9 +853,10 @@ client and a community can rehost a dead publisher's frontend.
 | GET | `/ledger/:matchId` | Chained log + signatures |
 | GET | `/delta/:matchId` | Delta and co-signatures |
 | POST | `/cosign` | Witness signature |
-| GET | `/leaderboard`, `/credits`, `/stats` | Derived tables + derivation version |
-| GET | `/epoch?epoch=` | Leaf set, root, anchor calldata |
-| GET | `/health` | Identity, bond status, peers, rulesets, chain |
+| GET | `/leaderboard`, `/credits`, `/stats` | Derived tables + derivation version, cursor, `scope=official|pending|all` |
+| GET | `/epoch?epoch=` | Leaf set over the finalized hour, root, proposal calldata |
+| GET | `/match/:matchId/chain` | the match's `MatchBook` status, panel and events, as this node read them from the log |
+| GET | `/health` | Identity, bond status (`bondedSince`, `witnessEligible`, delegate), release registry status, peers, rulesets, chain |
 
 ---
 
@@ -524,6 +872,9 @@ rulesets     = ["./rulesets/agent-fighter.v1.js"]
 rpc          = "https://liteforge.rpc.caldera.xyz/http"
 node_stake   = "0x…"                        # NodeStake address; unset = unbonded dev mesh, reported
 registry6699 = "0x…"                        # unset = fixtures, reported
+release_registry = "0x…"                    # ReleaseRegistry; unset = signature-only updates, reported
+match_book   = "0x…"                        # (phase 2) MatchBook; unset = local settlement, never official
+delegate     = "<dataDir>/delegate.json"    # the hot EVM key; gas only. Operator runs `npm run delegate -- <nodeId> <addr>`
 ```
 
 ```bash
@@ -543,6 +894,11 @@ node tools/bundle-ruleset.mjs     # rebuild the Agent Fighter artifact
 | `demo/settle.test.mjs` | Two nodes: a player-signed ledger settles on the host with attestation `players`; the witness under another operator fetches ledger and delta over gossip, replays independently and co-signs; ladder, stats and credits derive with a version; the hour's tree carries the leaf and its proof verifies; a tampered ledger is refused on signatures before replay; a host cannot co-sign itself; an unsigned ledger settles labelled `host`. Second test: every imported real relay ledger on the current engine reproduces the relay's recorded hash and end tick (`relay` attestation) | 2 |
 | `demo/arcade.test.mjs` | Node serves the lobby and protocol modules (no path escape); player identity persists in storage; two clients queue at different nodes, are paired identically, and each recomputes placement and accepts the node's host; a descriptor naming another host is refused with "the rule did not produce" | 1 |
 | `demo/attested.test.mjs` | Pickle Brawl rulebook validation (to 11, win by 2, seat count by mode, abandoned games); a court-signed doubles report settles `attested`/`verifiable: false`; the witness co-signs attestation-only over gossip; team Elo, pot and stats derive; refusals for a rulebook violation, a missing signature and a wrong key | 2 |
+| `demo/contracts.test.mjs` | Every contract compiles; NodeStake v3 keeps the v2 `standingOf` shape every reader declares, has no slasher, and its hand-encoded selectors (`protocol/staking.js`, `protocol/release.js`) match solc's | 4 |
+| `demo/release-registry.test.mjs` | Registry calldata and decoders round-trip against ethers; the updater refuses a signed release that is unregistered, pending, revoked or unreadable, re-asks the chain at apply time, applies an active one, and says `unset` with no registry | 4 |
+| `demo/matchbook.test.mjs` | MatchBook selectors and event topics match solc; every delegate-sent calldata (commit, settle with dynamic arrays and int64 scores, attest, finalize, escalate with the ledger bytes, resolve, enroll) equals ethers' encoding; reads decode; ethers-emitted logs decode; the fold gives official and pending ladders with the same digest in any log order and drops voids | 4 |
+| `demo/matchbook-vm.test.mjs` | The contracts EXECUTED (`@ethereumjs/vm`, `demo/lib/evm.mjs`): NodeStake v3 lock, top-up age, re-stake lock, delegate powers, adjudicator-only slash, bounded params; MatchBook commit refusals, settle window and expiry, happy path, one-witness extension then escalation then expiry, a dissent → nine seats → majority against the host (host 10 %, lie-voters 5 %, dissenter untouched, whale top-up after the draw counts for nothing and costs 5 % of the larger bond, treasury delta = sum of cuts), majority for the host, too few nodes → void with no slash, and the protocol fold over the real log | 6 |
+| `demo/matchbook-node.test.mjs` | Five litnodes on the real NodeStake v3 + MatchBook over an in-process RPC (`demo/lib/rpc-evm.mjs`: eth_call, raw transactions from the nodes' delegate keys, receipts, logs, blocks): two players placed, the host commits before play with the panel the mesh drew, players play TUG and sign, the host settles (result commitment and ledger sha256 on chain), exactly the three panel nodes attest from their own delegates, the host finalizes, all five nodes serve the same chain-folded ladder digest, gossip carries no deltas | 1 |
 | `demo/mesh.test.mjs` | Three in-process nodes: gossip converges, snapshot roots agree, ruleset spreads by hash to operators never given it, tampered bytes refused, forged queue entry refused, players queued at different nodes paired identically with the same host and witness, publisher stops and ages out in ~6 s, the draw falls through and the title keeps taking matches | 1 (multi-assertion, ~14 s) |
 
 **Universality suite (specified).** One token hydrated by two real titles
@@ -566,9 +922,34 @@ manifest completeness, bounded ranked mapping. A title that passes is listed.
   backed by the relay's recorded result matching our replay, and by the
   bonded settler's signature. Player-signed ledgers are exercised in tests
   only until the client signs them.
-- **Delta gossip is by advertisement, not replication.** A witness fetches
-  from the host's address; if the host is gone before a witness saw it, the
-  delta has one signature. No obligatory custody yet.
+- **Until phase 2 lands, delta gossip is by advertisement, not
+  replication, and every node's ladder is a fold over the matches IT
+  hosted.** A witness fetches from the host's address; if the host is gone
+  before a witness saw it, the delta has one signature; the hosted cabinet
+  shows the ladder of whichever seed answered. The gossip payload carries
+  every delta ever settled on every tick. This is the v0.2 model and it is
+  wrong at any real scale (§0, "what changed"); it is replaced by §6/§11,
+  not patched.
+- **Nothing of Settlement v1.0 is deployed.** Phase 1 (keys, locked stake,
+  release registry) and phase 2 (`MatchBook`, the panel, escalation, the
+  node sending and attesting, the chain-folded ladder) are built and
+  executed only on an in-process EVM; Liteforge has the v2 contracts. Fees
+  and custody challenges (phase 3) are specified, not built. Automatic epoch
+  proposal waits on EpochAnchor v3. The cabinet does not yet show the
+  `pending` ladder. `TitleRegistry` (publisher rules and auth, a separate
+  workstream) is deployed by the same tool and is not part of this spec.
+- **Ranked play through the mesh is still Agent Fighter through its relay,
+  which settles `relay`-attested and never reaches MatchBook.** The end to
+  end test plays TUG through the SDK client with both players signing;
+  Agent Fighter's client does not sign yet (roadmap 1b).
+- **Liteforge throughput at target load is unverified** (§11.7). The design
+  has a stated fallback; the parameters wait on Caldera's answer.
+- **`admin` is an EOA until the multisig exists.** The contracts only know
+  an address. Until a multisig behind a timelock holds `admin`, the
+  authority map (§2.3) is a plan and `/health` says `admin: eoa`.
+- **Anchoring is manual on Liteforge today** (v2 contracts, each node's
+  tree over its own hosted matches). The v3 node proposes automatically over
+  the chain-finalized set; it is built and undeployed.
 - **The lobby places matches; it cannot yet play them.** A host advertises no
   relay (`wsAddr` is null) until the relay role runs on the mesh (roadmap
   item 3), and the page says so instead of launching. No P2P transport yet.
@@ -579,17 +960,20 @@ manifest completeness, bounded ranked mapping. A title that passes is listed.
 - **Snapshot roots commit to the registry view, not to epochs**, so a client
   can tell "the node named a host the rule did not produce" from "the
   eligible set moved between the node's draw and my check".
-- **Contracts are deployed but unaudited, with a single testnet slasher key
-  held by the deployer wallet.** The deployer key was exposed during setup;
-  it controls only testnet tokens and should be rotated before anything of
-  value touches these contracts.
-- **Contracts compile, are undeployed and unaudited.** NodeStake's slasher is
-  a single testnet key. TestLITVM is a faucet mock, not the token.
+- **The deployed v2 contracts have a single slasher key held by the
+  deployer wallet, which was exposed during setup.** NodeStake v3 removes
+  the slasher role entirely (§2.2); until v3 is deployed and the multisig
+  takes `admin`, the exposed key can still slash on testnet. TestLITVM is a
+  faucet mock, not the token. Nothing is audited.
 - **Beacon is not secure against the sequencer.** By the chain's own docs.
-- **Custody is opportunistic.** No replica set, no proof of custody.
-- **Rulesets are ES modules, not sandboxed.** Bonded operators only.
-- **One witness, no disagreement path.** Differing roots are logged.
-- **No economics.** Credits reconcile against no reserve; nothing is paid.
+- **Custody is opportunistic** until phase 3.
+- **Rulesets run in a `--permission` sandbox process, not Wasm.** The
+  sandbox is the boundary for permissionless nodes; a runtime escape in
+  Node's permission model is a risk this design accepts and states.
+- **One witness and no disagreement path** until phase 2. Differing roots
+  are logged and filed as signed disputes; nothing adjudicates them.
+- **No economics** until phase 3. Credits reconcile against no reserve;
+  nothing is paid; the fee split is specified.
 - **No agent role.**
 - **Peer-to-peer disconnects settle as no-contest.** No referee, no forfeit.
 - **Pickle Brawl results are attested, not verified.** The node checks the
@@ -671,6 +1055,33 @@ to that consolidation.
    read `ownerOfKey`, ladders fold by owner on request. Exit: a match
    started with *Find match* appears in that player's record, co-signed by
    another operator.
+1c. **Settlement v1.0, phase 1 — no single key (built 21 Sep 2026,
+   deploy next).** `NodeStake` v3 with the locked term, eligibility age,
+   delegated hot key and adjudicator-only slashing; `ReleaseRegistry` and
+   the node's update gate; deploy tool refuses `unbondingPeriod ≤` the
+   dispute windows and warns on an EOA `admin`; `contracts/MIGRATION.md`
+   v2 → v3 (re-bond every node from its operator wallet — the lock starts
+   then; set delegates; hand `admin` to the multisig). **In parallel: ask
+   Caldera for Liteforge's sustained tx/s and log-data cost at the §11.7
+   profile.** Exit: every bond on the testnet is locked and delegated,
+   `/health` reports `witnessEligible`, `admin` is a multisig or the zero
+   is written down.
+1d. **Phase 2 — `MatchBook` (weeks 2–5).** The contract (§11.2–11.3, no
+   fees yet), the k=3 stake-weighted panel in `protocol/placement.js`, the
+   node sending commit/settle/attest from its delegate, `witnessOne` becomes
+   "am I on this panel?", `derive` over the event log with a cursor, the
+   cabinet reading `pending` and `official`, the settler proposing epoch
+   roots automatically, delta advertisements removed from gossip, a sandbox
+   worker pool (one long-lived child per build; the fork was the cost, not
+   the replay), append-only ledger storage. Exit: a ranked match from *Find
+   match* is committed before launch, settled, attested by three operators
+   and finalized on Liteforge, and the same ladder row appears on every
+   node and on the cabinet reading RPC alone.
+1e. **Phase 3 — open hosting (weeks 6–8).** Fee split and `claim`, custody
+   challenges, escalation panel exercised with a deliberately wrong host on
+   testnet, a one-command "bond and run" for a stranger's machine, the
+   reputation ledger fold. Exit: a node bonded by someone outside the team,
+   drawn to a panel, paid for it.
 2. **Second in-house title (weeks 3–5).** AFC: its engine is deterministic
    and re-simulating, the `defineTitle` shape; bundle it. Pickle Brawl
    online as an attested report from its server. Manifest declares
@@ -686,9 +1097,10 @@ to that consolidation.
    as a release artifact.
 5. **Retire Railway** when the mesh has carried production traffic through
    item 3 with measured downtime the team accepts.
-6. On-chain registry reads · obligatory replica sets · Wasm rulesets · deploy
-   and audit contracts after a cross-language keccak test · SDK availability
-   guard · agent role, committed mode first.
+6. On-chain registry reads · Wasm rulesets · audit the v3 contracts and
+   `MatchBook` before mainnet · VRF or commit-reveal beacon · verifiable-VM
+   replay for escalation · SDK availability guard · agent role, committed
+   mode first.
 
 **Rules that keep it composable.** Every seam is an interface, a reference
 and a conformance test. The protocol package changes by RFC only, with a

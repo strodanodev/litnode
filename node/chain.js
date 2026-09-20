@@ -2,12 +2,14 @@
  *  Every read reports its source so a fallback never looks like a chain read. */
 import { beaconFromBlocks, blockOf, localBeacon } from '../protocol/beacon.js';
 import { bucketOf } from '../protocol/pairing.js';
-import { standingCall, decodeStanding } from '../protocol/staking.js';
+import { standingCall, decodeStanding, nodeOfCall, decodeNode, adminIsContractCall, decodeBool, witnessEligibleCall } from '../protocol/staking.js';
+import { statusOfCall, decodeStatus } from '../protocol/release.js';
+import { buildStatusCall, decodeBuildStatus, titleOfCall, decodeTitle } from '../protocol/title.js';
 import { ownerOfKeyCall, decodeOwner, nameOfCall, decodeString } from '../protocol/profile.js';
 import { keysCall, decodeKeys, entryOfCall, decodeEntry } from '../protocol/directory.js';
 import { readAgent } from '../protocol/registry.js';
 
-export function createChain({ rpc, offline = false, nodeStake = null, playerProfile = null, nodeDirectory = null, erc6699 = null, fetchImpl = globalThis.fetch }) {
+export function createChain({ rpc, offline = false, nodeStake = null, playerProfile = null, nodeDirectory = null, erc6699 = null, releaseRegistry = null, titleRegistry = null, fetchImpl = globalThis.fetch }) {
   let id = 0;
   const blocks = [];
   let lastError = null;
@@ -68,6 +70,7 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
   };
 
   /** NodeStake.standingOf for many keys. Missing contract → null (dev mesh). */
+  let stakeIsV3 = null; // witnessEligible answered once → v3; reverted once → v2, never asked again
   const standings = async (nodeIds) => {
     if (!nodeStake || offline) return null;
     const out = {};
@@ -75,9 +78,47 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
       try {
         const res = await call('eth_call', [standingCall(nodeStake, nodeId), 'latest']);
         out[nodeId] = decodeStanding(res);
+        if (stakeIsV3 !== false && out[nodeId].active) {
+          try { out[nodeId].eligible = decodeBool(await call('eth_call', [witnessEligibleCall(nodeStake, nodeId), 'latest'])); stakeIsV3 = true; }
+          catch { if (stakeIsV3 === null) stakeIsV3 = false; }
+        }
       } catch (e) { lastError = String(e.message ?? e); }
     }
     return out;
+  };
+  /** eth_getLogs for a filter (protocol/matchbook.js logsFilter). Throws on an RPC failure so a cursor is never advanced past a gap. */
+  const getLogs = async (filter) => { if (offline) return []; return await call('eth_getLogs', [filter]); };
+  const blockNumber = async () => { if (offline) return null; return parseInt(await call('eth_blockNumber', []), 16); };
+
+  /** NodeStake v3: lock, eligibility age and delegate for ONE key. A v2
+   *  contract has no nodeOf and reverts → null, labelled by the caller. */
+  const nodeInfo = async (nodeId) => {
+    if (!nodeStake || offline) return null;
+    try { return decodeNode(await call('eth_call', [nodeOfCall(nodeStake, nodeId), 'latest'])); }
+    catch (e) { lastError = String(e.message ?? e); return null; }
+  };
+  /** Is NodeStake's admin a contract (multisig / timelock) or a wallet. null = unknown / v2. */
+  const stakeAdminIsContract = async () => {
+    if (!nodeStake || offline) return null;
+    try { return decodeBool(await call('eth_call', [adminIsContractCall(nodeStake), 'latest'])); } catch { return null; }
+  };
+  /** ReleaseRegistry.statusOf(zipHash). Missing contract → null; an RPC
+   *  failure THROWS so the updater can tell "unset" from "unreadable". */
+  const releaseStatus = async (zipHash) => {
+    if (!releaseRegistry || offline) return null;
+    return decodeStatus(await call('eth_call', [statusOfCall(releaseRegistry, zipHash), 'latest']));
+  };
+  /** TitleRegistry.buildStatus(titleId(rulesetId), buildHash): who holds the
+   *  title and whether this build is registered, active, revoked. Missing
+   *  contract → null; an RPC failure THROWS (unreadable ≠ unregistered). */
+  const titleBuild = async (rulesetId, buildHash) => {
+    if (!titleRegistry || offline) return null;
+    return decodeBuildStatus(await call('eth_call', [buildStatusCall(titleRegistry, rulesetId, buildHash), 'latest']));
+  };
+  /** TitleRegistry.titleOf: the publisher (token holder) of a rulesetId; null = unregistered. An RPC failure THROWS so the caller keeps what it knew. */
+  const titleOwner = async (rulesetId) => {
+    if (!titleRegistry || offline) return null;
+    return decodeTitle(await call('eth_call', [titleOfCall(titleRegistry, rulesetId), 'latest'])).publisher;
   };
 
   /** PlayerProfile.ownerOfKey for many player keys. Missing contract → null. */
@@ -116,7 +157,7 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
   };
 
   return {
-    pollBlock, beaconFor, standings, profiles, profileName, directory, agentAt, rpc: call,
-    status: () => ({ rpc, offline, nodeStake, playerProfile, nodeDirectory, erc6699, blocks: blocks.length, head: blocks.at(-1)?.number ?? null, lastError }),
+    pollBlock, beaconFor, standings, nodeInfo, stakeAdminIsContract, releaseStatus, titleBuild, titleOwner, getLogs, blockNumber, profiles, profileName, directory, agentAt, rpc: call,
+    status: () => ({ rpc, offline, nodeStake, playerProfile, nodeDirectory, erc6699, releaseRegistry, titleRegistry, blocks: blocks.length, head: blocks.at(-1)?.number ?? null, lastError }),
   };
 }

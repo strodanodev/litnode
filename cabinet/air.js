@@ -87,6 +87,20 @@ export async function nodeSession(nodeUrl, { playerKey = null, name = null } = {
   store(me.session);
   return me.session;
 }
+/** Publisher action from this account's proxy on the node that holds it:
+ *  { action: 'register'|'set-build'|'revoke'|'transfer', rulesetId, buildHash?, to?, activatesAt? }.
+ *  The node answers { tx, title: { publisher, build: { active, reason … } } }. */
+async function post(nodeUrl, path, body) {
+  const t = await token();
+  if (!t) throw new Error('no AIR session token');
+  const r = await fetch(`${nodeUrl}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: t, ...body }), signal: AbortSignal.timeout(180_000) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error ?? `node answered ${r.status}`);
+  return j;
+}
+export const publish = (nodeUrl, body) => post(nodeUrl, '/air/publish', body);
+/** Bond the node at nodeUrl from this account's proxy (approve + stake + delegate its announcer; testnet faucet when short). */
+export const bond = (nodeUrl) => post(nodeUrl, '/air/bond', {});
 /** Single sign-on into a title: AIR rewrites the launch URL with a one-time
  *  token so the title's own AIR Kit picks the session up without a second
  *  dialog (which an iframe could not show anyway — AIR's login page refuses

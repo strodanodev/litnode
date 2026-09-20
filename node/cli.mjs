@@ -14,6 +14,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createNode } from './litnode.js';
 import { createTui, formatEvent } from './tui.js';
+import { lanAddress } from './upnp.js';
+import { loadGauntletConfigs } from './gauntlet.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const deployedPath = join(root, 'contracts', 'deployed.testnet.json');
@@ -32,7 +34,10 @@ const node = await createNode({
   dataDir: env.DATA_DIR ?? join(root, 'data', env.OPERATOR ?? 'node'),
   port: Number(env.PORT ?? 7801),
   host: env.HOST ?? '127.0.0.1',
-  publicAddr: env.PUBLIC_ADDR ?? null,
+  // Listening on every interface with nothing set: advertise the LAN IPv4
+  // (what start-node.cmd computed for the zips), never 0.0.0.0. A tunnel
+  // replaces this with the public URL once it is up.
+  publicAddr: env.PUBLIC_ADDR ?? ((env.HOST ?? '127.0.0.1') === '0.0.0.0' ? `http://${lanAddress()}:${Number(env.PORT ?? 7801)}` : null),
   operator: env.OPERATOR ?? 'dev',
   roles: list(env.ROLES).length ? list(env.ROLES) : ['mesh', 'host', 'witness'],
   region: env.REGION ?? 'local',
@@ -62,6 +67,19 @@ const node = await createNode({
   // publishes its own addresses there. ANNOUNCE=0 reads only.
   nodeDirectory: env.NODE_DIRECTORY ?? deployed.NodeDirectory?.address ?? null,
   chainId: deployed.chainId ?? 4441,
+  // ReleaseRegistry: a release must be registered on chain and active before
+  // this node applies it (BUILD-SPEC v0.3 §2.4). Unset → signature-only, reported.
+  releaseRegistry: env.RELEASE_REGISTRY ?? deployed.ReleaseRegistry?.address ?? null,
+  // TitleRegistry: a title is an ERC-721 whose holder is the publisher; a peer's
+  // build loads when the chain says it is the title's active build. Unset →
+  // TRUSTED_PUBLISHERS signatures only, and /titles.published is null.
+  titleRegistry: env.TITLE_REGISTRY ?? deployed.TitleRegistry?.address ?? null,
+  stakeToken: env.STAKE_TOKEN ?? deployed.TestLITVM?.address ?? null,
+  // MatchBook: ranked matches committed, settled and attested on chain from the delegated key (BUILD-SPEC v0.3 §11).
+  matchBook: env.MATCH_BOOK ?? deployed.MatchBook?.address ?? null,
+  matchBookFromBlock: Number(env.MATCH_BOOK_FROM_BLOCK ?? deployed.MatchBook?.block ?? 0),
+  matchBookWindows: { attestWindow: Number(deployed.MatchBook?.attestWindowS ?? 120), escalationWindow: Number(deployed.MatchBook?.escalationWindowS ?? 300) },
+  epochAnchor: env.EPOCH_ANCHOR ?? ((deployed.EpochAnchor?.version ?? 1) >= 3 ? deployed.EpochAnchor?.address : null) ?? null,
   announce: env.ANNOUNCE !== '0',
   // ERC6699Registry v2: characters for ranked play come from here at the
   // placement's block. Unset (or a v1 address) → hydration is labelled.
@@ -78,6 +96,10 @@ const node = await createNode({
   courts: Object.fromEntries((env.COURTS ?? '').split(';').map((x) => x.trim()).filter(Boolean).map((x) => { const [rid, keys] = x.split(':'); return [rid, list(keys)]; })),
   // RELAY_KEYS=<pubkey>,… — relays whose signed submissions this host settles as 'relay' provenance (tools/af-watch.mjs prints its key).
   relayKeys: list(env.RELAY_KEYS),
+  // GAUNTLETS=<rulesetId>=<config.json>,… — per-match headless servers this node runs for
+  // those titles, behind the relay port (node/gauntlet.js). GAUNTLET_UPSTREAM=ws://127.0.0.1:8477
+  // sends rooms the gateway does not know to a title's own relay on this machine.
+  gauntlets: loadGauntletConfigs(env.GAUNTLETS, { root }), gauntletUpstream: env.GAUNTLET_UPSTREAM || null,
   // Universal login (docs/UNIVERSAL-LOGIN.md): on whenever PlayerProfile is set; AIR=0 turns it off.
   // AIR_PARTNER_ID pins tokens to one partner app (recommended); AIR_JWKS_URL overrides the key set.
   air: env.AIR === '0' ? null : { partnerId: env.AIR_PARTNER_ID ?? null, jwksUrl: env.AIR_JWKS_URL || undefined },

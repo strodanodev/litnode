@@ -52,13 +52,17 @@ function mergeMeshTitles(titles) {
   let changed = false;
   for (const t of titles ?? []) {
     if (!t.display?.title || GAMES.some((g) => g.rulesetId === t.rulesetId)) continue;
+    // With a TitleRegistry on the node, a title is listed only while its
+    // publisher (the token holder) runs a bonded host for it; `published`
+    // null = no registry, the older rule (display + a bonded host) applies.
+    if (t.published === false) continue;
     const d = t.display;
     GAMES.push({
       id: t.rulesetId.replace(/\.v\d+$/, ''), title: d.title, accent: d.accent ?? ACCENTS[GAMES.length % ACCENTS.length],
       tagline: d.description ?? 'Hosted on the mesh.', description: d.description ?? `A title hosted by ${t.hosts.length} node${t.hosts.length === 1 ? '' : 's'} on the litVM Games mesh.`,
       controls: d.controls ?? [], modes: t.modes ?? [], players: t.kind === 'attested' ? 'attested' : `${Array.isArray(t.participants) ? t.participants.join('/') : t.participants}P`,
       url: d.url ?? null, cover: d.cover ?? null, rulesetId: t.rulesetId, buildHash: t.buildHash,
-      status: t.kind === 'attested' ? 'attested' : 'mesh', tags: ['MESH', ...(t.bondedHosts ? ['BONDED HOST'] : [])], badge: d.url ? new URL(d.url).host : 'mesh', playable: !!d.url, mesh: true,
+      status: t.kind === 'attested' ? 'attested' : 'mesh', tags: ['MESH', ...(t.published ? ['PUBLISHED'] : t.bondedHosts ? ['BONDED HOST'] : [])], badge: d.url ? new URL(d.url).host : 'mesh', playable: !!d.url, mesh: true,
     });
     changed = true;
   }
@@ -113,7 +117,7 @@ $('avatar-file').addEventListener('change', async (e) => {
 });
 
 // ═══════════════════════════════════════════════ node state ══
-const S = { online: false, checked: false, health: null, boards: {}, stats: {}, deltas: {}, peers: [], snapshot: null, uptime: {}, stake: null, seeds: [], seedsAt: 0, viaSeed: null };
+const S = { online: false, checked: false, health: null, boards: {}, stats: {}, deltas: {}, peers: [], snapshot: null, uptime: {}, stake: null, seeds: [], seedsAt: 0, viaSeed: null, titles: [] };
 /** No local node → read NodeDirectory and try the seeds. Runs at most once a
  *  minute while a node answers; every 15 s while none does (a seed behind a
  *  quick tunnel re-announces a new hostname within seconds of a restart). */
@@ -147,7 +151,7 @@ async function pollNode() {
       if (ds) S.deltas[g.rulesetId] = ds.deltas ?? [];
     }
     S.peers = (await api('/peers').catch(() => ({}))).peers ?? [];
-    if (polls % 5 === 1 && mergeMeshTitles((await api('/titles').catch(() => ({}))).titles)) render();
+    if (polls % 5 === 1) { const { titles } = await api('/titles').catch(() => ({})); S.titles = titles ?? S.titles; if (mergeMeshTitles(S.titles)) render(); }
     S.snapshot = await api('/snapshot').catch(() => S.snapshot);
   } catch {
     // One slow answer is not an outage: flip to offline on the second miss.
@@ -203,6 +207,18 @@ function renderChrome() {
   $('node-pill').classList.toggle('on', S.online);
   const h = S.health;
   $('node-text').textContent = S.online ? `${S.viaSeed && nodeUrl() === seedUrl ? 'SEED' : 'NODE'} ${h.bonded ? 'BONDED' : h.bonded === false ? 'UNBONDED' : 'ONLINE'} · ${h.peers} PEER${h.peers === 1 ? '' : 'S'}` : S.checked ? 'NODE OFFLINE' : 'CONNECTING…';
+
+  // dashboard is a front onto the node's own data — grey it out while the
+  // node can't be reached, with sign-in as the way back in (it needs a node
+  // to mint/ask the litVM profile, so a successful sign-in implies it's up).
+  const locked = S.checked && !S.online;
+  document.body.classList.toggle('dash-locked', locked);
+  const lock = $('dash-lock');
+  lock.hidden = !locked;
+  if (locked) {
+    const canSignIn = air.configured() && player.kp && !signedIn;
+    lock.innerHTML = `<span class="dash-lock-msg">Node offline${signedIn ? ' — reconnect your node to resume the dashboard' : ' — sign in to activate the dashboard'}</span>${canSignIn ? '<button id="dash-lock-btn" class="btn primary sm">Sign in with AIR</button>' : ''}`;
+  }
 }
 
 
@@ -689,6 +705,56 @@ async function opRun(what) {
   } catch (e) { Op.error = e?.message ?? String(e); }
   Op.busy = ''; render();
 }
+// ---- publisher actions (cabinet/air.js): the AIR account's proxy wallet on THIS node claims titles, adds or revokes builds, hands them over, and bonds the node.
+const Pub = { busy: '', error: '', lastTx: null };
+function publisherPanel(h) {
+  if (!air.configured()) return '<div class="sub dim">Universal login is not configured in this build; publish from the CLI: <span class="mono">npm run publish:title -- register rulesets/&lt;id&gt;.js</span>.</div>';
+  if (Pub.busy) return `<div class="sub">${esc(Pub.busy)}</div>`;
+  const err = Pub.error ? `<div class="sub" style="color:var(--bad,#ff7b8a)">${esc(Pub.error)}</div>` : '';
+  const tx = Pub.lastTx ? `<div class="sub dim">last tx <span class="mono">${esc(Pub.lastTx.slice(0, 14))}…</span>${CHAIN.explorer ? ` · <a class="link" target="_blank" rel="noopener" href="${esc(CHAIN.explorer)}/tx/${esc(Pub.lastTx)}">explorer</a>` : ''}</div>` : '';
+  const s = Ai.me.session;
+  if (!s?.address) return `<div class="sub"><button class="btn sm" id="pub-signin">Sign in with AIR</button> <span class="dim">your AIR account gets a litVM wallet on this node; it holds the titles you publish</span></div>${err}`;
+  if (s.custody !== 'here') return `<div class="sub dim">Your litVM wallet <span class="mono">${esc(s.address.slice(0, 10))}…</span> is held by another node. Open that node's cabinet to publish, or transfer the title to a wallet you control.</div>`;
+  if (!h.trust?.titleRegistry) return '<div class="sub dim">This node has no TitleRegistry configured (contracts/deployed.testnet.json); titles cannot be claimed on chain from here.</div>';
+  const me = s.address.toLowerCase();
+  const bondedByMe = h.bonded && S.stake?.operator?.toLowerCase() === me;
+  const bondLine = h.bonded === false ? `<div class="sub"><button class="btn sm primary" data-pub="bond">Bond this node from my AIR wallet</button> <span class="dim">approve + stake the minimum from <span class="mono">${esc(s.address.slice(0, 10))}…</span>, delegate the announcer; a title is listed only while its holder runs a bonded host</span></div>`
+    : bondedByMe ? '<div class="sub dim">This node is bonded from your AIR wallet: titles you hold here are listed in the arcade.</div>'
+    : h.bonded ? `<div class="sub dim">This node is bonded from another wallet${S.stake?.operator ? ` (<span class="mono">${esc(S.stake.operator.slice(0, 10))}…</span>)` : ''}: a title your AIR wallet holds is hosted here but not listed until a node bonded from your wallet hosts it.</div>` : '';
+  const mine = S.titles.filter((t) => t.hosts?.includes(h.nodeId));
+  const rows = mine.length ? mine.map((t) => {
+    const owner = t.owner ? (t.owner === me ? '<b>you</b>' : `<span class="mono" title="${esc(t.owner)}">${esc(t.owner.slice(0, 10))}…</span>`) : '<span class="dim">unclaimed</span>';
+    const build = !t.owner ? '' : t.build ? (t.build.ok ? '<span class="dim">build active</span>' : `<span class="dim">${esc(t.build.reason)}</span>`) : '<span class="dim">reading…</span>';
+    const acts = !t.owner ? `<button class="btn sm primary" data-pub="register" data-rid="${esc(t.rulesetId)}">Claim</button>`
+      : t.owner === me ? [
+        t.build && !t.build.registered ? `<button class="btn sm primary" data-pub="set-build" data-rid="${esc(t.rulesetId)}">Add this build</button>` : '',
+        t.build?.registered && !t.build.revoked ? `<button class="btn sm" data-pub="revoke" data-rid="${esc(t.rulesetId)}">Revoke build</button>` : '',
+        `<button class="btn sm" data-pub="transfer" data-rid="${esc(t.rulesetId)}">Transfer…</button>`,
+      ].filter(Boolean).join(' ') : '';
+    return `<tr><td>${esc(t.display?.title ?? t.rulesetId)} <span class="dim mono">${esc(t.rulesetId)}</span></td><td>${owner}</td><td>${t.published ? 'listed' : t.owner ? '<span class="dim">not listed</span>' : ''} ${build}</td><td>${acts}</td></tr>`;
+  }).join('') : '';
+  const table = mine.length ? `<table><thead><tr><th>Title on this node</th><th>Holder</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="sub dim">This node hosts no titles. Add one to RULESETS in node.env (docs/HOST-YOUR-TITLE.md), restart, and claim it here.</div>';
+  return `<div class="sub">AIR <b>${esc(Ai.me.email ?? s.name ?? '')}</b> · litVM wallet <span class="mono" title="${esc(s.address)}">${esc(s.address.slice(0, 10))}…</span> · a title is an NFT this wallet holds; transferring it hands the title over</div>${bondLine}${table}${tx}${err}`;
+}
+async function pubRun(what, rid) {
+  const h = S.health; if (!h) return;
+  Pub.error = '';
+  try {
+    const step = (m) => { Pub.busy = m; render(); };
+    if (what === 'bond') { step('bonding this node from your AIR wallet — the node signs, no prompt…'); const r = await air.bond(nodeUrl()); Pub.lastTx = r.steps?.at(-1)?.tx ?? Pub.lastTx; }
+    else {
+      let to = null;
+      if (what === 'transfer') { const v = await ask({ title: `transfer ${rid}`, label: 'New holder address', placeholder: '0x…', pattern: '0x[0-9a-fA-F]{40}', hint: 'the title NFT moves to this wallet; this node can no longer act for it', ok: 'Transfer' }); if (!v) { render(); return; } to = v.trim(); }
+      step({ register: `claiming ${rid} on chain…`, 'set-build': `registering this build of ${rid}…`, revoke: `revoking this build of ${rid}…`, transfer: `transferring ${rid}…` }[what]);
+      const r = await air.publish(nodeUrl(), { action: what, rulesetId: rid, to });
+      Pub.lastTx = r.tx ?? Pub.lastTx;
+    }
+    step('reading the chain…');
+    const [{ titles }, st] = await Promise.all([api('/titles').catch(() => ({ titles: S.titles })), readStake(h.nodeId).catch(() => S.stake)]);
+    S.titles = titles ?? S.titles; S.stake = st; S.health = await api('/health').catch(() => h);
+  } catch (e) { Pub.error = e?.message ?? String(e); }
+  Pub.busy = ''; render();
+}
 function renderNode() {
   const h = S.health;
   const status = h ? `<dl class="kv">
@@ -713,6 +779,7 @@ function renderNode() {
         </tbody></table><div class="source">There is no rewards contract on litVM; nothing accrues. Bond and wallet figures are read live from ${esc(CHAIN.name)} (chain ${CHAIN.chainId}); NodeStake ${CHAIN.NodeStake.slice(0, 10)}…</div>`, '', 's6')}
       ${panel('This node', status, h?.update?.available ? (isLoopbackNode() ? '<button class="btn sm primary" id="update-btn">Update node</button>' : '<span class="dim">update from the node\'s own machine</span>') : '', 's6')}
       ${h ? panel('Operator', operatorPanel(h), '', 's6') : ''}
+      ${h ? panel('Publisher', publisherPanel(h), '', 's6') : ''}
       ${panel('Run a node', `<p>The arcade is a peer network: this page talks to the mesh through a node on <b>your</b> machine, the way a torrent client is the peer. Every node verifies and witnesses matches for everyone.</p><ol class="steps">
           <li><a class="link" href="${RELEASES}" target="_blank" rel="noopener">Download the latest release</a> — the <span class="mono">-win-x64</span> zip carries its own runtime; nothing to install. Releases are signed; the node checks the signature on every update.</li>
           <li>Unzip anywhere. Double-click <span class="mono">start-node.cmd</span>. Give it a name and the seed URL of a node that is already running.</li>
@@ -725,6 +792,8 @@ function renderNode() {
   $('node-edit2')?.addEventListener('click', editNode);
   $('update-btn')?.addEventListener('click', updateNode);
   for (const w of ['connect', 'faucet', 'bond', 'delegate', 'transfer']) $(`op-${w}`)?.addEventListener('click', () => opRun(w));
+  $('pub-signin')?.addEventListener('click', () => signInWithAir().then(render));
+  for (const b of view('node').querySelectorAll('[data-pub]')) b.addEventListener('click', () => pubRun(b.dataset.pub, b.dataset.rid ?? null));
   $('seeds-refresh')?.addEventListener('click', () => { S.seedsAt = 0; findSeed().then(render); });
 }
 
@@ -761,7 +830,7 @@ window.addEventListener('hashchange', navigate);
 
 // One delegated click handler for everything rendered from templates.
 document.addEventListener('click', (e) => {
-  const t = e.target.closest('[data-play],[data-queue],[data-mm-stop],[data-mm-reset],[data-mm-launch],[data-lb],[data-style],#name-btn,#avatar-btn,#wallet-btn,#air-btn,#air-link,#air-out,#me-chip');
+  const t = e.target.closest('[data-play],[data-queue],[data-mm-stop],[data-mm-reset],[data-mm-launch],[data-lb],[data-style],#name-btn,#avatar-btn,#wallet-btn,#air-btn,#air-link,#air-out,#me-chip,#dash-lock-btn');
   if (!t) return;
   if (t.id === 'wallet-btn') { signInWithWallet(); return; }
   if (t.dataset.play) { e.preventDefault(); const g = GAMES.find((x) => x.id === t.dataset.play); if (g) play(g); }
@@ -774,7 +843,7 @@ document.addEventListener('click', (e) => {
   else if (t.dataset.lb) { lbTab = t.dataset.lb; render(); }
   else if (t.dataset.style) { styleFilter = t.dataset.style; render(); }
   else if (t.id === 'name-btn') setName();
-  else if (t.id === 'air-btn' || t.id === 'air-link') signInWithAir();
+  else if (t.id === 'air-btn' || t.id === 'air-link' || t.id === 'dash-lock-btn') signInWithAir();
   else if (t.id === 'me-chip' && air.configured() && player.kp && !Ai.me.session?.address) { e.preventDefault(); signInWithAir(); }
   else if (t.id === 'air-out') signOutAir();
   else if (t.id === 'avatar-btn') $('avatar-file').click();

@@ -10,9 +10,13 @@
  *  from the node's announcer key, which the operator already funds: the
  *  sponsor tops the proxy up before each send.
  *
- *  Custody is the node's, and the design says so: a proxy signs what the
- *  profile contract allows its owner to sign and nothing else — there is no
- *  "send any transaction" path. A user who later brings a real wallet on
+ *  Custody is the node's, and the design says so: a proxy signs a fixed
+ *  set of calls and nothing else — there is no "send any transaction"
+ *  path. The set (docs/PUBLISHER-BONDS.md §1, §4): the profile contract;
+ *  TitleRegistry as the PUBLISHER (claim a title, add or revoke a build,
+ *  hand the title over — the proxy holds the ERC-721); and NodeStake to
+ *  bond THIS node from the account's wallet, so the title's holder is the
+ *  operator of the host that lists it (`/titles.published`). A user who later brings a real wallet on
  *  litVM binds it to the same profile; the proxy then simply stops being
  *  used. Every node can RESOLVE an AIR id to its proxy with one eth_call
  *  (ownerOfKey(airKey)); only the node that created the key can SIGN for
@@ -23,12 +27,14 @@ import { join } from 'node:path';
 import { randomPrivateKey, addressOf, signTransaction } from '../protocol/evm.js';
 import { airKey, nameFor } from '../protocol/air.js';
 import { ownerOfKeyCall, profileOfCall, nameOfCall, decodeOwner, decodeUint, decodeString, registerCalldata, bindKeyCalldata, revokeKeyCalldata } from '../protocol/profile.js';
+import { titleOfCall, decodeTitle, buildStatusCall, decodeBuildStatus, registerCalldata as registerTitleCalldata, setBuildCalldata, revokeBuildCalldata, transferCalldata, titleVerdict } from '../protocol/title.js';
+import { standingCall, decodeStanding, minStakeCall, stakeCalldata, approveCalldata, faucetCalldata, balanceOfCall, setDelegateCalldata } from '../protocol/staking.js';
 
 const TOPUP_WEI = 2_000_000_000_000_000n;     // 0.002 native: a handful of profile transactions on Liteforge
 const MIN_WEI = 500_000_000_000_000n;        // top up below 0.0005
 const RECEIPT_TIMEOUT_MS = 60_000;
 
-export function createProxyWallets({ dataDir, chainId, rpc, playerProfile, sponsor, log = () => {}, emit = () => {} }) {
+export function createProxyWallets({ dataDir, chainId, rpc, playerProfile, sponsor, titleRegistry = null, nodeStake = null, stakeToken = null, nodeId = null, log = () => {}, emit = () => {} }) {
   const dir = join(dataDir, 'proxies');
   mkdirSync(dir, { recursive: true });
   const locks = new Map();
@@ -158,5 +164,81 @@ export function createProxyWallets({ dataDir, chainId, rpc, playerProfile, spons
     return { sub, playerKey, revoked: true, tx: hash };
   });
 
-  return { session, revoke, resolve, addressOf: (sub) => load(sub)?.address ?? null, status: () => ({ sponsor: sponsor?.address ?? null, contract: playerProfile }) };
+  /** The proxy this node holds for `sub`, checked against the chain: the
+   *  profile's owner must be this key, or we are not the one who can sign. */
+  const held = async (sub) => {
+    const key = load(sub); const onChain = await resolve(sub);
+    if (!key || !onChain || key.address !== onChain.address) throw new Error('this node does not hold the proxy for that account');
+    return key;
+  };
+  const isAddr = (a) => typeof a === 'string' && /^0x[0-9a-fA-F]{40}$/.test(a);
+
+  // ---------------------------------------------------------------- publisher: TitleRegistry from the proxy
+  /** What the chain says about a title and (optionally) one build of it. */
+  const title = async (rulesetId, buildHash = null) => {
+    if (!titleRegistry) return null;
+    const t = decodeTitle(await call(titleOfCall(titleRegistry, rulesetId)));
+    const b = buildHash ? decodeBuildStatus(await call(buildStatusCall(titleRegistry, rulesetId, buildHash))) : null;
+    return { rulesetId, publisher: t.publisher ? t.publisher.toLowerCase() : null, registeredAt: t.registeredAt, buildCount: t.buildCount, build: b ? { hash: buildHash, registered: b.registered, active: b.active, revoked: b.revoked, activatesAt: b.activatesAt, ...titleVerdict(b) } : null };
+  };
+  /** register | set-build | revoke | transfer, signed by the account's proxy.
+   *  The proxy is the ERC-721 holder; `transfer` hands the title to `to`
+   *  (any wallet: a multisig, a MetaMask account, another AIR account's
+   *  proxy) and this node can no longer act for it after that. */
+  const publish = ({ sub, action, rulesetId, buildHash = null, to = null, activatesAt = 0 }) => withLock(sub, async () => {
+    if (!titleRegistry) throw new Error('TitleRegistry is not configured on this node');
+    const key = await held(sub);
+    const cur = await title(rulesetId);
+    const mine = !!cur.publisher && cur.publisher === key.address;
+    let data;
+    if (action === 'register') {
+      if (cur.publisher) throw new Error(mine ? 'you already hold this title — add the build instead' : `title held by ${cur.publisher}`);
+      data = registerTitleCalldata(rulesetId, buildHash);
+    } else {
+      if (!cur.publisher) throw new Error('title is not registered — claim it first');
+      if (!mine) throw new Error(`title held by ${cur.publisher}, not your wallet ${key.address}`);
+      if (action === 'set-build') data = setBuildCalldata(rulesetId, buildHash, activatesAt);
+      else if (action === 'revoke') data = revokeBuildCalldata(rulesetId, buildHash);
+      else if (action === 'transfer') { if (!isAddr(to)) throw new Error('transfer: `to` must be an address'); data = transferCalldata(key.address, to, rulesetId); }
+      else throw new Error(`unknown action ${action}`);
+    }
+    await fund(key.address);
+    const { hash } = await send(key, { to: titleRegistry, data });
+    log(`proxy: ${action} ${rulesetId}${buildHash ? ` @ ${buildHash.slice(0, 12)}` : ''}${to ? ` → ${to}` : ''} by ${key.address} (tx ${hash.slice(0, 12)}…)`);
+    emit('proxy.publish', { sub, address: key.address, action, rulesetId, buildHash, to, tx: hash });
+    return { sub, address: key.address, action, rulesetId, buildHash, to, tx: hash, title: await title(rulesetId, buildHash) };
+  });
+
+  // ---------------------------------------------------------------- operator: bond THIS node from the proxy
+  /** approve + stake the node's key at NodeStake's minimum from the
+   *  account's proxy, then name the node's sponsor (its announcer key) as
+   *  the delegate so the node can act on chain. Testnet: pulls the faucet
+   *  when the proxy holds less than the minimum. Idempotent. */
+  const bond = ({ sub }) => withLock(sub, async () => {
+    if (!nodeStake || !nodeId) throw new Error('NodeStake is not configured on this node');
+    const key = await held(sub);
+    const standing = decodeStanding(await call(standingCall(nodeStake, nodeId)));
+    if (standing.active) return { sub, address: key.address, bonded: true, operator: standing.operator.toLowerCase(), amount: standing.amount.toString(), steps: [], already: true };
+    const minStake = decodeUint(await call(minStakeCall(nodeStake)));
+    const steps = [];
+    const t = await fund(key.address); if (t) steps.push({ step: 'sponsor', tx: t });
+    if (stakeToken) {
+      let have = decodeUint(await call(balanceOfCall(stakeToken, key.address)));
+      if (have < minStake) {
+        const { hash } = await send(key, { to: stakeToken, data: faucetCalldata() }); steps.push({ step: 'faucet', tx: hash });
+        have = decodeUint(await call(balanceOfCall(stakeToken, key.address)));
+        if (have < minStake) throw new Error(`proxy holds ${have} of the ${minStake} stake tokens needed — fund ${key.address}`);
+      }
+      const { hash } = await send(key, { to: stakeToken, data: approveCalldata(nodeStake, minStake) }); steps.push({ step: 'approve', tx: hash });
+    }
+    await fund(key.address);
+    const { hash: s } = await send(key, { to: nodeStake, data: stakeCalldata(nodeId, minStake) }); steps.push({ step: 'stake', tx: s });
+    if (sponsor) { const { hash: d } = await send(key, { to: nodeStake, data: setDelegateCalldata(nodeId, sponsor.address) }); steps.push({ step: 'delegate', tx: d }); }
+    log(`proxy: bonded node ${nodeId.slice(0, 12)}… from ${key.address} (${minStake} wei)`);
+    emit('proxy.bonded', { sub, address: key.address, nodeId, amount: minStake.toString() });
+    return { sub, address: key.address, bonded: true, operator: key.address, amount: minStake.toString(), steps, already: false };
+  });
+
+  return { session, revoke, resolve, publish, bond, title, addressOf: (sub) => load(sub)?.address ?? null,
+    status: () => ({ sponsor: sponsor?.address ?? null, contract: playerProfile, titleRegistry, nodeStake, stakeToken }) };
 }

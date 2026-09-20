@@ -36,15 +36,31 @@ the same wallet flow the cabinet already uses for player sign-in
   between the cabinet and the node, and what is still open between them
 - [docs/WALLET-IDENTITY.md](docs/WALLET-IDENTITY.md) — sign in with a
   wallet: one transaction binds the player key to a litVM profile
-- [docs/HOST-YOUR-TITLE.md](docs/HOST-YOUR-TITLE.md) — put your own game on
-  the mesh: the SDK, the conformance suite, and the rules of recognition
+- [docs/PUBLISHERS.md](docs/PUBLISHERS.md) — **start here as a publisher**:
+  two paths, the whitepaper's vocabulary mapped to the code, the seven
+  developer steps as they really are
+  - [docs/BRING-YOUR-BACKEND.md](docs/BRING-YOUR-BACKEND.md) — a game that
+    already runs: `npm run bridge` settles its matches (webhook or watcher,
+    replayable or attested); skill `migrate-a-title`
+  - [docs/BUILD-FROM-SCRATCH.md](docs/BUILD-FROM-SCRATCH.md) — a new game:
+    one title file, `sdk/client.js`, the cabinet shell; skill `build-a-title`
+  - [docs/WEBSITE-COPY.md](docs/WEBSITE-COPY.md) — litvm.games and the
+    litepaper against what ships, with the copy to change
+- [docs/HOST-YOUR-TITLE.md](docs/HOST-YOUR-TITLE.md) — the title contract:
+  the SDK, the conformance suite, and the rules of recognition
+- [docs/HOST-A-NODE.md](docs/HOST-A-NODE.md) — run a node on any machine
+  with `npm run host`: configure, preflight, run supervised, bond, publish,
+  announce, install as a service, verify — non-interactive, JSON, exit
+  codes; the `host-a-node` skill is the agent procedure
 - [docs/RUNBOOK.md](docs/RUNBOOK.md) — operator runbook: configuration,
   disputes, evidence custody, staged releases and rollback, rotating every key
 - [contracts/MIGRATION.md](contracts/MIGRATION.md) — the testnet v1 → v2
   contract migration (the exposed deployer key, quorum anchoring, registry roles)
 - [audit/litnode-build-review.md](audit/litnode-build-review.md) — the 17 Sep
   build audit, and [audit/remediation.md](audit/remediation.md) — what changed
-  for it, what passed, what is deployed, what remains
+  for it, what passed, what is deployed, what remains;
+  [audit/build-audit-2026-09-20.md](audit/build-audit-2026-09-20.md) — the
+  20 Sep review of the hosting path that produced `npm run host`
 - [CHANGELOG.md](CHANGELOG.md)
 
 Live cabinet: **https://arcade.litvm.games**
@@ -60,11 +76,14 @@ node/       the daemon: identity, gossip, snapshot, fetch-by-hash, pairing,
 cabinet/    the frontend (static, no build step); cabinet/protocol/ is a
             generated copy of the modules it runs — npm run vendor:cabinet
 sdk/        what a game developer imports: defineTitle, defineBalance,
-            seededRandom; the conformance suite; the template title
+            seededRandom; the conformance suite; the template title;
+            sdk/client.js — the game client (launch, shell signing, recorder, settle);
+            sdk/bridge/ — settle matches from an existing backend (npm run bridge);
+            sdk/host/ — the node-hosting harness (npm run host) and its supervisor
 titles/     defineTitle / defineAttestedTitle and the in-house adapters
 rulesets/   bundled single-file rulesets, pinned by buildHash
 contracts/  NodeStake, TestLITVM, ERC6699Registry, EpochAnchor + testnet addresses
-tools/      create-title, bundle-title, pack, vendor, bond, release, announcer, anchor
+tools/      create-title, bundle-title, pack, vendor, bond, release, announcer, anchor, title-registry
 portable/   what goes in the zips: start-node.cmd, node.env, operator README
 demo/       the test suites — npm test must be green before anything ships
 ```
@@ -78,13 +97,24 @@ npm run node           # one node on :7801 with its dashboard; cabinet at http:/
 LITNODE_PLAIN=1 npm run node   # one line per event instead of the dashboard (what litnode.log gets)
 ```
 
+Or let the harness drive it, on Windows, Linux or macOS
+([docs/HOST-A-NODE.md](docs/HOST-A-NODE.md)):
+
+```bash
+npm run host -- init --operator laptop --seeds https://<a seed>   # writes node.env, makes the identity
+npm run host -- doctor                                           # preflight: runtime, port, RPC, seeds, clock
+npm run host -- start --detach                                   # supervised; litnode.log
+npm run host -- status                                           # every stage + the one next command
+```
+
 Configure with environment variables: `OPERATOR`, `PORT`, `HOST`,
 `PUBLIC_ADDR`, `SEEDS` (comma list), `ROLES` (`mesh,host,witness,settler`),
 `RULESETS`, `REGION`, `WS_ADDR` (the relay this node fronts), `RPC`,
 `NODE_STAKE`, `OFFLINE=1` (local beacon, no stake reads). Defaults for the
 chain come from `contracts/deployed.testnet.json`. Trust and limits:
-`TITLE_TRUST` (`trusted` — peer builds need a signature by a key in
-`TRUSTED_PUBLISHERS`; or `open`), `SANDBOX_TIMEOUT_MS` / `SANDBOX_MEMORY_MB`,
+`TITLE_TRUST` (`trusted` — peer builds load when `TitleRegistry` says the
+build is the title's active build, or with a signature by a key in
+`TRUSTED_PUBLISHERS`; or `open`), `TITLE_REGISTRY`, `SANDBOX_TIMEOUT_MS` / `SANDBOX_MEMORY_MB`,
 `RELAY_KEYS`, `COURTS`, `ERC6699`, `RELEASE_CHANNEL` — all in
 [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
@@ -111,6 +141,11 @@ is the operator's runbook: bonding a key, public reachability, clocks,
 seeds. A node that is not bonded gossips and hydrates rulesets but is
 excluded from placement and cannot co-sign; `/health` says `bonded: false`.
 
+`npm run host -- bond`, `publish --tunnel quick`, `announce`,
+`install-service` and `verify` are the same steps as below, non-interactive
+and with `--json`; the operator key is read from `OPERATOR_KEY` in the
+shell for that one command and never stored.
+
 **Updating a node.** Every node checks the latest signed release hourly
 (`/health.update`); apply with the dashboard's `u`, the cabinet's Nodes
 page (from the node's own machine), or `update.cmd`. To cut a release:
@@ -129,7 +164,8 @@ npm run import:af -- <matchId> --post http://127.0.0.1:7801
 npm run watch:af                                settle new Agent Fighter ledgers as they land (signs with its relay key)
 npm run anchor -- http://127.0.0.1:7801 <hour>  propose a FROZEN hour's root to EpochAnchor v2; final at quorum
 npm run custody -- export data/<op> out.tar     builds + ledgers + deltas + frozen epochs, verifiable anywhere
-npm run sign:build -- rulesets/<id>.js          vouch for a build as its publisher
+npm run sign:build -- rulesets/<id>.js          vouch for a build as its publisher (the operator-list fallback)
+npm run publish:title -- register rulesets/<id>.js   claim the title on chain as an ERC-721 (set-build · revoke · transfer · status)
 ```
 
 ## Titles

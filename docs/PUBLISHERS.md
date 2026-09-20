@@ -52,15 +52,20 @@ against the code.
 5. **Expose a harness.** `inputSchema` + `sdk/client.js` recorder. Real.
 6. **Settle matches.** `POST /ledger` with both players' signatures (from
    scratch) or through the bridge (existing backend). Real.
-7. **Ship.** `display` in the manifest lists you in the arcade; a bonded
-   node hosts you. Real. "Characters forged anywhere can enter" waits on
-   the registry's minter.
+7. **Ship.** Claim the title on chain — an ERC-721 your wallet holds; hand
+   it over by transferring it. Signed in with AIR on your node: the
+   cabinet's Publisher panel claims it and bonds the node from the same
+   wallet, no prompts (docs/UNIVERSAL-LOGIN.md). From a wallet you hold:
+   `npm run publish:title -- register rulesets/<id>.js` and `npm run bond`.
+   Either way `display` in the manifest lists you in the arcade once the
+   holder's bonded host carries the title. Real. "Characters
+   forged anywhere can enter" waits on the registry's minter.
 
 ## Where things are
 
 ```
 docs/PUBLISHERS.md          this page
-docs/PUBLISHER-BONDS.md     spec: title ownership, host grants with expiry, publisher stake tier, escalation rulings on chain (nothing built)
+docs/PUBLISHER-BONDS.md     title ownership as an ERC-721 (BUILT: TitleRegistry, npm run publish:title); host grants, escalation, revenue share (spec)
 docs/BRING-YOUR-BACKEND.md  existing backend → bridge → settlement          sdk/bridge/   npm run bridge
 docs/BUILD-FROM-SCRATCH.md  new title → client SDK → cabinet → settlement   sdk/client.js
 docs/HOST-YOUR-TITLE.md     the title contract and the rules of recognition sdk/index.js  npm run create-title|conformance|bundle:title

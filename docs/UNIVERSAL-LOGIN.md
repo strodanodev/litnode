@@ -55,10 +55,15 @@ ed25519 key signs play ──►      ownerOfKey(playerKey) → proxy  ──►
   can sign for that wallet; another node answers `custody: 'elsewhere'` and
   still resolves the profile. The profile is the source of truth, not the
   node's file.
-- **The proxy signs one contract.** `node/proxy.js` builds calldata for
-  PlayerProfile only — register, bindKey, revokeKey. There is no "send this
-  transaction" endpoint, so a leaked proxy key can re-bind keys on one profile
-  and nothing else; a leaked announcer/sponsor key can waste gas.
+- **The proxy signs a fixed set of calls.** `node/proxy.js` builds calldata
+  for PlayerProfile (register, bindKey, revokeKey), for TitleRegistry as the
+  account's PUBLISHER wallet (claim a title, add or revoke a build, transfer
+  the title — docs/PUBLISHER-BONDS.md §1) and for NodeStake to bond the node
+  it runs on from that wallet. There is no "send this transaction" endpoint.
+  A leaked proxy key can re-bind keys on one profile, move the titles that
+  wallet holds and bond one node; a leaked announcer/sponsor key can waste
+  gas. A publisher who wants the title off the node's custody transfers it
+  to a multisig — it is an ERC-721, any wallet can hold it.
 - **It is custody, and it says so.** The node holds the key, like it holds the
   announcer key (BUILD-SPEC §11 threat model). A player who wants their own
   wallet on litVM binds it with *Bind with my own wallet* (MetaMask) to the
@@ -87,6 +92,8 @@ settlement pipeline, never with the player or the proxy.
 | `GET /air` | `{ enabled, partnerId, jwksUrl, keys, sponsor, contract }` |
 | `POST /air/session` `{ token, playerKey?, name? }` | verify → proxy → profile → bind. `{ sub, address, tokenId, name, custody, playerKey, steps, email, airAddress }`. 401 on a bad token, 502 when the chain or sponsor fails. |
 | `POST /air/revoke` `{ token, playerKey }` | revoke a browser key from the caller's own profile |
+| `POST /air/publish` `{ token, action, rulesetId, buildHash?, to?, activatesAt? }` | `register` \| `set-build` \| `revoke` \| `transfer` on TitleRegistry from the caller's proxy. `buildHash` defaults to the build this node serves for the title. `{ tx, title: { publisher, build: { active, revoked, reason … } } }`; 502 with the reason when the proxy does not hold the title |
+| `POST /air/bond` `{ token }` | bond THIS node from the caller's proxy: faucet when short (testnet), approve, stake the minimum, delegate the node's announcer. `{ operator, amount, steps, already }` |
 | `GET /air/resolve?sub=` | public read: the profile an AIR user id maps to, or null |
 
 `node.env`: `AIR_PARTNER_ID=<partner id>` (recommended; without it any AIR
@@ -106,6 +113,19 @@ scripted path (`npm run bond`, `npm run transfer`, `npm run announcer`).
 
 Player-side transactions are the proxy's job; there is nothing for a player
 to sign in the dashboard, and that is the point.
+
+## Publishing from the dashboard (AIR)
+
+The Nodes page has a **Publisher** panel beside Operator. Signed in with
+AIR on the node that holds your proxy, it lists every title this node
+hosts with its holder on chain: **Claim** registers an unclaimed title to
+your litVM wallet with the build this node runs; **Add this build** and
+**Revoke build** manage retunes; **Transfer…** hands the ERC-721 to any
+address. **Bond this node from my AIR wallet** stakes the minimum from the
+same wallet, so the title's holder is the operator of the host that lists
+it — the arcade's rule for `published`. The node signs; nothing prompts.
+The CLI path (`npm run publish:title`, `npm run bond`) is the same
+contracts from a wallet you hold yourself.
 
 ## Honest zeroes
 

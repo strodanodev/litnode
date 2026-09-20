@@ -1,0 +1,103 @@
+{
+  "chainId": 4441,
+  "rpc": "https://liteforge.rpc.caldera.xyz/http",
+  "block": 52943578,
+  "at": "2026-09-20T22:00:30.248Z",
+  "compromised": "0xa6d840c28b3df4f931f1ac2fb940c59b9e9dfdfe",
+  "holdings": [
+    {
+      "contract": "NodeStake",
+      "role": "slasher (can slash any bond, can setParams)",
+      "address": "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27",
+      "heldByCompromised": false,
+      "note": ""
+    },
+    {
+      "contract": "NodeStake",
+      "role": "treasury (receives slashed bonds)",
+      "address": "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27",
+      "heldByCompromised": false,
+      "note": ""
+    },
+    {
+      "contract": "NodeStake",
+      "role": "operator of node 5b703f128876… (can unstake it; movable with transferOperator)",
+      "address": "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27",
+      "heldByCompromised": false,
+      "note": "active bond"
+    },
+    {
+      "contract": "NodeDirectory",
+      "role": "announcer for node 5b703f128876… (can misdirect discovery of that node)",
+      "address": "0x7467246301DF4e45c446a98AcB037c85315b560d",
+      "heldByCompromised": false,
+      "note": "delegated key held by the node, not the operator"
+    },
+    {
+      "contract": "EpochAnchor",
+      "role": "admin (sets quorum and stake contract)",
+      "address": "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27",
+      "heldByCompromised": false,
+      "note": ""
+    },
+    {
+      "contract": "ERC6699Registry",
+      "role": "admin (names minters and progressors)",
+      "address": "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27",
+      "heldByCompromised": false,
+      "note": ""
+    }
+  ],
+  "contracts": {
+    "NodeStake": {
+      "address": "0x53822d9a334082e88AB70103F58AD65eBEF73801",
+      "slasher": "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27",
+      "treasury": "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27",
+      "minStake": "1000000000000000000",
+      "unbondingPeriod": 60,
+      "version": 1
+    },
+    "EpochAnchor": {
+      "address": "0x87d9fB5FC60140B3e7A63FC657c1969baAf7d6eD",
+      "version": 2,
+      "admin": "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27",
+      "quorum": 2
+    },
+    "ERC6699Registry": {
+      "address": "0x4062626DB36CE24752ED7a3e8c5FD7fE2ceFaB02",
+      "version": 2,
+      "admin": "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27"
+    },
+    "PlayerProfile": {
+      "address": "0xCdB1901aA9f4bc5dfd7F62c68B9d06247229B112",
+      "note": "no privileged role"
+    },
+    "NodeBadge": {
+      "address": "0x036f11E25d2A352f1B2DDc621c64aa22276D5f6e",
+      "note": "no privileged role"
+    },
+    "TestLITVM": {
+      "address": "0x85D309Fe638B639Ae8c9889A5199Fce55B5dBd41",
+      "note": "no privileged role"
+    }
+  },
+  "nodes": [
+    {
+      "nodeId": "5b703f1288765c0ca3734ab0625df161121ef45a9eabafaaae539be1add95151",
+      "operator": "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27",
+      "bonded": "1.0",
+      "active": true,
+      "announcer": "0x7467246301DF4e45c446a98AcB037c85315b560d",
+      "entry": {
+        "url": "https://essentially-oaks-artist-extending.trycloudflare.com",
+        "wsAddr": "wss://toolkit-mid-literacy-dominant.trycloudflare.com",
+        "updatedAt": "2026-09-20T18:04:32.000Z",
+        "announcedBy": "0x7467246301DF4e45c446a98AcB037c85315b560d"
+      }
+    }
+  ],
+  "summary": {
+    "heldByCompromised": 0,
+    "rotatable": "v2 set: NodeStake slasher/treasury via setParams, operator bindings via transferOperator, EpochAnchor/ERC6699Registry admin via transferAdmin/setParams — no redeploy needed."
+  }
+}

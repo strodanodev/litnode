@@ -26,8 +26,9 @@ private key anywhere but the shell that runs one command.
 |---|---|
 | `OPERATOR`, `ROLES`, `REGION`, `PORT`, `HOST`, `PUBLIC_ADDR` | identity and reachability (README) |
 | `RULESETS` | the builds this node hosts (local files: always loaded, this is your choice) |
-| `TITLE_TRUST` | `trusted` (default): builds from peers load only with a signature by a key in `TRUSTED_PUBLISHERS`; `open`: any conformant build (the sandbox is the only boundary) |
-| `TRUSTED_PUBLISHERS` | comma list of publisher ed25519 keys (default: the litVM release key). Sign your own builds with `npm run sign:build -- rulesets/<id>.js` |
+| `TITLE_TRUST` | `trusted` (default): builds from peers load when `TitleRegistry` says the build is registered under its title and active, or with a signature by a key in `TRUSTED_PUBLISHERS`; `open`: any conformant build (the sandbox is the only boundary) |
+| `TITLE_REGISTRY` | the TitleRegistry address (default: `contracts/deployed.testnet.json`). A title is an ERC-721; its holder registers builds with `npm run publish:title`. `/titles.published` = the holder runs a bonded host for it; unset → `null` |
+| `TRUSTED_PUBLISHERS` | comma list of publisher ed25519 keys (default: the litVM release key) — the operator's override when a build is not on chain. Sign your own builds with `npm run sign:build -- rulesets/<id>.js` |
 | `SANDBOX_TIMEOUT_MS`, `SANDBOX_MEMORY_MB` | the title sandbox's deadline (default 10 s) and heap ceiling (default 256 MB). `/health.sandbox` reports runs, kills and failures |
 | `RELAY_KEYS` | relay keys whose signed submissions this host settles as `relay` provenance. `tools/af-watch.mjs` prints its key at start |
 | `COURTS` | `rulesetId:key[,key];rulesetId:key` — courts this operator authorizes for attested titles |

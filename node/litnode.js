@@ -18,8 +18,10 @@ import { pair, QUEUE_TAG, bucketOf, isStale } from '../protocol/pairing.js';
 import { placement } from '../protocol/placement.js';
 import { createChain } from './chain.js';
 import { createSettlement } from './settle.js';
+import { createMatchBook } from './matchbook.js';
 import { createUpdater, RESTART_EXIT } from './update.js';
 import { createTunnel } from './tunnel.js';
+import { createGauntlets } from './gauntlet.js';
 import { keepMapped } from './upnp.js';
 import { createAnnouncer } from './announce.js';
 import { createAirVerifier } from './air.js';
@@ -36,9 +38,11 @@ try { ({ check: conformance, staticCheck } = await import('../sdk/conformance.mj
 catch (e) { sdkMissing = e?.code === 'ERR_MODULE_NOT_FOUND' ? 'sdk/ is missing from this install' : `sdk failed to load: ${e.message}`; }
 import { createSandbox } from './sandbox.js';
 import { RELEASE_PUBKEY } from './update.js';
+import { titleVerdict } from '../protocol/title.js';
 import { PROTOCOL_VERSION } from '../protocol/version.js';
 import { answerChallenge, checkChallenge, newNonce, NONCE_RE } from '../protocol/challenge.js';
 import { descriptorHash as descriptorHashOf } from './settle.js';
+import { proposeCalldata } from '../protocol/epoch.js';
 
 // Every response is readable from any origin, and from an https page reaching
 // a loopback node (Chrome's Private Network Access asks on the preflight).
@@ -84,6 +88,24 @@ export async function createNode({
   // NodeDirectory: read the live seed list from the chain (bootstrap) and,
   // with a delegated announcer key, publish our own addresses there.
   nodeDirectory = null, chainId = null, announce = true,
+  // ReleaseRegistry (BUILD-SPEC v0.3 §2.4): a release must be registered on
+  // chain and active before this node applies it. Unset → signature only.
+  releaseRegistry = null,
+  // TitleRegistry: a title is an ERC-721 whose holder is the publisher; a
+  // build from a PEER loads when the chain says it is registered under its
+  // title and active (or, still, when signed by a TRUSTED_PUBLISHERS key).
+  // /titles.published says whether the publisher runs a bonded host for it.
+  titleRegistry = null, titleRefreshMs = 60_000,
+  // The stake token (TestLITVM on testnet): only so an AIR account's proxy can bond this node (POST /air/bond).
+  stakeToken = null,
+  // MatchBook (§6, §11): ranked matches are committed, settled and attested
+  // on chain from this node's delegated key; ladders fold the event log.
+  // Unset → v0.2 local settlement, gossip-advertised deltas, never official
+  // beyond this node's own view. `matchBookFromBlock`: where a fresh node
+  // starts reading the log (the deploy block); `matchBookWindows` in seconds.
+  matchBook: matchBookAddr = null, matchBookFromBlock = 0, matchBookWindows = { attestWindow: 120, escalationWindow: 300 },
+  // EpochAnchor v3: the settler proposes each frozen hour's root over the chain-finalized set from its delegate.
+  epochAnchor = null,
   // ERC6699Registry (this project's proposed interface): characters for
   // ranked play are read from here at the placement's block, never from
   // the submission. Unset → hydration is labelled fixture/external.
@@ -106,6 +128,11 @@ export async function createNode({
   // and keep litVM proxy wallets for AIR accounts. Needs playerProfile and a
   // chain. { partnerId, jwksUrl } — partnerId pins tokens to one partner app.
   air = null,
+  // Gauntlet loops (node/gauntlet.js): per-match headless servers this node
+  // runs for titles whose sim is a process. {rulesetId: config}; the gateway
+  // listens on relayPort (fronted by the relay tunnel) and forwards unknown
+  // rooms to gauntletUpstream (a title's own relay on this machine).
+  gauntlets = {}, gauntletUpstream = null,
   heartbeatMs = EPOCH_MS / 2, log = () => {}, onEvent = () => {},
 }) {
   // Every observable thing the node does goes through emit(): the TUI draws
@@ -121,7 +148,9 @@ export async function createNode({
   // ---------------------------------------------------------------- updates
   // A release is an artifact like a ruleset, plus a signature (node/update.js).
   // Checked hourly; applied only on request, and only from this machine.
-  const updater = createUpdater({ root, version: version ?? '0.0.0', releaseUrl, channel: releaseChannel, dataDir, log });
+  const chain = createChain({ rpc: rpc ?? 'offline', offline, nodeStake, playerProfile, nodeDirectory, erc6699, releaseRegistry, titleRegistry, fetchImpl: chainFetch });
+  const updater = createUpdater({ root, version: version ?? '0.0.0', releaseUrl, channel: releaseChannel, dataDir, log,
+    registry: releaseRegistry && !offline ? { statusOf: chain.releaseStatus } : null });
   const checkUpdates = async () => { if (!updates || !version) return; const before = updater.status().available; await updater.check(); const s = updater.status(); if (s.available && !before) emit('update', { version: s.version, latest: s.latest }); };
   // Self-repair: this build started without a directory it needs. Re-apply
   // the current release (which carries it) and restart; until then no build
@@ -142,7 +171,6 @@ export async function createNode({
   if (!existsSync(idPath)) writeFileSync(idPath, JSON.stringify(identity, null, 2) + '\n');
   const nodeId = identity.publicKey;
 
-  const chain = createChain({ rpc: rpc ?? 'offline', offline, nodeStake, playerProfile, nodeDirectory, erc6699, fetchImpl: chainFetch });
   const sandbox = createSandbox({ timeoutMs: sandboxTimeoutMs, memoryMb: sandboxMemoryMb, log });
   if (!sandbox.flag) throw new Error('this Node runtime has no permission model (--permission); litnode refuses to host titles without the sandbox');
 
@@ -179,6 +207,34 @@ export async function createNode({
   // process. Manifest and replays come out of the sandbox.
   const builds = new Map();
   const BUILD_TAG = 'build';
+  /** The chain's word on a peer's build: TitleRegistry says the build is
+   *  registered under its title and active. null = no registry configured.
+   *  A read failure shuts THIS gate (unreadable is not unregistered); the
+   *  signature gate below may still open. Cached a minute per build so
+   *  gossip cannot make us re-ask the RPC for the same hash. */
+  const titleVerdicts = new Map(); // `${rulesetId}|${buildHash}` → { at, verdict }
+  const buildRegistered = async (rulesetId, buildHash) => {
+    if (!titleRegistry || offline) return null;
+    const k = `${rulesetId}|${buildHash}`, c = titleVerdicts.get(k);
+    if (c && Date.now() - c.at < titleRefreshMs) return c.verdict;
+    let verdict;
+    try { verdict = titleVerdict(await chain.titleBuild(rulesetId, buildHash)); }
+    catch (e) { verdict = { ok: false, reason: `unreadable (${e.message})` }; }
+    titleVerdicts.set(k, { at: Date.now(), verdict });
+    return verdict;
+  };
+  // rulesetId → the title's publisher (token holder) on chain, lowercase; null = unregistered. Refreshed each minute for every title the mesh hosts.
+  const titleOwners = new Map();
+  const titleBuilds = new Map(); // rulesetId → the verdict on the build THIS node serves (for the publisher panel)
+  let lastTitleRead = 0;
+  const refreshTitleOwners = async () => {
+    if (!titleRegistry || offline || Date.now() - lastTitleRead < titleRefreshMs) return;
+    lastTitleRead = Date.now();
+    const ids = new Set(loaded.keys());
+    for (const b of heartbeats.values()) for (const rid of Object.keys(b.manifests ?? {})) ids.add(rid);
+    for (const rid of ids) { try { const o = await chain.titleOwner(rid); titleOwners.set(rid, o ? o.toLowerCase() : null); } catch { /* keep what we knew */ } }
+    for (const [rid, b] of loaded) { try { titleBuilds.set(rid, titleVerdict(await chain.titleBuild(rid, b.buildHash))); } catch { /* keep */ } }
+  };
   /** Who vouches for a build: sig = sign('build', { rulesetId, buildHash }, publisherKey). */
   const buildAttested = async (rulesetId, buildHash, att) => !!att?.publisher && !!att?.sig && trustedPublishers.includes(att.publisher) && (await verify(BUILD_TAG, { rulesetId, buildHash }, att.sig, att.publisher));
   /** Install a ruleset ONLY if its bytes hash to the pinned value, it passes
@@ -207,8 +263,13 @@ export async function createNode({
       throw new Error(`ruleset ${actual.slice(0, 12)} refused (${conf.stage}): ${failed.join('; ')}`);
     }
     const manifest = conf.manifest;
-    const trusted = origin === 'local' || titleTrust === 'open' || (await buildAttested(manifest.rulesetId, actual, attestation));
-    if (!trusted) { emit('ruleset-refused', { buildHash: actual, stage: 'trust', failed: ['no attestation from a trusted publisher'] }); throw new Error(`ruleset ${manifest.rulesetId} @ ${actual.slice(0, 12)} refused: not signed by a trusted publisher (TITLE_TRUST=trusted)`); }
+    const onChain = origin === 'local' || titleTrust === 'open' ? null : await buildRegistered(manifest.rulesetId, actual);
+    const trusted = origin === 'local' || titleTrust === 'open' || onChain?.ok === true || (await buildAttested(manifest.rulesetId, actual, attestation));
+    if (!trusted) {
+      const failed = [onChain ? `title registry: ${onChain.reason}` : null, 'not signed by a trusted publisher'].filter(Boolean);
+      emit('ruleset-refused', { buildHash: actual, stage: 'trust', failed });
+      throw new Error(`ruleset ${manifest.rulesetId} @ ${actual.slice(0, 12)} refused: ${failed.join('; ')} (TITLE_TRUST=trusted)`);
+    }
     const entry = { rulesetId: manifest.rulesetId, buildHash: actual, source, manifest: { ...manifest, buildHash: actual }, kind: manifest.kind, publisher: attestation?.publisher ?? null, sig: attestation?.sig ?? null, origin };
     const file = join(dataDir, 'rulesets', `${actual}.mjs`);
     if (!existsSync(file)) { writeFileSync(file, source); writeFileSync(join(dataDir, 'rulesets', `${actual}.json`), JSON.stringify({ rulesetId: entry.rulesetId, buildHash: actual, publisher: entry.publisher, sig: entry.sig, origin })); }
@@ -239,8 +300,10 @@ export async function createNode({
     readAgent: (tokenId, block) => chain.agentAt(tokenId, block),
     profile: async (playerKey) => { await refreshProfiles([playerKey]).catch(() => {}); return profileCache.get(playerKey) ?? null; },
   } : null;
+  let mbook = null; // the MatchBook driver, created below once the settlement exists
   const settlement = createSettlement({
     dataDir, nodeId, identity, loaded, builds, sandbox, log, registry, courts, relayKeys,
+    onSettled: (delta, ledger) => mbook?.settle(delta, ledger),
     descriptorFor: (matchId) => { const e = matchBook.get(matchId); return e ? { descriptor: e.descriptor, envelope: e.envelope } : null; },
     verifyDescriptor: async (env) => {
       const d = env?.body;
@@ -252,6 +315,13 @@ export async function createNode({
   });
   const canSettle = roles.some((r) => ['host', 'settler', 'relay'].includes(r));
   const isWitness = roles.includes('witness');
+  if (matchBookAddr && !offline) {
+    mbook = createMatchBook({
+      dataDir, nodeId, contract: matchBookAddr, stakeContract: nodeStake, epochAnchor, chainId: chainId ?? 4441, rpc: chain.rpc, fromBlock: matchBookFromBlock, log, emit, settlement,
+      hostAddr: (hostKey) => (hostKey === nodeId ? addr : heartbeats.get(hostKey)?.addr ?? null),
+      rulesetIds: () => [...loaded.keys()], hasRole: (r) => roles.includes(r), windows: matchBookWindows, fetchImpl: globalThis.fetch,
+    });
+  }
   const witnessed = new Set(); // matchIds this node already answered
 
   const buildHashes = () => Object.fromEntries([...loaded].map(([id, r]) => [id, r.buildHash]));
@@ -323,6 +393,17 @@ export async function createNode({
     }).catch(() => {});
   };
   let lastBonded = null;        // the bonded set as last reported; stakes events fire on change only
+  // This node's own v3 standing (lock, eligibility age, delegate) and whether
+  // NodeStake's admin is a contract. Read once a minute; null on a v2 contract.
+  let myBond = null, stakeAdmin = null, lastBondRead = 0;
+  const readMyBond = async ({ force = false } = {}) => {
+    if (!nodeStake || offline || (!force && Date.now() - lastBondRead < 60_000)) return;
+    lastBondRead = Date.now();
+    const prev = myBond;
+    myBond = await chain.nodeInfo(nodeId);
+    stakeAdmin = await chain.stakeAdminIsContract();
+    if (myBond && (!prev || prev.eligible !== myBond.eligible || prev.delegate !== myBond.delegate)) emit('bond', { active: myBond.active, eligible: myBond.eligible, delegate: myBond.delegate, bondedSince: myBond.bondedSince });
+  };
   let addr = publicAddr;
 
   const myHeartbeat = () => seal(HEARTBEAT_TAG, {
@@ -394,7 +475,8 @@ export async function createNode({
       payload.queue.push(...queueEnvelopes.values());
       // Advertise what we settled so witnesses can come and check it, and the
       // placements we froze so peers converge on them.
-      payload.deltas = settlement.list().map((d) => ({ matchId: d.matchId, rulesetId: d.rulesetId, buildHash: d.buildHash, hostId: d.hostId, addr, cosigners: d.cosigners }));
+      // v0.2 path only: with MatchBook the chain is the index and the payload cannot grow with history (§3).
+      payload.deltas = mbook ? [] : settlement.list().map((d) => ({ matchId: d.matchId, rulesetId: d.rulesetId, buildHash: d.buildHash, hostId: d.hostId, addr, cosigners: d.cosigners }));
       matchesNow();
       payload.matches = matchEnvelopes();
       const body = JSON.stringify(payload);
@@ -431,9 +513,12 @@ export async function createNode({
           if (bondedNow !== lastBonded) { lastBonded = bondedNow; emit('stakes', { read: Object.keys(st).length, bonded: bondedNow ? bondedNow.split(',').length : 0 }); }
         }
       }
+      await readMyBond().catch(() => {});
+      await refreshTitleOwners();
       await hydrateMissing(currentSnapshot());
       await refreshProfiles([...queue.values()].map((b) => b.playerId).concat(settlement.list().flatMap((d) => d.participants)));
       settlement.maybeFreeze();
+      await mbook?.poll();
     } catch (e) { log(`tick: ${e.message}`); }
   };
   const envelopeCache = new Map(); // nodeId → latest envelope (for forwarding)
@@ -451,7 +536,7 @@ export async function createNode({
     await mergeHeartbeats(msg.heartbeats);
     await mergeQueue(msg.queue);
     for (const env of msg.matches ?? []) await absorbMatch(env);
-    if (isWitness) for (const ad of msg.deltas ?? []) void witnessOne(ad);
+    if (isWitness && !mbook) for (const ad of msg.deltas ?? []) void witnessOne(ad); // with MatchBook, witnessing is chain-driven (node/matchbook.js)
   };
 
   /** Witness role: fetch the ledger and the delta, replay independently,
@@ -500,13 +585,14 @@ export async function createNode({
   // The browser recomputes placement itself and is the final authority.
   const MATCH_TAG = 'match';
   const matchBook = new Map(); // matchId → { descriptor, envelope, disputes: [] }
+  let gauntlet = null;          // node/gauntlet.js, created after the server listens (needs our loopback URL)
   const matchTtlMs = 15 * 60_000;
   const describe = (m, s) => {
     const manifest = s.manifests[m.rulesetId];
     const place = manifest ? placement({ nodes: s.peers, manifest, rulesetId: m.rulesetId, matchId: m.matchId, beacon: m.beacon, regions: m.regions }) : null;
     const bc = chain.beaconFor(m.bucket);
     return { ...m, protocol: PROTOCOL_VERSION, buildHash: manifest?.buildHash ?? null, beaconSource: bc?.source, beaconBlock: bc?.block ?? null, snapshotRoot: s.root, snapshotEpoch: s.epoch, computedBy: nodeId, computedAt: Date.now(),
-      host: place?.host?.nodeId ?? null, witness: place?.witness?.nodeId ?? null, order: place?.order.map((n) => n.nodeId) ?? [] };
+      host: place?.host?.nodeId ?? null, witness: place?.witness?.nodeId ?? null, panel: place?.panel?.map((n) => n.nodeId) ?? [], order: place?.order.map((n) => n.nodeId) ?? [] };
   };
   const matchesNow = () => {
     const s = currentSnapshot();
@@ -522,11 +608,18 @@ export async function createNode({
       if (matchBook.has(m.matchId)) continue;
       const d = describe(m, s);
       if (!d.host) continue; // nobody eligible yet; try again next call
-      matchBook.set(m.matchId, { descriptor: d, envelope: null, disputes: [] });
-      emit('placed', { matchId: m.matchId, rulesetId: m.rulesetId, host: d.host, witness: d.witness, beacon: d.beaconSource, snapshotRoot: d.snapshotRoot, participants: m.participants });
+      matchBook.set(m.matchId, { descriptor: d, envelope: null, disputes: [], commitTx: null });
+      // Placed players leave the queue: the entries they posted while waiting (one per bucket) would otherwise pair
+      // again as each bucket closed — a commit transaction the host pays for and a match nobody plays, per bucket
+      // (seen end to end: three commits for one match). Every node prunes on the same rule, so the queues agree.
+      for (const p of m.participants) for (const k of [...queue.keys()]) if (k.endsWith(`|${p}`)) { queue.delete(k); queueEnvelopes.delete(k); }
+      emit('placed', { matchId: m.matchId, rulesetId: m.rulesetId, host: d.host, witness: d.witness, panel: d.panel, beacon: d.beaconSource, snapshotRoot: d.snapshotRoot, participants: m.participants });
+      gauntlet?.onPlaced({ ...d, participants: m.participants, mode: m.mode ?? null });
       seal(MATCH_TAG, d, identity).then((env) => { const e = matchBook.get(m.matchId); if (e) e.envelope = env; }).catch(() => {});
+      // The drawn host commits BEFORE play (§6): the panel is on chain before a tick is played.
+      if (mbook && d.host === nodeId && (m.mode ?? 'casual') === 'ranked') mbook.commit(d).then((tx) => { const e = matchBook.get(m.matchId); if (e) e.commitTx = tx; }).catch(() => {});
     }
-    return [...matchBook.values()].map((e) => ({ ...e.descriptor, disputes: e.disputes }));
+    return [...matchBook.values()].map((e) => ({ ...e.descriptor, disputes: e.disputes, commitTx: e.commitTx ?? null }));
   };
   /** Adopt or dispute a peer's descriptor. */
   const absorbMatch = async (env) => {
@@ -577,9 +670,12 @@ export async function createNode({
       }
       if (req.method === 'GET' && url.pathname === '/health') {
         const s = currentSnapshot();
-        return json(res, 200, { nodeId, operator, roles, region, addr, protocol: PROTOCOL_VERSION, epoch: s.epoch, peers: s.peers.length, incompatible: incompatible.size, rulesets: buildHashes(), buildsHeld: builds.size, refused: refused.size, staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null, chain: chain.status(), profiles: profileState(), version, repair: sdkMissing, update: updater.status(),
-          sandbox: sandbox.status(), trust: { policy: titleTrust, publishers: trustedPublishers, relayKeys, courts: Object.keys(courts) }, registry: registry ? 'chain' : erc6699 ? 'offline' : 'unset',
-          wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, upnp: upnpCtl?.status() ?? null,
+        return json(res, 200, { nodeId, operator, roles, region, addr, protocol: PROTOCOL_VERSION, epoch: s.epoch, peers: s.peers.length, incompatible: incompatible.size, rulesets: buildHashes(), buildsHeld: builds.size, refused: refused.size, staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null,
+          // v3 bond: witnessEligible, delegate, bondedSince; `admin` says whether NodeStake's admin is a multisig/timelock ('contract') or a wallet ('eoa'). null = v2 contract or unread.
+          bond: myBond ? { eligible: myBond.eligible, delegate: myBond.delegate, bondedSince: myBond.bondedSince ? new Date(myBond.bondedSince * 1000).toISOString() : null, unbondAt: myBond.unbondAt ? new Date(myBond.unbondAt * 1000).toISOString() : null, amount: myBond.amount.toString() } : null,
+          admin: stakeAdmin === null ? null : stakeAdmin ? 'contract' : 'eoa', matchBook: mbook ? mbook.status() : matchBookAddr ? { contract: matchBookAddr, offline: true } : null, chain: chain.status(), profiles: profileState(), version, repair: sdkMissing, update: updater.status(),
+          sandbox: sandbox.status(), trust: { policy: titleTrust, publishers: trustedPublishers, titleRegistry: titleRegistry ?? null, relayKeys, courts: Object.keys(courts) }, registry: registry ? 'chain' : erc6699 ? 'offline' : 'unset',
+          wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, upnp: upnpCtl?.status() ?? null, gauntlet: gauntlet?.status() ?? null,
           directory: nodeDirectory ? { contract: nodeDirectory, seeds: chainSeeds.length, announcer: announcer?.status() ?? null } : null, startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt,
           // reachable: a peer has pushed gossip to us in the last 30 s. null = no peers known, so nothing to conclude.
           inbound: { peers: [...inbound.values()].filter((t) => Date.now() - t < 30_000).length, lastAt: inbound.size ? new Date(Math.max(...inbound.values())).toISOString() : null, reachable: peersKnown.size ? [...inbound.values()].some((t) => Date.now() - t < 30_000) : null } });
@@ -597,13 +693,19 @@ export async function createNode({
       if (req.method === 'GET' && url.pathname === '/titles') {
         const now = epochOf(Date.now());
         const titles = new Map();
-        const take = (m, host) => {
-          const t = titles.get(m.rulesetId) ?? { rulesetId: m.rulesetId, kind: m.kind, buildHash: m.buildHash, publisher: m.publisher ?? null, display: m.display ?? null, modes: m.modes, participants: m.participants, services: m.services, hosts: [], bondedHosts: 0 };
-          if (!t.hosts.includes(host)) { t.hosts.push(host); if (stakes?.[host]?.active) t.bondedHosts++; }
+        const take = (m, host, hostRoles) => {
+          const t = titles.get(m.rulesetId) ?? { rulesetId: m.rulesetId, kind: m.kind, buildHash: m.buildHash, publisher: m.publisher ?? null, owner: titleOwners.get(m.rulesetId) ?? null, build: loaded.get(m.rulesetId)?.buildHash === m.buildHash ? titleBuilds.get(m.rulesetId) ?? null : null, display: m.display ?? null, modes: m.modes, participants: m.participants, services: m.services, hosts: [], bondedHosts: 0, publisherHosts: 0, published: null };
+          if (!t.hosts.includes(host)) {
+            t.hosts.push(host);
+            // publisherHosts: bonded, carrying the HOST role, bonded from the wallet that holds the title
+            if (stakes?.[host]?.active) { t.bondedHosts++; if (t.owner && hostRoles.includes('host') && stakes[host].operator?.toLowerCase() === t.owner) t.publisherHosts++; }
+          }
+          // published: the title is registered on chain AND its publisher runs a bonded host for it. null = no registry configured (listing falls back to display + a bonded host).
+          t.published = titleRegistry ? !!t.owner && t.publisherHosts > 0 : null;
           titles.set(m.rulesetId, t);
         };
-        for (const m of Object.values(manifests())) take(m, nodeId);
-        for (const b of heartbeats.values()) if (b.nodeId !== nodeId && b.epoch >= now - 2) for (const m of Object.values(b.manifests ?? {})) take(m, b.nodeId);
+        for (const m of Object.values(manifests())) take(m, nodeId, roles);
+        for (const b of heartbeats.values()) if (b.nodeId !== nodeId && b.epoch >= now - 2) for (const m of Object.values(b.manifests ?? {})) take(m, b.nodeId, b.roles ?? []);
         return json(res, 200, { titles: [...titles.values()] });
       }
       // Everyone we have heard from, bonded or not — for onboarding a new
@@ -640,7 +742,7 @@ export async function createNode({
         return json(res, 200, {
           heartbeats: [await myHeartbeat(), ...envelopeCache.values()],
           queue: [...queueEnvelopes.values()],
-          deltas: settlement.list().map((d) => ({ matchId: d.matchId, rulesetId: d.rulesetId, buildHash: d.buildHash, hostId: d.hostId, addr, cosigners: d.cosigners })),
+          deltas: mbook ? [] : settlement.list().map((d) => ({ matchId: d.matchId, rulesetId: d.rulesetId, buildHash: d.buildHash, hostId: d.hostId, addr, cosigners: d.cosigners })),
           matches: matchEnvelopes(),
         });
       }
@@ -670,6 +772,7 @@ export async function createNode({
         try {
           const d = await settlement.intake(await readBody(req));
           emit('settled', { matchId: d.matchId, rulesetId: d.rulesetId, ticks: d.ticks, root: d.finalStateRoot, attestation: d.attestation, hostSig: d.hostSig, participants: d.participants });
+          gauntlet?.onSettled(d.matchId);
           return json(res, 200, d);
         } catch (e) { emit('refused', { what: 'ledger', reason: e.message }); return json(res, 400, { error: e.message }); }
       }
@@ -738,6 +841,26 @@ export async function createNode({
           return json(res, 200, { ...r, email: who.email, airAddress: who.address });
         } catch (e) { log(`air: ${url.pathname} for ${who.sub.slice(0, 8)}…: ${e.message}`); return json(res, 502, { error: e.message }); }
       }
+      // ---- publisher and operator actions from the AIR account's proxy
+      // (docs/PUBLISHER-BONDS.md §4): the proxy claims the title, adds or
+      // revokes a build, hands the title over, or bonds THIS node.
+      if (req.method === 'POST' && (url.pathname === '/air/publish' || url.pathname === '/air/bond')) {
+        if (!proxies) return json(res, 404, { error: 'universal login is not enabled on this node (AIR_PARTNER_ID / PlayerProfile)' });
+        let body; try { body = await readBody(req); } catch (e) { return json(res, 400, { error: e.message }); }
+        let who; try { who = await airVerifier.verify(body.token); } catch (e) { return json(res, 401, { error: `air token: ${e.message}` }); }
+        try {
+          if (url.pathname === '/air/bond') { const r = await proxies.bond({ sub: who.sub }); await readMyBond({ force: true }).catch(() => {}); return json(res, 200, r); }
+          const action = String(body.action ?? '');
+          const rulesetId = typeof body.rulesetId === 'string' && body.rulesetId.length <= 64 ? body.rulesetId : null;
+          if (!['register', 'set-build', 'revoke', 'transfer'].includes(action) || !rulesetId) return json(res, 400, { error: 'action (register|set-build|revoke|transfer) and rulesetId required' });
+          // The build defaults to the one THIS node serves for the title: a publisher publishes what their host runs.
+          const buildHash = typeof body.buildHash === 'string' && /^[0-9a-f]{64}$/i.test(body.buildHash) ? body.buildHash.toLowerCase() : loaded.get(rulesetId)?.buildHash ?? null;
+          if (action !== 'transfer' && !buildHash) return json(res, 400, { error: `this node does not host ${rulesetId}; pass buildHash` });
+          const r = await proxies.publish({ sub: who.sub, action, rulesetId, buildHash, to: body.to ?? null, activatesAt: Number(body.activatesAt ?? 0) || 0 });
+          titleVerdicts.clear(); lastTitleRead = 0; await refreshTitleOwners();
+          return json(res, 200, r);
+        } catch (e) { log(`air: ${url.pathname} for ${who.sub.slice(0, 8)}…: ${e.message}`); return json(res, 502, { error: e.message }); }
+      }
       if (req.method === 'GET' && url.pathname === '/profile') {
         const pid = url.searchParams.get('player');
         if (!pid) return json(res, 400, { error: 'player= required' });
@@ -754,21 +877,32 @@ export async function createNode({
         try {
           const byOwner = url.searchParams.get('by') === 'owner';
           // Official standings by default: ranked, placed, verified. ?scope=all shows everything, labelled.
-          const scope = url.searchParams.get('scope') === 'all' ? 'all' : 'official';
-          const d = settlement.derived(rid, { scope, profiles: byOwner ? profilesFor(settlement.list(rid).flatMap((x) => x.participants)) : null });
+          const scopeQ = url.searchParams.get('scope');
+          const scope = scopeQ === 'all' ? 'all' : scopeQ === 'pending' ? 'pending' : 'official';
+          // With MatchBook, official and pending ladders are a fold over the CHAIN's event log (§9) — the same
+          // tables on every node and on the cabinet reading RPC alone. `all` stays this node's local view.
+          const d = mbook && scope !== 'all' && !byOwner
+            ? { rulesetId: rid, by: 'key', ...mbook.ladder(rid, loaded.get(rid)?.manifest ?? {}, { scope }) }
+            : settlement.derived(rid, { scope: scope === 'pending' ? 'all' : scope, profiles: byOwner ? profilesFor(settlement.list(rid).flatMap((x) => x.participants)) : null });
           const player = url.searchParams.get('player');
-          if (url.pathname === '/leaderboard') return json(res, 200, { rulesetId: rid, scope: d.scope, by: d.by, deriveVersion: d.deriveVersion, digest: d.digest, skipped: d.skipped, leaderboard: d.leaderboard });
+          if (url.pathname === '/leaderboard') return json(res, 200, { rulesetId: rid, scope: d.scope, by: d.by, source: d.source ?? 'local', cursor: d.cursor ?? null, counts: d.counts ?? null, deriveVersion: d.deriveVersion, digest: d.digest, skipped: d.skipped ?? [], leaderboard: d.leaderboard });
           if (url.pathname === '/credits') { const cur = url.searchParams.get('currency'); const table = cur ? d.credits[cur] ?? {} : d.credits; return json(res, 200, player ? { player, currency: cur, balance: table[player] ?? 0 } : table); }
           return json(res, 200, player ? { player, ...(d.stats[player] ?? { matches: 0, wins: 0, ticks: 0 }) } : d.stats);
         } catch (e) { return json(res, 400, { error: e.message }); }
       }
+      if (req.method === 'GET' && /^\/match\/[^/]+\/chain$/.test(url.pathname)) {
+        if (!mbook) return json(res, 200, { matchBook: null });
+        return json(res, 200, mbook.chainStatus(decodeURIComponent(url.pathname.split('/')[2])));
+      }
       if (req.method === 'GET' && url.pathname === '/epoch') {
         const hour = url.searchParams.get('epoch');
+        // With MatchBook the hour's tree is over the CHAIN-finalized set — the same root on every node (§11.6); the settler proposes it itself.
+        if (mbook) { const { tree, ...e } = mbook.epoch(hour ? Number(hour) : undefined); return json(res, 200, { ...e, proposeCalldata: proposeCalldata(e.epoch, e.root, nodeId), anchor: { contract: 'EpochAnchor v3', method: 'propose(uint64,bytes32,bytes32)', note: 'finalizes on chain when nodes holding quorumBps of the active bonded stake propose the same root' } }); }
         const { tree, ...e } = settlement.epoch(hour ? Number(hour) : undefined);
-        return json(res, 200, { ...e, anchor: { contract: 'EpochAnchor v2', method: 'propose(uint64,bytes32,bytes32)', note: 'finalizes on chain when `quorum` bonded operators propose the same root' } });
+        return json(res, 200, { ...e, source: 'local', anchor: { contract: 'EpochAnchor v3', method: 'propose(uint64,bytes32,bytes32)', note: 'a local tree: MatchBook is not configured, so this root is this node\'s own view' } });
       }
       if (req.method === 'GET' && url.pathname.startsWith('/proof/')) {
-        const p = settlement.proof(decodeURIComponent(url.pathname.slice(7)));
+        const p = (mbook ? mbook.proof(decodeURIComponent(url.pathname.slice(7))) : null) ?? settlement.proof(decodeURIComponent(url.pathname.slice(7)));
         return p ? json(res, 200, p) : json(res, 404, { error: 'unknown match' });
       }
       // The cabinet's own files (app.js, style.css, sw.js, covers/…) resolve
@@ -782,6 +916,11 @@ export async function createNode({
   const actualPort = server.address().port;
   addr ??= `http://${host}:${actualPort}`;
   lanAddr = addr;
+  if (Object.keys(gauntlets).length) {
+    gauntlet = createGauntlets({ configs: gauntlets, port: relayPort ?? 0, upstream: gauntletUpstream, nodeUrl: `http://127.0.0.1:${actualPort}`, wsAddr: () => wsAddr, nodeId, log, emit });
+    await gauntlet.listen();
+    if (!relayPort) log('gauntlet gateway has no RELAY_PORT: reachable on this machine only');
+  }
   if (upnp) {
     const ports = [{ external: actualPort, internal: actualPort, label: 'node' }];
     if (relayPort) ports.push({ external: relayPort, internal: relayPort, label: 'relay' });
@@ -813,7 +952,7 @@ export async function createNode({
     if (!existsSync(sponsorPath)) writeFileSync(sponsorPath, JSON.stringify({ privateKey: randomPrivateKey() }, null, 2) + '\n');
     const sponsorKey = JSON.parse(readFileSync(sponsorPath, 'utf8'));
     airVerifier = createAirVerifier({ jwksUrl: air.jwksUrl, partnerId: air.partnerId ?? null, fetchImpl: chainFetch });
-    proxies = createProxyWallets({ dataDir, chainId: chainId ?? 4441, rpc: chain.rpc, playerProfile, sponsor: { privateKey: sponsorKey.privateKey, address: addressOf(sponsorKey.privateKey) }, log, emit });
+    proxies = createProxyWallets({ dataDir, chainId: chainId ?? 4441, rpc: chain.rpc, playerProfile, sponsor: { privateKey: sponsorKey.privateKey, address: addressOf(sponsorKey.privateKey) }, titleRegistry, nodeStake, stakeToken, nodeId, log, emit });
     log(`air: universal login on · partner ${air.partnerId ?? 'any'} · sponsor ${addressOf(sponsorKey.privateKey)}`);
   }
   if (nodeDirectory && !offline) {
@@ -832,9 +971,10 @@ export async function createNode({
 
   return {
     nodeId, addr, port: actualPort, identity,
-    snapshot: currentSnapshot, matches: matchesNow, installRuleset, chain, settlement,
+    snapshot: currentSnapshot, matches: matchesNow, installRuleset, chain, settlement, matchBook: mbook,
     rulesets: () => buildHashes(), peers: () => heartbeats, inbound, operator, roles, region, startedAt,
     version, updater, restart, tunnels, upnp: upnpCtl, get wsAddr() { return wsAddr; }, get announcer() { return announcer; }, seeds: () => chainSeeds, seedChecks, admitSeed, sandbox, refused, incompatible, protocol: PROTOCOL_VERSION, peersKnown,
-    async stop() { clearInterval(timer); clearInterval(updateTimer); clearInterval(directoryTimer); clearTimeout(announceRetry); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); server.closeAllConnections?.(); await new Promise((r) => server.close(r)); },
+    get gauntlet() { return gauntlet; },
+    async stop() { clearInterval(timer); clearInterval(updateTimer); clearInterval(directoryTimer); clearTimeout(announceRetry); await gauntlet?.stopAll(); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); server.closeAllConnections?.(); await new Promise((r) => server.close(r)); },
   };
 }
