@@ -3,6 +3,14 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- **A node that loses every fresh peer re-reads NodeDirectory at once**
+  (rate-limited to once a minute) instead of on the 10-minute cycle. Seen
+  live: the seed restarted on a new quick-tunnel hostname and its two peers
+  stayed blind to it for the rest of the cycle.
+
 ## [0.8.2] — 2026-09-20 — survive an update by an older updater
 
 Protocol **2** (unchanged). **Every node still on 0.6.x should update by

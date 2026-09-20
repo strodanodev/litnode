@@ -255,10 +255,12 @@ export async function createNode({
   const tunnels = { node: null, relay: null };
   let upnpCtl = null;
   // ---------------------------------------------------------------- directory
-  let chainSeeds = [];          // liveSeeds() from NodeDirectory, refreshed every 10 min
+  let chainSeeds = [];          // liveSeeds() from NodeDirectory, refreshed every 10 min, or at once when lonely
+  let lastDirectoryRead = 0;
   let announcer = null;
   const readDirectory = async () => {
     if (!nodeDirectory || offline) return;
+    lastDirectoryRead = Date.now();
     const entries = await chain.directory();
     if (!entries) return;
     const st = await chain.standings(Object.keys(entries)) ?? {};
@@ -376,6 +378,15 @@ export async function createNode({
         fetch(`${peer}/gossip`, { method: 'POST', headers: { 'content-type': 'application/json' }, body })
           .then(async (r) => { if (r.ok) { const text = await r.text(); const m = JSON.parse(text); await absorb(m, { from: peer, bytes: text.length, via: 'reply' }); } })
           .catch(() => {});
+      }
+      // Lonely with a directory configured: every fresh peer is gone (a seed
+      // restarted on a new tunnel hostname, say). Re-read NodeDirectory now
+      // rather than on the 10-minute cycle — the desktop's restart left its
+      // peers blind for up to ten minutes once. Rate-limited to one read a
+      // minute so a genuinely empty mesh does not hammer the RPC.
+      if (nodeDirectory && !offline && Date.now() - lastDirectoryRead > 60_000) {
+        const fresh = currentSnapshot().peers.filter((p) => p.nodeId !== nodeId).length;
+        if (fresh === 0) { lastDirectoryRead = Date.now(); log('no fresh peers — re-reading NodeDirectory'); readDirectory().catch(() => {}); }
       }
       const head = chain.status().head;
       const b = await chain.pollBlock();
