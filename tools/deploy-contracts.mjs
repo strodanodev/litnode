@@ -26,13 +26,13 @@
  *            with transferOperator). The old file is archived as
  *            contracts/deployed.testnet.<timestamp>.json — the migration record.
  *  --quorum N  EpochAnchor v3 quorum in basis points of active bonded stake (default 5000).
+ *  --only TitleRegistry[,ReleaseRegistry,…]  add just those contracts to the
+ *            existing deployment; NodeStake and everything keyed on it untouched.
  *
  *  Needs zkLTC for gas on the deployer: https://liteforge.hub.caldera.xyz */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ethers } from 'ethers';
-import solc from 'solc';
 import { generateKeypair } from '../protocol/keys.js';
 import { nodeKeyBytes32 } from '../protocol/staking.js';
 
@@ -55,6 +55,10 @@ const fresh = argv.includes('--fresh');
 // --quorum: EpochAnchor v3 quorum in BASIS POINTS of the active bonded stake (default 5000 = a majority of stake).
 const quorum = argv.includes('--quorum') ? Number(argv[argv.indexOf('--quorum') + 1]) : 5000;
 if (!(quorum > 0 && quorum <= 10_000)) { console.error('--quorum is basis points of active stake: 1..10000'); process.exit(1); }
+// ethers and solc load only once the run is going ahead: an early exit with them mid-initialisation
+// trips a libuv assertion on Windows (seen 22 Sep 2026, "!(handle->flags & UV_HANDLE_CLOSING)").
+const { ethers } = await import('ethers');
+const solc = (await import('solc')).default;
 const previous = existsSync(outPath) ? JSON.parse(readFileSync(outPath, 'utf8')) : null;
 // --fresh is resumable: a file that already carries `migratedFrom` IS the new
 // generation, half-deployed (Caldera's gateway 502s mid-run) — continue it
@@ -120,6 +124,29 @@ const deploy = async (label, file, name, args = []) => {
   console.log(`${label}: deployed at ${deployed[label].address} (tx ${receipt.hash})`);
   return c;
 };
+
+// ---------------------------------------------------------------- --only: add contracts to an EXISTING deployment
+// --only TitleRegistry[,ReleaseRegistry,PlayerProfile,ERC6699Registry]: deploy just
+// those, each with its own constructor args, and leave NodeStake and everything
+// keyed on it alone. Adding a contract must not become a migration.
+if (argv.includes('--only')) {
+  const wanted = String(argv[argv.indexOf('--only') + 1] ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+  const admin = cfg.admin && /^0x[0-9a-fA-F]{40}$/.test(cfg.admin) ? cfg.admin : wallet.address;
+  const standalone = {
+    TitleRegistry: () => deploy('TitleRegistry', 'TitleRegistry.sol', 'TitleRegistry', [BigInt(cfg.TitleRegistry?.activationDelay ?? 60)]).then(() => { deployed.TitleRegistry.activationDelay = Number(cfg.TitleRegistry?.activationDelay ?? 60); }),
+    ReleaseRegistry: () => deploy('ReleaseRegistry', 'ReleaseRegistry.sol', 'ReleaseRegistry', [admin, BigInt(cfg.ReleaseRegistry?.activationDelay ?? 60)]).then(() => { deployed.ReleaseRegistry.activationDelay = Number(cfg.ReleaseRegistry?.activationDelay ?? 60); deployed.ReleaseRegistry.admin = admin; }),
+    PlayerProfile: () => deploy('PlayerProfile', 'PlayerProfile.sol', 'PlayerProfile'),
+    ERC6699Registry: () => deploy('ERC6699Registry', 'ERC6699Registry.sol', 'ERC6699Registry', [admin]),
+  };
+  const bad = wanted.filter((w) => !standalone[w]);
+  if (!wanted.length || bad.length) { console.error(`--only takes a comma list of: ${Object.keys(standalone).join(', ')}${bad.length ? ` (not ${bad.join(', ')} — those depend on NodeStake; run without --only or with --fresh)` : ''}`); process.exit(1); }
+  for (const w of wanted) { await standalone[w](); save(); }
+  deployed.chainId ??= cfg.chainId; deployed.rpc ??= cfg.rpc; deployed.deployer ??= wallet.address;
+  save();
+  console.log(`
+wrote ${outPath} — ${wanted.join(', ')} added; nothing else touched`);
+  process.exit(0);
+}
 
 // ---------------------------------------------------------------- token + faucet
 const token = await deploy('TestLITVM', 'TestLITVM.sol', 'TestLITVM');

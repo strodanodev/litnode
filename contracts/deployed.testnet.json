@@ -80,5 +80,14 @@
   "chainId": 4441,
   "rpc": "https://liteforge.rpc.caldera.xyz/http",
   "deployedAt": "2026-09-19T08:19:23.550Z",
-  "deployer": "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27"
+  "deployer": "0x7cE7E7c8A4615ba16201971a26f1D0F496c87D27",
+  "TitleRegistry": {
+    "address": "0x449655415B9Be10a983f4B37C051F21151F664DB",
+    "tx": "0x6b35789b80df2f4182a4d2b96669017a12597859743301095bd259371af7f3b5",
+    "block": 52944083,
+    "args": [
+      "60"
+    ],
+    "activationDelay": 60
+  }
 }

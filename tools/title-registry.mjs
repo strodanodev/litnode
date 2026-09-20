@@ -82,8 +82,9 @@ async function show() {
   return t;
 }
 
+// No process.exit() on the happy paths: on Windows it can abort inside libuv while the last fetch handle closes.
 try {
-  if (cmd === 'status') { await show(); process.exit(0); }
+  if (cmd === 'status') { await show(); } else {
   const rawKey = (process.env.PUBLISHER_KEY ?? process.env.OPERATOR_KEY ?? process.env.DEPLOYER_KEY ?? '').trim();
   const key = /^(0x)?[0-9a-fA-F]{64}$/.test(rawKey) ? (rawKey.startsWith('0x') ? rawKey : '0x' + rawKey) : null;
   const from = key ? addressOf(key) : null;
@@ -96,7 +97,7 @@ try {
     if (!cur.publisher) { console.error(`${it.rulesetId}: not registered`); process.exit(1); }
     data = transferCalldata(cur.publisher, extra, it.rulesetId);
   }
-  if (calldataOnly) { console.log(`${cmd} ${it.rulesetId} -> to ${reg}\n0x${data.replace(/^0x/, '')}`); process.exit(0); }
+  if (calldataOnly) { console.log(`${cmd} ${it.rulesetId} -> to ${reg}\n0x${data.replace(/^0x/, '')}`); } else {
   if (!key) { console.error('PUBLISHER_KEY not set (or pass --calldata to print what the multisig should send)'); process.exit(1); }
   const cur = decodeTitle(await rpc('eth_call', [titleOfCall(reg, it.rulesetId), 'latest']));
   if (cmd === 'register' && cur.publisher) { console.log(`${it.rulesetId}: already registered by ${cur.publisher}${cur.publisher.toLowerCase() === from.toLowerCase() ? ' (you) — use set-build for another build' : ''}`); await show(); process.exit(cur.publisher.toLowerCase() === from.toLowerCase() ? 0 : 1); }
@@ -113,4 +114,5 @@ try {
   console.log(`${cmd} ${it.rulesetId}${cmd === 'transfer' ? ` → ${extra}` : ''} (tx ${hash})`);
   await show();
   if (cmd === 'register') console.log('next: host it on a node bonded from THIS wallet — the arcade lists a title only while its publisher runs a bonded host (npm run host -- init … --rulesets <file>; bond; publish)');
+} }
 } catch (e) { const m = String(e?.message ?? e); console.error('✗ ' + m + (/revert/i.test(m) ? ' (a revert here usually means the key does not hold the title, the rulesetId is taken, the build is already registered, or --activates is inside the delay)' : '')); process.exit(1); }

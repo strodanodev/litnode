@@ -59,7 +59,7 @@ server.on('upgrade', (req, socket) => {
         const id = (c) => (/^[0-9a-f]{64}$/.test(c.sub) ? c.sub : `pb:${c.sub}`);
         const teams = [report.claims.filter((c) => c.team === 0).map(id), report.claims.filter((c) => c.team === 1).map(id)];
         const sig = await sign('attest', { matchId, rulesetId: 'pickle-brawl.v1', report }, identity.privateKey);
-        const r = await fetch(`${process.env.LITNODE_URL}/ledger`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind: 'attested', matchId, rulesetId: 'pickle-brawl.v1', mode: process.env.GAUNTLET_MODE ?? 'casual', participants: [...teams[0], ...teams[1]], teams, report, attestor: { id: identity.publicKey, sig } }) });
+        const r = await fetch(`${process.env.LITNODE_URL}/ledger`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind: 'attested', matchId, rulesetId: 'pickle-brawl.v1', mode: process.env.GAUNTLET_PLACED_MODE ?? 'casual', participants: [...teams[0], ...teams[1]], teams, report, attestor: { id: identity.publicKey, sig } }) });
         const j = await r.json();
         for (const c of clients) c.write(frame(`settled:${r.status}:${j.attestation ?? j.error}`));
         continue;
