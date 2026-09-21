@@ -85,7 +85,7 @@ The test asserts exactly this set of keys.
 | `nodeId operator addr wsAddr region roles version protocol rulesets` | identity |
 | `fresh ageS clockSkewS` | heartbeat ≤ 2 s old; age in seconds; their clock − ours |
 | `bonded wallet eligible` | chain standing; the wallet that bonded them (null = unbonded); in the placement set |
-| `link` | **measured on our gossip push to them, every second** — null when we never pushed (we only hear them via a third node): `rttMs` last round trip, `emaMs` moving average, `loss` 0..1 over the last 20 pushes, `samples sent ok okAt failAt`, `direct` (an OK push in the last 10 s) |
+| `link` | **measured on our gossip push to them, every second**: `rttMs` last round trip, `emaMs` moving average, `loss` 0..1 over the last 20 pushes, `samples sent ok okAt failAt`, `direct` (an OK push in the last 10 s); `inboundMs` = what *their* heartbeat says about reaching us; `direction` = `both` | `outbound` | `inbound` (they reach us, we cannot reach them — a peer on another subnet pushing to our tunnel; still a live link) | `none`. Null only when neither side has measured anything (heard through a third node) |
 | `quality{score,grade}` | 0–100 and A–F from freshness, loss and rtt (§3) — the **connection-quality** colour |
 | `links[]` | what *they* reported reaching in their heartbeat: `{ id: 16-hex prefix, ms }` — the edges of the graph from their side |
 
@@ -125,6 +125,7 @@ tunnel announced update incompatible peer.forgotten seed-refused proposed enroll
 base:   age ≤ 2 s → 100 · ≤ 10 s → 80 · ≤ 60 s → 50 · else 20
 loss:   − 60 × loss                       (over the last 20 pushes)
 rtt:    − 5 (> 300 ms) · − 15 (> 800 ms) · − 30 (> 2 s)   on the moving average
+inbound only (they reach us, we do not reach them): − 5, rtt from their side
 no link (never pushed; heard through others):  capped at 75
 grade:  A ≥ 90 · B ≥ 75 · C ≥ 50 · D ≥ 25 · F
 ```

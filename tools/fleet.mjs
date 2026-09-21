@@ -52,7 +52,7 @@ export function screen(f) {
   L.push('');
   L.push(`${pad('peer', 14)}${pad('id', 12)}${pad('ver', 9)}${pad('roles', 20)}${num('age', 5)}${num('rtt', 6)}${num('ema', 6)}${num('loss', 6)}  ${pad('grade', 7)}${pad('bond', 6)}${pad('addr', 40)}`);
   for (const p of [...f.peers].sort((a, b) => b.quality.score - a.quality.score || a.operator.localeCompare(b.operator))) {
-    L.push(`${pad(p.operator, 14)}${pad(short(p.nodeId), 12)}${pad(p.version ?? '?', 9)}${pad(p.roles.join(','), 20)}${num(p.ageS + 's', 5)}${num(p.link?.rttMs != null ? p.link.rttMs : '—', 6)}${num(p.link?.emaMs != null ? p.link.emaMs : '—', 6)}${num(p.link?.loss != null ? Math.round(p.link.loss * 100) + '%' : '—', 6)}  ${pad(`${p.quality.grade} ${p.quality.score}`, 7)}${pad(p.bonded === null ? '?' : p.bonded ? 'yes' : 'no', 6)}${pad(p.addr ?? '—', 40)}`);
+    L.push(`${pad(p.operator, 14)}${pad(short(p.nodeId), 12)}${pad(p.version ?? '?', 9)}${pad(p.roles.join(','), 20)}${num(p.ageS + 's', 5)}${num(p.link?.rttMs != null ? p.link.rttMs : p.link?.inboundMs != null ? '←' + p.link.inboundMs : '—', 6)}${num(p.link?.emaMs != null ? p.link.emaMs : p.link?.inboundMs != null ? '←' + p.link.inboundMs : '—', 6)}${num(p.link?.direction === 'inbound' ? 'in' : p.link?.loss != null ? Math.round(p.link.loss * 100) + '%' : '—', 6)}  ${pad(`${p.quality.grade} ${p.quality.score}`, 7)}${pad(p.bonded === null ? '?' : p.bonded ? 'yes' : 'no', 6)}${pad(p.addr ?? '—', 40)}`);
   }
   if (!f.peers.length) L.push('  (no peers heard yet)');
   L.push('');

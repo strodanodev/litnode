@@ -364,19 +364,28 @@ export async function createNode({
     if (ok) { l.ok++; l.okAt = Date.now(); l.rttMs = Math.round(ms); l.emaMs = l.emaMs == null ? l.rttMs : Math.round(l.emaMs * 0.7 + l.rttMs * 0.3); } else l.failAt = Date.now();
     links.set(peer, l);
   };
-  const linkOf = (peerUrl) => {
+  // `inboundMs`: what the peer's own heartbeat says about reaching US. A link is 'both', 'outbound' (we reach them),
+  // 'inbound' (they reach us — a LAN peer on another subnet pushing to our tunnel: m16 and the Ally from the desktop,
+  // 22 Sep 2026) or 'none' (heard only through a third node). A one-way link is still a live link.
+  const linkOf = (peerUrl, inboundMs = null) => {
     const l = peerUrl ? links.get(peerUrl) : null;
-    if (!l) return null;
-    const loss = l.window.length ? +(1 - l.window.reduce((a, b) => a + b, 0) / l.window.length).toFixed(2) : null;
-    return { rttMs: l.rttMs, emaMs: l.emaMs, loss, samples: l.window.length, sent: l.sent, ok: l.ok, okAt: l.okAt ? new Date(l.okAt).toISOString() : null, failAt: l.failAt ? new Date(l.failAt).toISOString() : null, direct: Date.now() - l.okAt < 10_000 };
+    const out = l && Date.now() - l.okAt < 10_000;
+    if (!l && inboundMs == null) return null;
+    const loss = l?.window.length ? +(1 - l.window.reduce((a, b) => a + b, 0) / l.window.length).toFixed(2) : null;
+    return { rttMs: l?.rttMs ?? null, emaMs: l?.emaMs ?? null, loss, samples: l?.window.length ?? 0, sent: l?.sent ?? 0, ok: l?.ok ?? 0, okAt: l?.okAt ? new Date(l.okAt).toISOString() : null, failAt: l?.failAt ? new Date(l.failAt).toISOString() : null,
+      direct: !!out, inboundMs, direction: out && inboundMs != null ? 'both' : out ? 'outbound' : inboundMs != null ? 'inbound' : 'none' };
   };
   // One number and a grade a dashboard can colour: heartbeat freshness, loss on our pushes, round trip. A peer we
-  // cannot push to but keep hearing from (behind NAT, forwarded by a third node) grades on freshness alone, capped at B.
+  // cannot push to grades on the direction that works (its reported rtt to us); one heard only through a third node
+  // grades on freshness alone, capped at B.
   const quality = (ageS, link) => {
     if (ageS == null) return { score: 0, grade: 'F' };
     let score = ageS <= 2 ? 100 : ageS <= 10 ? 80 : ageS <= 60 ? 50 : 20;
-    if (link?.samples) { score -= Math.round((link.loss ?? 0) * 60); if (link.emaMs != null) score -= link.emaMs > 2000 ? 30 : link.emaMs > 800 ? 15 : link.emaMs > 300 ? 5 : 0; }
+    const ms = link?.direction === 'outbound' || link?.direction === 'both' ? link.emaMs : link?.direction === 'inbound' ? link.inboundMs : null;
+    if (link?.direction === 'inbound') score -= 5; // one way: they reach us, we do not reach them — fine for gossip, noted
+    else if (link?.samples) score -= Math.round((link.loss ?? 0) * 60);
     else score = Math.min(score, 75);
+    if (ms != null) score -= ms > 2000 ? 30 : ms > 800 ? 15 : ms > 300 ? 5 : 0;
     score = Math.max(0, Math.min(100, score));
     return { score, grade: score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 50 ? 'C' : score >= 25 ? 'D' : 'F' };
   };
@@ -840,7 +849,7 @@ export async function createNode({
     const eligible = new Set(s.peers.map((p) => p.nodeId));
     const peers = [...heartbeats.values()].filter((b) => b.nodeId !== nodeId).map((b) => {
       const ageS = Math.max(0, +(((nowEpoch - b.epoch) * EPOCH_MS) / 1000).toFixed(1));
-      const link = linkOf(b.addr);
+      const link = linkOf(b.addr, (b.links ?? []).find((l) => nodeId.startsWith(l.id))?.ms ?? null);
       return { nodeId: b.nodeId, operator: b.operator, addr: b.addr ?? null, wsAddr: b.wsAddr ?? null, region: b.region, roles: b.roles, version: b.version ?? null, protocol: b.protocol ?? 1,
         fresh: b.epoch >= nowEpoch - 2, ageS, clockSkewS: +(((b.epoch - nowEpoch) * EPOCH_MS) / 1000).toFixed(1),
         bonded: stakes ? !!stakes[b.nodeId]?.active : null, wallet: stakes?.[b.nodeId]?.operator ?? null, eligible: eligible.has(b.nodeId), rulesets: Object.keys(b.buildHashes ?? {}),

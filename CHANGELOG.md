@@ -3,6 +3,15 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Changed
+- **A one-way link is a live link.** A peer we cannot push to (m16 and the Ally sit on
+  another subnet and reach the desktop through its tunnel) graded D with 100% loss
+  while pushing to us every second. `link.direction` is now `both | outbound |
+  inbound | none`, `link.inboundMs` is the peer's own measurement of reaching us,
+  and an inbound-only peer grades on that (−5 for the missing direction).
+
 ## [0.11.12] — 2026-09-22 — the demo sub-patch: telemetry for the operator's dashboard, type-2 fees, one answer per screen
 
 The "0.11.11.a" round: the weaknesses and quick fixes from the 22 Sep build report
