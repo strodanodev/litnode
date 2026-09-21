@@ -75,7 +75,7 @@ for (const kind of kinds) {
     writeFileSync(join(stage, 'runtime', 'VERSION'), `${runtime.version}\n`);
   }
 
-  const scripts = { node: 'node node/cli.mjs', keygen: 'node tools/keygen.mjs', cabinet: 'node cabinet/serve.mjs', update: 'node tools/update.mjs' };
+  const scripts = { node: 'node node/cli.mjs', host: 'node sdk/host/cli.mjs', keygen: 'node tools/keygen.mjs', cabinet: 'node cabinet/serve.mjs', update: 'node tools/update.mjs' };
   let deps;
   if (kind === 'portable') {
     for (const f of ['keygen.mjs', 'bond-node.mjs']) cpSync(join(root, 'tools', f), join(stage, 'tools', f));
@@ -86,7 +86,7 @@ for (const kind of kinds) {
     for (const f of ['NodeStake.sol', 'TestLITVM.sol', 'ERC6699Registry.sol', 'EpochAnchor.sol']) cpSync(join(root, 'contracts', f), join(stage, 'contracts', f));
     for (const f of ['install-task.cmd', 'run-node.cmd', 'restart-node.cmd', 'stop-node.cmd', 'run-af-relay.cmd', 'run-af-watch.cmd']) cpSync(join(root, 'portable', f), join(stage, f));
     cpSync(join(root, 'portable', 'README-OPERATOR.md'), join(stage, 'README.md'));
-    Object.assign(scripts, { bond: 'node tools/bond-node.mjs', 'import:af': 'node tools/af-import-ledger.mjs', 'watch:af': 'node tools/af-watch.mjs', anchor: 'node tools/anchor-epoch.mjs', announcer: 'node tools/set-announcer.mjs', 'deploy:testnet': 'node tools/deploy-contracts.mjs' });
+    Object.assign(scripts, { bond: 'node tools/bond-node.mjs', delegate: 'node tools/delegate.mjs', enroll: 'node tools/enroll.mjs', 'release:registry': 'node tools/release-registry.mjs', authority: 'node tools/authority.mjs', 'import:af': 'node tools/af-import-ledger.mjs', 'watch:af': 'node tools/af-watch.mjs', anchor: 'node tools/anchor-epoch.mjs', announcer: 'node tools/set-announcer.mjs', 'deploy:testnet': 'node tools/deploy-contracts.mjs' });
     deps = { ethers: pkg.devDependencies.ethers, solc: pkg.devDependencies.solc };
   }
   writeFileSync(join(stage, 'package.json'), JSON.stringify({
