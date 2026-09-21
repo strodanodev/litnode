@@ -680,7 +680,7 @@ function operatorPanel(h) {
     `<dt>wallet</dt><dd class="mono">${esc(me)}${i?.balance != null ? ` · ${tok(i.balance)} tLITVM` : ''}</dd>`,
     `<dt>bond</dt><dd>${i ? (i.bonded ? `${tok(i.amount)} tLITVM by <span class="mono">${esc(i.operator.slice(0, 10))}…</span>${mine ? ' (you)' : ''}` : `none · minimum ${tok(i.minStake)} tLITVM`) : 'reading…'}</dd>`,
     ann ? `<dt>announcer</dt><dd class="mono">${esc(ann.slice(0, 10))}… ${i?.announcer === ann ? '<span class="dim">delegated</span>' : '<span class="dim">not delegated</span>'}</dd>` : '',
-    ann && i?.bonded ? `<dt>delegate</dt><dd class="mono">${i.delegate ? `${esc(i.delegate.slice(0, 10))}… <span class="dim">${i.delegate === ann ? 'the node's hot key' : 'another key'}</span>` : '<span class="dim">not set — the node cannot commit, attest or propose</span>'}</dd>` : '',
+    ann && i?.bonded ? `<dt>delegate</dt><dd class="mono">${i.delegate ? `${esc(i.delegate.slice(0, 10))}… <span class="dim">${i.delegate === ann ? 'the node’s hot key' : 'another key'}</span>` : '<span class="dim">not set — the node cannot commit, attest or propose</span>'}</dd>` : '',
   ].join('');
   const acts = [
     i && !i.bonded ? '<button class="btn sm primary" id="op-bond">Bond this node</button>' : '',

@@ -6,8 +6,9 @@
  *  number as /leaderboard.
  *    node --test demo/cabinet.test.mjs */
 import { test } from 'node:test';
+import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -62,6 +63,15 @@ test('cabinet contract: fields by name, cabinet served at /, vendored protocol i
   const page = await get('/'); assert.match(page.headers.get('content-type'), /text\/html/); assert.match(await page.text(), /LIT GAMES/);
   for (const f of ['/app.js', '/client.js', '/wallet.js', '/seeds.js', '/protocol/directory.js', '/protocol/abi.js', '/config.js', '/style.css', '/sw.js', '/manifest.webmanifest', '/protocol/keys.js', '/protocol/derive.js', '/protocol/profile.js', '/cabinet/protocol/keys.js'])
     assert.equal((await fetch(`${node.addr}${f}`)).status, 200, f);
+  // every script the page loads must PARSE: a stray quote in app.js shipped in 0.11.1 and blanked the cabinet on every node
+  for (const f of ['/app.js', '/client.js', '/wallet.js', '/seeds.js', '/nodeops.js', '/config.js', '/sdk-client.js', '/roster.js', '/avatar.js', '/bg.js', '/uptime.js', '/chain.js']) {
+    const src = await (await fetch(`${node.addr}${f}`)).text();
+    const tmpFile = join(tmpdir(), `cabinet-parse-${process.pid}-${f.slice(1)}.mjs`);
+    writeFileSync(tmpFile, src);
+    try { execFileSync(process.execPath, ['--check', tmpFile], { stdio: 'pipe' }); }
+    catch (e) { assert.fail(`${f} does not parse: ${String(e.stderr).split(/\r?\n/).slice(0, 3).join(' ')}`); }
+    finally { rmSync(tmpFile, { force: true }); }
+  }
   assert.equal((await fetch(`${node.addr}/protocol/../package.json`)).status, 404, 'no path escape');
   assert.equal((await fetch(`${node.addr}/nope.js`)).status, 404);
   // CORS + Private Network Access on JSON and on the preflight an https page sends first

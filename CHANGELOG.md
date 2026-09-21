@@ -5,6 +5,15 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.11.2] — 2026-09-21 — cabinet parse fix
+
+### Fixed
+- **The cabinet was blank on every 0.11.1 node.** A stray apostrophe in the
+  Nodes page's new delegate row (`the node's hot key`) broke `cabinet/app.js`
+  at parse time, so the page rendered its chrome and nothing else and the
+  header said NODE OFFLINE. `demo/cabinet.test.mjs` now runs `node --check`
+  on every script the page loads; the test only checked they were served.
+
 ## [0.11.1] — 2026-09-21 — one-click bonding
 
 ### Added
