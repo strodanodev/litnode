@@ -5,6 +5,8 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-09-21 — one-click bonding
+
 ### Added
 - **One-click bonding, no keys typed.** The cabinet's *Bond this node* now
   approves, stakes and sets the node's hot key as its NodeStake v3 delegate
@@ -13,6 +15,11 @@ follows [Keep a Changelog](https://keepachangelog.com/).
   (`node/matchbook.js` autoEnrol; `/health.matchBook.enrolled`). The
   operator's whole lifecycle is: open the cabinet, connect the wallet, one
   click. `tools/enroll.mjs` stays as the manual path.
+- **`npm run release` refuses to republish an existing tag.** A release is
+  keyed on chain by its zips' sha256; replacing assets under the same tag
+  (which v0.11.0 suffered on 21 Sep — the automation was committed without
+  a version bump) orphans the registrations. Bump the version; `--replace`
+  only for a tag never registered.
 
 ## [0.11.0] — 2026-09-22 — settlement v1.0: every ranked match on chain
 

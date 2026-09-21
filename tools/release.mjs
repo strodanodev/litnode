@@ -68,8 +68,15 @@ if (dry) process.exit(0);
 // ---------------------------------------------------------------- publish
 const assets = [...Object.keys(files).map((f) => join(dist, f)), join(dist, manifestName)];
 const exists = (() => { try { execFileSync('gh', ['release', 'view', tag], { stdio: 'ignore' }); return true; } catch { return false; } })();
+if (exists && !args.includes('--replace')) {
+  // A release is keyed on chain by its zips' sha256 (ReleaseRegistry): replacing the assets under the
+  // same tag orphans every registration and confuses every node that already applied it. Bump the
+  // version instead. (--replace exists for a botched upload of a tag nobody has registered yet.)
+  console.error(`release ${tag} already exists on GitHub. Bump package.json (npm version patch), commit, push, and release again — its zips are registered on chain by hash, so the tag must not be republished. (--replace overrides, for a tag that was never registered.)`);
+  process.exit(1);
+}
 if (exists) {
-  console.log(`release ${tag} exists — replacing its assets`);
+  console.log(`release ${tag} exists — replacing its assets (--replace)`);
   execFileSync('gh', ['release', 'upload', tag, ...assets, '--clobber'], { stdio: 'inherit' });
 } else {
   execFileSync('gh', ['release', 'create', tag, ...assets, '--title', `litnode ${tag}${channel === 'stable' ? '' : ` (${channel})`}`, '--notes', notes || `litnode ${tag}`, ...(channel === 'stable' ? ['--latest'] : ['--prerelease'])], { stdio: 'inherit' });
