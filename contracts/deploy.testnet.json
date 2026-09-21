@@ -19,8 +19,8 @@
     "lockTermHuman": "10 minutes — unstake() is refused before the bond is this old. Proposed mainnet: 30 days",
     "eligibilityAge": 120,
     "eligibilityAgeHuman": "2 minutes — a bond younger than this can host casual but cannot be drawn to attest. Proposed mainnet: 7 days",
-    "unbondingPeriod": 1200,
-    "unbondingPeriodHuman": "20 minutes — must exceed MatchBook.totalWindow() (900 s at the testnet windows); the deploy tool refuses otherwise. Proposed mainnet: 14 days",
+    "unbondingPeriod": 3600,
+    "unbondingPeriodHuman": "60 minutes — must exceed MatchBook.totalWindow() (2640 s at the testnet windows); the deploy tool refuses otherwise. Proposed mainnet: 14 days",
     "slasher": "REMOVED in v3 — slash() is callable only by adjudicator contracts named by admin"
   },
   "ReleaseRegistry": {
@@ -33,14 +33,15 @@
   },
   "MatchBook": {
     "status": "written, compile-tested, behaviour-tested in-process (demo/matchbook-vm.test.mjs); not deployed",
-    "settleWindowS": 60,
+    "settleWindowS": 1800,
     "attestWindowS": 120,
     "escalationWindowS": 300,
     "drawDelayBlocks": 2,
     "hostSlashBps": 1000,
     "witnessSlashBps": 500,
     "slashHuman": "host 10% of its bond when the escalation panel rejects its result; a panel key 5% when it voted against the majority",
-    "note": "NodeStake.unbondingPeriod must exceed MatchBook.totalWindow() = settle + 2×attest + 2×escalation = 900 s at these values; the deploy tool refuses otherwise"
+    "note": "NodeStake.unbondingPeriod must exceed MatchBook.totalWindow() = settle + 2×attest + 2×escalation = 2640 s at these values; the deploy tool and tools/params.mjs refuse otherwise",
+    "settleWindowHuman": "30 minutes from commit (placement) to settle: a human Agent Fighter match lasts minutes; the first ranked match on 21 Sep 2026 met a 60 s window"
   },
   "note": "Testnet-only values. One faucet pull (1000 tLITVM) funds 1000 node bonds at this minimum."
 }

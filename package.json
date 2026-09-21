@@ -37,7 +37,8 @@
     "test:contracts": "node --test demo/contracts.test.mjs demo/release-registry.test.mjs demo/title-registry.test.mjs demo/matchbook.test.mjs demo/matchbook-vm.test.mjs demo/matchbook-node.test.mjs demo/deploy.test.mjs",
     "delegate": "node tools/delegate.mjs",
     "release:registry": "node tools/release-registry.mjs",
-    "enroll": "node tools/enroll.mjs"
+    "enroll": "node tools/enroll.mjs",
+    "params": "node tools/params.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -49,5 +50,5 @@
     "ethers": "^6.17.0",
     "solc": "^0.8.28"
   },
-  "version": "0.11.4"
+  "version": "0.11.5"
 }

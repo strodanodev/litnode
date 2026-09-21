@@ -479,6 +479,8 @@ export async function createNode({
       // placements we froze so peers converge on them.
       // v0.2 path only: with MatchBook the chain is the index and the payload cannot grow with history (§3).
       payload.deltas = mbook ? [] : settlement.list().map((d) => ({ matchId: d.matchId, rulesetId: d.rulesetId, buildHash: d.buildHash, hostId: d.hostId, addr, cosigners: d.cosigners }));
+      // MatchBook hints: the transaction hashes of the matches this node touched today — a peer verifies each from its receipt, never from our word
+      payload.hints = mbook ? mbook.hints() : [];
       matchesNow();
       payload.matches = matchEnvelopes();
       const body = JSON.stringify(payload);
@@ -554,6 +556,7 @@ export async function createNode({
     await mergeQueue(msg.queue);
     for (const env of msg.matches ?? []) await absorbMatch(env);
     if (isWitness && !mbook) for (const ad of msg.deltas ?? []) void witnessOne(ad); // with MatchBook, witnessing is chain-driven (node/matchbook.js)
+    if (mbook && Array.isArray(msg.hints)) mbook.absorbHints(msg.hints);
   };
 
   /** Witness role: fetch the ledger and the delta, replay independently,
@@ -760,6 +763,7 @@ export async function createNode({
           heartbeats: [await myHeartbeat(), ...envelopeCache.values()],
           queue: [...queueEnvelopes.values()],
           deltas: mbook ? [] : settlement.list().map((d) => ({ matchId: d.matchId, rulesetId: d.rulesetId, buildHash: d.buildHash, hostId: d.hostId, addr, cosigners: d.cosigners })),
+          hints: mbook ? mbook.hints() : [],
           matches: matchEnvelopes(),
         });
       }

@@ -5,6 +5,33 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.11.5] — 2026-09-22 — the first ranked match on chain, and what it taught
+
+### Fixed
+- **Events from receipts, not from a log scan.** Liteforge's public gateway
+  serves `eth_getLogs` at ~100 ms per block (100 blocks: 12 s; 500: timed
+  out) — slower than the chain makes blocks — so the reader never got past
+  the deploy block and no witness ever saw a Settled event. Every
+  transaction a node sends is now read back from its RECEIPT (~2 s), and the
+  hashes travel to peers as a gossip hint bounded to the last day
+  (`hints`), so a witness learns of a settle in one receipt read and
+  verifies it from the chain, never from the host's word. The log scan
+  stays for the ladder, 40 blocks per poll from a persisted cursor that
+  starts a little behind the head; a failing scan no longer aborts the
+  poll (it was also stopping the host's finalize timer).
+  `demo/matchbook-node.test.mjs` now runs with `eth_getLogs` unavailable.
+- **The settle window was 60 s** — commit happens at placement and a human
+  match lasts minutes. `contracts/deploy.testnet.json`: settleWindow 1800,
+  unbondingPeriod 3600 (> the new total window); `npm run params` applies
+  the config to the live MatchBook and NodeStake as admin (`--show`,
+  `--calldata` for a multisig) and refuses a set that breaks the invariant.
+- The first ranked match on generation 3 (21 Sep 2026, match
+  `d1fdb409…`, commit tx `0x43c0fc6a…`): committed with a full panel
+  (witness-2, Ally, m16), played, both players signed, settled on the host
+  and on chain; no attest reached the chain because of the log scan above.
+  A test player pair hydrated with registry tokens that do not exist on the
+  live registry was refused, correctly: guests are external agents.
+
 ### Fixed
 - **A peer that stopped answering triggers a NodeDirectory re-read at once.**
   When the desktop restarted for an update its quick-tunnel hostname

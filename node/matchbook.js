@@ -12,7 +12,16 @@
  *                   keeps in custody
  *  WATCH  Committed (am I on this panel?), Settled (then witness it),
  *         Escalating / Escalated (am I on the nine? does mine need feeding?),
- *         Finalized — a cursor over eth_getLogs, never advanced past a gap.
+ *         Finalized — from TRANSACTION RECEIPTS first: every transaction this
+ *         node sends is read back from its receipt, and the hashes travel to
+ *         peers as a bounded gossip hint (`hints()`: the last day's matches
+ *         this node touched), so a witness learns of a Settled event in one
+ *         receipt read (~2 s on Liteforge) instead of a log scan. The log
+ *         scan (`eth_getLogs`) still runs for the ladder, in small ranges
+ *         from a persisted cursor: Liteforge's public gateway serves logs at
+ *         ~100 ms per block (measured 21 Sep 2026: 100 blocks 12 s, 500
+ *         time out), slower than the chain makes them, so it can never be
+ *         the path a live match depends on.
  *  FOLD   protocol/matchbook.js foldChain over every decoded log, per
  *         ruleset: official (finalized) and pending (settled) ladders. The
  *         same fold the cabinet runs on RPC alone.
@@ -32,7 +41,9 @@ import { selector } from '../protocol/keccak.js';
 import { decodeBytes32Array } from '../protocol/abi.js';
 
 const POLL_MS = 2000;
-const MAX_RANGE = 2000; // blocks per eth_getLogs
+const SCAN_RANGE = 40;          // blocks per eth_getLogs — Liteforge answers ~100 ms/block; 40 keeps one call under its timeout
+const SCAN_START_BEHIND = 400;  // a fresh node starts its ladder scan this far behind the head, not at the deploy block
+const HINT_TTL_MS = 24 * 3600_000;
 
 export function createMatchBook({
   dataDir, nodeId, contract, stakeContract = null, epochAnchor = null, chainId, rpc, fromBlock = 0, log = () => {}, emit = () => {},
@@ -48,7 +59,13 @@ export function createMatchBook({
 
   // ---------------------------------------------------------------- state
   const decoded = [];                       // every decoded log, in arrival order (block order by construction)
-  let cursor = fromBlock - 1;               // last block fully read
+  const seenLog = new Set();                // tx:logIndex already absorbed (receipts and the scan overlap)
+  const cursorPath = join(dataDir, 'matchbook-cursor.json');
+  let cursor = (() => { try { return JSON.parse(readFileSync(cursorPath, 'utf8')).cursor ?? null; } catch { return null; } })(); // last block fully scanned; null = not started
+  let scanError = null;
+  const txlog = new Map();                  // matchId (chain key) → { txs: [{ what, tx, at }] } — what this node sent, for hints and receipts
+  const ingested = new Set();               // tx hashes whose receipts are absorbed
+  const pendingReceipts = new Map();        // tx → { since, tries } waiting for a receipt
   let delegated = null, funded = null, lastError = null, lastTx = null, polling = false, sends = 0;
   const panels = new Map();                 // matchId → { hostKey, panel[] } from Committed
   const settled = new Map();                // matchId → Settled event
@@ -81,7 +98,15 @@ export function createMatchBook({
     return hash;
   };
   const trySend = async (data, what, matchId, to) => {
-    try { const tx = await send(data, what, to); log(`matchbook: ${what} ${matchId?.slice(0, 12) ?? ''} (tx ${tx.slice(0, 12)}…)`); return tx; }
+    try {
+      const tx = await send(data, what, to); log(`matchbook: ${what} ${matchId?.slice(0, 12) ?? ''} (tx ${tx.slice(0, 12)}…)`);
+      if (matchId && /^[0-9a-f]{64}$/i.test(matchId) || (matchId && what !== 'propose' && what !== 'enroll')) {
+        const key = /^[0-9a-f]{64}$/i.test(matchId) ? matchId.toLowerCase() : mb.matchIdBytes32(matchId);
+        const rec = txlog.get(key) ?? { txs: [] }; rec.txs.push({ what, tx, at: Date.now() }); txlog.set(key, rec);
+        pendingReceipts.set(tx, { since: Date.now(), tries: 0 });
+      }
+      return tx;
+    }
     catch (e) { lastError = `${what}: ${e.message}`; nonce = null; emit('tx-failed', { what, matchId, reason: e.message }); log(`matchbook: ${what} ${matchId?.slice(0, 12) ?? ''} failed: ${e.message}`); return null; }
   };
   const checkDelegate = async () => {
@@ -133,6 +158,9 @@ export function createMatchBook({
 
   // ---------------------------------------------------------------- watch
   const absorb = (e) => {
+    const id = `${e.tx ?? '?'}:${e.block}:${e.logIndex}`;
+    if (seenLog.has(id)) return;
+    seenLog.add(id);
     decoded.push(e);
     if (e.event === 'Committed') panels.set(e.matchId, { hostKey: e.hostKey, panel: e.panel });
     if (e.event === 'Settled') settled.set(e.matchId, e);
@@ -159,15 +187,39 @@ export function createMatchBook({
     if (tx) emit('proposed', { epoch: hour, root: ep.root, count: ep.count, tx });
     return tx;
   };
-  const read = async () => {
-    const head = parseInt(await call('eth_blockNumber', []), 16);
-    while (cursor < head) {
-      const to = Math.min(head, cursor + MAX_RANGE);
-      const logs = await call('eth_getLogs', [mb.logsFilter(contract, cursor + 1, to)]);
-      for (const l of logs) { const e = mb.decodeLog(l); if (e) absorb(e); }
-      cursor = to;
+  /** One receipt: every MatchBook log in it is an event we can trust. Returns true once absorbed (or failed for good). */
+  const ingestReceipt = async (tx) => {
+    if (ingested.has(tx)) return true;
+    const rc = await call('eth_getTransactionReceipt', [tx]);
+    if (!rc) return false; // not mined yet
+    ingested.add(tx); pendingReceipts.delete(tx);
+    if (rc.status !== '0x1') return true;
+    for (const l of rc.logs ?? []) { if ((l.address ?? '').toLowerCase() !== contract.toLowerCase()) continue; const e = mb.decodeLog({ ...l, transactionHash: l.transactionHash ?? tx }); if (e) absorb(e); }
+    return true;
+  };
+  /** Receipts for what this node sent (retried until mined) and for what peers hinted. */
+  const readReceipts = async () => {
+    for (const [tx, p] of [...pendingReceipts]) {
+      if (p.tries > 40 && Date.now() - p.since > 10 * 60_000) { pendingReceipts.delete(tx); continue; }
+      p.tries++;
+      try { await ingestReceipt(tx); } catch { /* next poll */ }
     }
   };
+  /** The ladder's log scan: SCAN_RANGE blocks per poll from a persisted cursor. A fresh node starts a little behind
+   *  the head; history before that is a backfill job for later, not something a live match waits on. */
+  const read = async () => {
+    const head = parseInt(await call('eth_blockNumber', []), 16);
+    if (cursor === null) cursor = Math.max(fromBlock - 1, head - SCAN_START_BEHIND);
+    if (cursor >= head) return;
+    const to = Math.min(head, cursor + SCAN_RANGE);
+    const logs = await call('eth_getLogs', [mb.logsFilter(contract, cursor + 1, to)]);
+    for (const l of logs) { const e = mb.decodeLog(l); if (e) absorb(e); }
+    cursor = to;
+    try { writeFileSync(cursorPath, JSON.stringify({ cursor })); } catch { /* read-only data dir */ }
+  };
+  /** Gossip hints: the transactions of every match this node touched in the last day — bounded by time, never by history. */
+  const hints = () => { const cut = Date.now() - HINT_TTL_MS; const out = []; for (const [key, rec] of txlog) { const txs = rec.txs.filter((t) => t.at > cut); if (txs.length) out.push({ key, txs: txs.map((t) => t.tx) }); else txlog.delete(key); } return out; };
+  const absorbHints = (list) => { for (const h of list ?? []) for (const tx of h?.txs ?? []) if (typeof tx === 'string' && /^0x[0-9a-f]{64}$/i.test(tx) && !ingested.has(tx) && !pendingReceipts.has(tx)) pendingReceipts.set(tx, { since: Date.now(), tries: 0 }); };
 
   /** I sit on this match's panel and it has settled: recompute and attest what I reached. */
   const witness = async (s) => {
@@ -229,7 +281,8 @@ export function createMatchBook({
     try {
       if (delegated === null || !funded) await checkDelegate();
       await autoEnrol();
-      await read();
+      await readReceipts();
+      try { await read(); scanError = null; } catch (e) { scanError = String(e.message ?? e); } // the scan is best effort: nothing live waits on it
       for (const s of settled.values()) { const st = statusOf(s.matchId); if (st === 'settled' || st === 'escalated') void witness(s); }
       await drive();
       await stampBlocks();
@@ -248,10 +301,10 @@ export function createMatchBook({
   };
 
   return {
-    address, commit, settle, poll, ladder, statusOf, epoch, propose,
+    address, commit, settle, poll, ladder, statusOf, epoch, propose, hints, absorbHints, ingestReceipt,
     proof: (matchId) => { const key = mb.matchIdBytes32(matchId); const fin = decoded.find((e) => e.event === 'Finalized' && e.matchId === key); if (!fin) return null; const ts = blockTs.get(fin.block); if (ts == null) return null; return mb.chainProof(epoch(hourOf(ts * 1000)), key); },
     chainStatus: (matchId) => ({ matchId, key: mb.matchIdBytes32(matchId), status: statusOf(mb.matchIdBytes32(matchId)), panel: panels.get(mb.matchIdBytes32(matchId))?.panel ?? null, events: decoded.filter((e) => e.matchId === mb.matchIdBytes32(matchId)) }),
-    status: () => ({ contract, epochAnchor, delegate: address, delegated, funded, enrolled, cursor, events: decoded.length, sends, lastTx, lastError, hosting: mine.size, attested: attested.size, proposed: [...proposedHours] }),
+    status: () => ({ contract, epochAnchor, delegate: address, delegated, funded, enrolled, cursor, scanError, receipts: ingested.size, pendingReceipts: pendingReceipts.size, events: decoded.length, sends, lastTx, lastError, hosting: mine.size, attested: attested.size, proposed: [...proposedHours] }),
   };
 }
 

@@ -30,7 +30,8 @@ const ONE = 10n ** 18n;
 
 test('phase 2: commit → settle → three attests → final on the chain, and every node folds the same ladder from the log', { timeout: 180_000 }, async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), 'litnode-matchbook-'));
-  const chain = await createRpcEvm();
+  // eth_getLogs is UNAVAILABLE, as on Liteforge's public gateway: every event below must reach the nodes through receipts and gossip hints
+  const chain = await createRpcEvm({ logsUnavailable: true });
   const ticker = setInterval(() => chain.mine(), 250); // Liteforge makes blocks on demand; the beacon needs them to flow
   const nodes = [];
   t.after(async () => { clearInterval(ticker); for (const n of nodes) await n.stop().catch(() => {}); rmSync(tmp, { recursive: true, force: true }); });
@@ -122,6 +123,10 @@ test('phase 2: commit → settle → three attests → final on the chain, and e
   assert.deepEqual(g.deltas, []);
   const h = await (await fetch(`${host.addr}/health`)).json();
   assert.equal(h.matchBook.hosting, 1); assert.ok(h.matchBook.sends >= 3, `host sent commit, settle, finalize (${h.matchBook.sends})`);
+  assert.match(h.matchBook.scanError ?? '', /timed out/, 'the log scan is failing, as on Liteforge, and says so');
+  assert.ok(h.matchBook.receipts >= 3, `the host read its own transactions back from receipts (${h.matchBook.receipts})`);
+  const wr = (await (await fetch(`${witnesses[0].addr}/health`)).json()).matchBook;
+  assert.ok(wr.receipts >= 2, `a witness learned commit + settle from hinted receipts (${wr.receipts})`);
   const wh = await (await fetch(`${witnesses[0].addr}/health`)).json();
   assert.equal(wh.matchBook.delegated, true);
 

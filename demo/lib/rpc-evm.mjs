@@ -22,7 +22,7 @@ import { createServer } from 'node:http';
 import { createAccount, hexToBytes, bytesToHex, createAddressFromString } from '@ethereumjs/util';
 import { artifacts, keyOf, addressOf } from './evm.mjs';
 
-export async function createRpcEvm({ chainId = 4441, startTime = Math.floor(Date.now() / 1000), startBlock = 100, accounts = 24 } = {}) {
+export async function createRpcEvm({ chainId = 4441, startTime = Math.floor(Date.now() / 1000), startBlock = 100, accounts = 24, logsUnavailable = false } = {}) {
   const common = createCustomCommon({ chainId }, Mainnet, { hardfork: Hardfork.Shanghai });
   const hashOf = (n) => '0x' + ethers.keccak256(ethers.toUtf8Bytes(`block-${n}`)).slice(2);
   let number = startBlock;
@@ -127,6 +127,8 @@ export async function createRpcEvm({ chainId = 4441, startTime = Math.floor(Date
         }
         case 'eth_getTransactionReceipt': return receipts.get(params[0]) ?? null;
         case 'eth_getLogs': {
+          // Liteforge's public gateway: ~100 ms per block scanned, timing out past a few hundred (measured 21 Sep 2026)
+          if (logsUnavailable) throw Object.assign(new Error('request timed out'), { rpc: true });
           const f = params[0];
           const from = f.fromBlock == null || f.fromBlock === 'earliest' ? 0 : f.fromBlock === 'latest' ? number - 1 : parseInt(f.fromBlock, 16);
           const to = f.toBlock == null || f.toBlock === 'latest' || f.toBlock === 'pending' ? number : parseInt(f.toBlock, 16);
