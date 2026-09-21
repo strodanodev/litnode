@@ -125,6 +125,7 @@ test('directory: a seed that restarts on a new hostname is found again within a 
   // the seed "restarts on a new tunnel": same identity, a new port, the directory updated, the old URL dead
   const oldAddr = seed.addr;
   await seed.stop();
+  assert.ok(await until(async () => !(await sees(peer, seed.nodeId)), 20_000), 'the seed aged out of the fresh set');
   seed = await createNode({ ...common, dataDir: join(tmp, 'seed'), operator: 'seed', roles: ['mesh', 'host'] }); nodes.push(seed);
   assert.notEqual(seed.addr, oldAddr);
   state.entries[seed.nodeId] = { url: seed.addr, wsAddr: '', updatedAt: Math.floor(Date.now() / 1000), announcer: ethers.ZeroAddress };
