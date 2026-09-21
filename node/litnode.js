@@ -105,7 +105,7 @@ export async function createNode({
   // Unset → v0.2 local settlement, gossip-advertised deltas, never official
   // beyond this node's own view. `matchBookFromBlock`: where a fresh node
   // starts reading the log (the deploy block); `matchBookWindows` in seconds.
-  matchBook: matchBookAddr = null, matchBookFromBlock = 0, matchBookWindows = { attestWindow: 120, escalationWindow: 300 },
+  matchBook: matchBookAddr = null, matchBookFromBlock = 0, matchBookWindows = { attestWindow: 120, escalationWindow: 300 }, matchBookDrive = true,
   // EpochAnchor v3: the settler proposes each frozen hour's root over the chain-finalized set from its delegate.
   epochAnchor = null,
   // ERC6699Registry (this project's proposed interface): characters for
@@ -305,7 +305,7 @@ export async function createNode({
   let mbook = null; // the MatchBook driver, created below once the settlement exists
   const settlement = createSettlement({
     dataDir, nodeId, identity, loaded, builds, sandbox, log, registry, courts, relayKeys,
-    onSettled: (delta, ledger) => mbook?.settle(delta, ledger),
+    onSettled: (delta, ledger) => { const e = matchBook.get(delta.matchId); if (e) e.settled = true; return mbook?.settle(delta, ledger); },
     descriptorFor: (matchId) => { const e = matchBook.get(matchId); return e ? { descriptor: e.descriptor, envelope: e.envelope } : null; },
     verifyDescriptor: async (env) => {
       const d = env?.body;
@@ -321,7 +321,7 @@ export async function createNode({
     mbook = createMatchBook({
       dataDir, nodeId, contract: matchBookAddr, stakeContract: nodeStake, epochAnchor, chainId: chainId ?? 4441, rpc: chain.rpc, fromBlock: matchBookFromBlock, log, emit, settlement,
       hostAddr: (hostKey) => (hostKey === nodeId ? addr : heartbeats.get(hostKey)?.addr ?? null),
-      rulesetIds: () => [...loaded.keys()], hasRole: (r) => roles.includes(r), windows: matchBookWindows, fetchImpl: globalThis.fetch,
+      rulesetIds: () => [...loaded.keys()], hasRole: (r) => roles.includes(r), windows: matchBookWindows, drive: matchBookDrive, fetchImpl: globalThis.fetch,
     });
   }
   const witnessed = new Set(); // matchIds this node already answered
@@ -626,6 +626,7 @@ export async function createNode({
   const matchBook = new Map(); // matchId → { descriptor, envelope, disputes: [] }
   let gauntlet = null;          // node/gauntlet.js, created after the server listens (needs our loopback URL)
   const matchTtlMs = 15 * 60_000;
+  const SPENT_BUCKETS = 2;
   const describe = (m, s) => {
     const manifest = s.manifests[m.rulesetId];
     const place = manifest ? placement({ nodes: s.peers, manifest, rulesetId: m.rulesetId, matchId: m.matchId, beacon: m.beacon, regions: m.regions }) : null;
@@ -642,9 +643,21 @@ export async function createNode({
     // ran out, and be gossiped forever.
     for (const [k, b] of queue) if (isStale(b.bucket, now)) { queue.delete(k); queueEnvelopes.delete(k); }
     for (const [k, env] of queueEnvelopes) if (env?.body && isStale(env.body.bucket, now)) queueEnvelopes.delete(k);
-    const pairs = pair([...queue.values()], now, (b) => chain.beaconFor(b)?.beacon ?? null);
+    // An entry a player posted while still waiting to hear of a placement is SPENT by that placement, not a
+    // new search: the client posts one entry per bucket until it sees its match, and every one of those used
+    // to become a fresh placement — and a fresh commit the host paid for — a bucket later (four commits for one
+    // match in the end-to-end test). A placement spends the player's entries up to the bucket after the one it
+    // was COMPUTED in (the client cannot have seen it before then, and posts once more while it polls) — at
+    // least two past the placement's own bucket, since a beacon can be slow; an entry after that is a rematch
+    // and pairs at once, whether or not the last match settled.
+    const spent = new Map(); // player → last bucket spent
+    for (const e of matchBook.values()) { const until = Math.max((e.descriptor.bucket ?? -1) + SPENT_BUCKETS, bucketOf(e.descriptor.computedAt) + 1); for (const p of e.descriptor.participants ?? []) spent.set(p, Math.max(spent.get(p) ?? -1, until)); }
+    const held = new Set(); // seated earlier in this same pass (two buckets can close in one call)
+    const pairs = pair([...queue.values()].filter((b) => b.bucket > (spent.get(b.playerId) ?? -1)), now, (b) => chain.beaconFor(b)?.beacon ?? null);
     for (const m of pairs) {
       if (matchBook.has(m.matchId)) continue;
+      if (m.participants.some((p) => held.has(p))) continue; // two buckets paired in one pass: the earlier placement stands
+      for (const p of m.participants) held.add(p);
       const d = describe(m, s);
       if (!d.host) continue; // nobody eligible yet; try again next call
       matchBook.set(m.matchId, { descriptor: d, envelope: null, disputes: [], commitTx: null });
@@ -652,7 +665,7 @@ export async function createNode({
       // again as each bucket closed — a commit transaction the host pays for and a match nobody plays, per bucket
       // (seen end to end: three commits for one match). Every node prunes on the same rule, so the queues agree.
       for (const p of m.participants) for (const k of [...queue.keys()]) if (k.endsWith(`|${p}`)) { queue.delete(k); queueEnvelopes.delete(k); }
-      emit('placed', { matchId: m.matchId, rulesetId: m.rulesetId, host: d.host, witness: d.witness, panel: d.panel, beacon: d.beaconSource, snapshotRoot: d.snapshotRoot, participants: m.participants });
+      emit('placed', { matchId: m.matchId, bucket: m.bucket, rulesetId: m.rulesetId, host: d.host, witness: d.witness, panel: d.panel, beacon: d.beaconSource, snapshotRoot: d.snapshotRoot, participants: m.participants });
       gauntlet?.onPlaced({ ...d, participants: m.participants, mode: m.mode ?? null });
       seal(MATCH_TAG, d, identity).then((env) => { const e = matchBook.get(m.matchId); if (e) e.envelope = env; }).catch(() => {});
       commitIfHost(m.matchId);
@@ -686,7 +699,19 @@ export async function createNode({
     if ((d.protocol ?? 1) !== PROTOCOL_VERSION) return; // another protocol's placement is not ours to adopt
     if (stakes && !stakes[d.computedBy]?.active) return; // only bonded peers' descriptors count
     const mine = matchBook.get(d.matchId);
-    if (!mine) { matchBook.set(d.matchId, { descriptor: { ...d, disputes: undefined }, envelope: env, disputes: [], commitTx: null }); commitIfHost(d.matchId); return; }
+    if (!mine) {
+      // The same players, already placed here under another id (a peer paired a later bucket before our placement
+      // reached it, or an earlier one we missed): one placement per pair stands on every node — the earliest
+      // bucket, then the smaller id — so the clients, the host's commit and the seats all name the same match.
+      const rival = [...matchBook.values()].find((e) => e.descriptor.matchId !== d.matchId && Math.abs((e.descriptor.bucket ?? 0) - (d.bucket ?? 0)) <= SPENT_BUCKETS && (d.participants ?? []).some((p) => e.descriptor.participants?.includes(p)));
+      if (rival) {
+        const earlier = (d.bucket ?? Infinity) < (rival.descriptor.bucket ?? Infinity) || (d.bucket === rival.descriptor.bucket && d.matchId < rival.descriptor.matchId);
+        if (!earlier) return; // ours stands; theirs is a re-pairing of placed players
+        matchBook.delete(rival.descriptor.matchId); // theirs came first: it stands, ours goes (a commit already sent expires on its own)
+        log(`placement ${d.matchId.slice(0, 12)} from ${d.computedBy.slice(0, 8)} replaces our later ${rival.descriptor.matchId.slice(0, 12)} for the same players`);
+      }
+      matchBook.set(d.matchId, { descriptor: { ...d, disputes: undefined }, envelope: env, disputes: [], commitTx: null }); commitIfHost(d.matchId); return;
+    }
     if (mine.descriptor.host !== d.host && !mine.disputes.some((x) => x.by === d.computedBy)) {
       mine.disputes.push({ by: d.computedBy, host: d.host, snapshotRoot: d.snapshotRoot });
       emit('dispute', { matchId: d.matchId, ours: mine.descriptor.host, theirs: d.host, by: d.computedBy });

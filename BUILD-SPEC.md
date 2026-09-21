@@ -55,7 +55,8 @@ locked (§2.2). Sequencing is in §17.
 | **Phase 2, node side** (`node/matchbook.js`): the drawn host commits before play and settles from its delegated key; the three drawn seats read the log, fetch the ledger from the host, check its sha256 against the chain, replay and attest what they reached; the host finalizes, feeds an escalation with the ledger it keeps, resolves; `/leaderboard` folds the chain log (`source: chain`, `scope=official|pending`); gossip carries no delta advertisements; placed players leave the queue; `/match/:id/chain`; `/health.matchBook` | **Live** on four operators' nodes; what Liteforge taught (§11.7, CHANGELOG 0.11.3–0.11.7): events come from transaction receipts and bounded gossip hints because `eth_getLogs` cannot be a live path; standings are read every 15 s because the gateway rate-limits one IP; a quick-tunnel URL is verified from outside before it is announced; a restarted witness advertises what it holds. The scan for the ladder's history runs beside the live poll with an adaptive range | `demo/matchbook-node.test.mjs` (five litnodes over an in-process RPC run the whole lifecycle), `demo/held-build.test.mjs`, `demo/tunnel.test.mjs`, `demo/forget.test.mjs` |
 | **EpochAnchor v3 + automatic proposal.** Delegate or operator proposes; support is bonded stake; a root finalizes at `quorumBps` of the active stake; the tree is over the hour's chain-finalized set (`protocol/matchbook.js chainEpoch`), so every node computes the same root and the settler proposes it itself after the freeze; `/epoch` and `/proof` serve it; the proof verifies on chain | **Live** — EpochAnchor v3 `0x919e9500785ab077d2058490a465F05bD8238a64`; the settler proposes each frozen hour it holds chain-finalized matches for | `demo/matchbook-vm.test.mjs` (stake-weighted quorum; two 1-token nodes cannot outvote a 3-token one), `demo/matchbook-node.test.mjs` (a witness computes the host's root; the settler's proposal finalizes; the node's proof verifies on chain) |
 | **The migration, executed** on Liteforge 20–21 Sep 2026 (`contracts/MIGRATION.md`) after the same tool ran unchanged against the in-process chain over HTTP: refuses an unbonding period shorter than MatchBook's windows before sending anything, deploys the whole set, names MatchBook an adjudicator, bonds the local node, is idempotent on re-run, and a node boots on the written file | **Built** | `demo/deploy.test.mjs` |
-| Phase 2, still open: a liveness backstop (a panel witness finalizes, expires, feeds or resolves a match whose host went away — every one of those calls is permissionless, but only the host's process makes them today); escalation exercised on Liteforge, where `blockhash` reaches back 256 blocks = 64 s at 0.25 s blocks, so `escalate` must be fed within a minute of `finalize`; the cabinet showing `pending` beside `official`; the relay-attested (Agent Fighter) path onto MatchBook; a sandbox worker pool; append-only ledger storage | Specified | — |
+| **The liveness backstop** (22 Sep 2026): every node keeps a persisted duty list — the matches it hosts and the panels it sits on — and drives each through its windows; the host first, each seat one stagger later, so a host that restarts or vanishes cannot strand a match (`finalize`, `expire`, `escalate` with the ledger the seat verified, `resolve`); the windows are read from the contract. One placement per pair, one commit per match | **Built** | `demo/backstop.test.mjs`, `demo/matchbook-node.test.mjs` |
+| Phase 2, still open: escalation exercised on Liteforge — which needs **thirteen distinct operators** (the nine exclude the host, the panel and every one of their operators), so with four every dissent voids the match, nobody is slashed, and a single seat can void any match for free; the cabinet showing `pending` beside `official`; the relay-attested (Agent Fighter) path onto MatchBook; a sandbox worker pool; append-only ledger storage | Specified | — |
 | **Settlement v1.0 — phase 3: open hosting.** Anyone bonds and hosts; per-match fee split to host and attesting witnesses; obligatory custody by the drawn witnesses with on-chain custody challenges | Specified | — |
 
 Production today: the Agent Fighter match server on Railway, its client on
@@ -936,12 +937,12 @@ manifest completeness, bounded ranked mapping. A title that passes is listed.
   specified, not built. The cabinet does not yet show the `pending`
   ladder. `TitleRegistry` (publisher rules and auth, a separate workstream)
   is deployed by the same tool and is not part of this spec.
-- **Only the host's process drives a match through its windows.**
-  `finalize`, `expire`, `escalate` and `resolve` are permissionless, but
-  no other node calls them, and the host keeps its in-flight matches in
-  memory: a host that restarts or disappears between `settle` and
-  `finalize` leaves the match `Settled` until someone else acts. The
-  panel witnesses are the natural backstop; they already hold the ledger.
+- **Escalation needs thirteen operators to seat nine.** The nine exclude
+  the host, the three seats and every operator behind them; with four
+  operators a dissent escalates into an empty draw and the match voids.
+  Nobody is slashed for that, so until the pool grows any single seat can
+  void any match for free by attesting a wrong hash. The honest outcome
+  (no wrong result becomes official) holds; the deterrent does not yet.
 - **Liteforge, measured.** Blocks every 0.25 s. `eth_getLogs` answers a
   range of ≤20 blocks in 1–3 s and 25+ blocks in 10–16 s, so the ladder's
   history is scanned beside the live poll with an adaptive range and live

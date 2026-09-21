@@ -112,7 +112,7 @@ test('phase 2: commit → settle → three attests → final on the chain, and e
   assert.ok(fin, 'Finalized'); assert.equal(fin.status, 'final'); assert.equal(fin.finalHash, delta.resultHash);
 
   // ---- the ladder: folded from the chain on every node, same digest; the loser is not on the pending-only view once final
-  const boards = await until(async () => { const out = []; for (const n of [host, ...witnesses]) { const j = await (await fetch(`${n.addr}/leaderboard?ruleset=tug.v1`)).json(); if (j.source !== 'chain' || !j.leaderboard?.length) return null; out.push(j); } return out; }, 30_000);
+  const boards = await until(async () => { const out = []; for (const n of [host, ...witnesses]) { const j = await (await fetch(`${n.addr}/leaderboard?ruleset=tug.v1`)).json(); if (j.source !== 'chain' || !j.leaderboard?.length) return null; out.push(j); } return new Set(out.map((x) => x.digest)).size === 1 ? out : null; }, 30_000);
   assert.ok(boards, 'every node serves a chain ladder');
   assert.equal(new Set(boards.map((x) => x.digest)).size, 1, 'one digest on all five nodes');
   assert.equal(boards[0].scope, 'official'); assert.equal(boards[0].counts.official, 1);
@@ -122,7 +122,8 @@ test('phase 2: commit → settle → three attests → final on the chain, and e
   const g = await (await fetch(`${host.addr}/gossip`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json();
   assert.deepEqual(g.deltas, []);
   const h = await (await fetch(`${host.addr}/health`)).json();
-  assert.equal(h.matchBook.hosting, 1); assert.ok(h.matchBook.sends >= 3, `host sent commit, settle, finalize (${h.matchBook.sends})`);
+  assert.equal(h.matchBook.hosting, 0, 'nothing left to drive once final'); assert.ok(h.matchBook.sends >= 3, `host sent commit, settle, finalize (${h.matchBook.sends})`);
+  assert.equal(chain.logs().map(mb.decodeLog).filter((e) => e?.event === 'Committed').length, 1, 'ONE commit for one match: placed players are not paired again while their placement lives');
   assert.match(h.matchBook.scanError ?? '', /timed out/, 'the log scan is failing, as on Liteforge, and says so');
   assert.ok(h.matchBook.receipts >= 3, `the host read its own transactions back from receipts (${h.matchBook.receipts})`);
   const wr = (await (await fetch(`${witnesses[0].addr}/health`)).json()).matchBook;

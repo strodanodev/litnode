@@ -7,9 +7,12 @@
  *         attest  — when this node sits on a panel and has recomputed the
  *                   result itself (settlement.cosign): the hash IT reached,
  *                   agree or not
- *         finalize / escalate / resolve — for matches this node hosted,
- *                   when their windows pass; escalate posts the ledger it
- *                   keeps in custody
+ *         finalize / escalate / resolve / expire — for matches this node
+ *                   HOSTED when their windows pass (escalate posts the
+ *                   ledger it keeps in custody), and, after a stagger, for
+ *                   matches this node SITS ON whose host did not: every one
+ *                   of those calls is permissionless, so a host that
+ *                   restarted or vanished cannot strand a match in Settled
  *  WATCH  Committed (am I on this panel?), Settled (then witness it),
  *         Escalating / Escalated (am I on the nine? does mine need feeding?),
  *         Finalized — from TRANSACTION RECEIPTS first: every transaction this
@@ -52,13 +55,23 @@ const HINT_MAX = 50;                 // matches per heartbeat hint list (newest 
 const HINT_TAKE_PER_ENVELOPE = 20;   // receipts one peer's envelope may enqueue
 const RECEIPTS_MAX_PENDING = 200;    // receipts waiting at once (our own sends are always taken)
 const RECEIPTS_PER_POLL = 10;        // receipt reads per 2 s poll, our own first
+// The host acts first on its own match; each panel seat waits one more stagger before acting in its place,
+// so a live host is never raced by three witnesses and a dead one is covered within a minute. The feed of
+// an escalation is staggered in BLOCKS: the seed is blockhash(drawBlock), gone 256 blocks later — 64 s on
+// Liteforge's 0.25 s blocks — so the seats must fall in well inside that, whatever the clock says.
+const WINDOW_MARGIN_S = 5;           // clock skew between this node and the chain
+const SEAT_STAGGER_MS = 20_000;      // finalize / resolve / expire: host +0, seat i at +(i+1)×this
+const FEED_STAGGER_BLOCKS = 24;      // escalate: host +0, seat i at +(i+1)×this blocks after drawBlock
+const PARAMS_TTL_MS = 3600_000;      // the windows are read from the contract, not trusted from a file
 
 export function createMatchBook({
   dataDir, nodeId, contract, stakeContract = null, epochAnchor = null, chainId, rpc, fromBlock = 0, log = () => {}, emit = () => {},
   // the node's own pieces
   settlement, hostAddr = () => null, rulesetIds = () => [], hasRole = () => true,
-  windows = { attestWindow: 120, escalationWindow: 300 }, fetchImpl = globalThis.fetch,
+  windows: windowsIn = { attestWindow: 120, escalationWindow: 300 }, fetchImpl = globalThis.fetch,
+  drive: driving = true, // false: this node never drives windows (tests: a host that settles and then does nothing)
 }) {
+  const windows = { settleWindow: 1800, ...windowsIn };
   const keyPath = join(dataDir, 'announcer.json');
   const key = existsSync(keyPath) ? JSON.parse(readFileSync(keyPath, 'utf8')) : { privateKey: randomPrivateKey() };
   if (!existsSync(keyPath)) writeFileSync(keyPath, JSON.stringify(key, null, 2) + '\n');
@@ -77,7 +90,14 @@ export function createMatchBook({
   let delegated = null, funded = null, lastError = null, lastTx = null, polling = false, sends = 0;
   const panels = new Map();                 // matchId → { hostKey, panel[] } from Committed
   const settled = new Map();                // matchId → Settled event
-  const mine = new Map();                   // matchId (this node hosted) → { settledAt, finalizedAt, escalatedAt, drawBlock, status }
+  // Every match this node has a duty on — as host or as a panel seat — with the clocks the contract runs on it.
+  // Persisted without ledgers: a host that restarts resumes driving what it settled (the ledger is in its
+  // settlement store), a seat resumes covering for the host.
+  const dutiesPath = join(dataDir, 'matchbook-duties.json');
+  const duties = new Map();                 // key → { matchId, role: 'host'|'seat', seat, status, committedAt, settledAt, drawBlock, escalatedAt, tried: {} }
+  for (const d of (() => { try { return JSON.parse(readFileSync(dutiesPath, 'utf8')); } catch { return []; } })()) if (d?.key) duties.set(d.key, { ...d, tried: {} });
+  const saveDuties = () => { try { writeFileSync(dutiesPath, JSON.stringify([...duties.values()].map(({ tried, ledger, ...d }) => d))); } catch { /* read-only data dir */ } };
+  const ledgers = new Map();                // key → ledger a seat fetched and verified (to feed an escalation if the host will not)
   const attested = new Set();               // matchIds this node answered (either panel)
   const witnessing = new Set();             // in flight
   const escalation = new Map();             // matchId → { panel[], escalatedAt }
@@ -160,7 +180,7 @@ export function createMatchBook({
     const panel = panels.get(key)?.panel ?? ledger.descriptor?.body?.panel ?? [];
     const custodians = [nodeId, ...panel];
     const tx = await trySend(mb.settleCalldata(delta.matchId, { resultHash: delta.resultHash, ledger, buildHash: delta.buildHash, participants: delta.participants, scores: delta.scores, custodians }), 'settle', delta.matchId);
-    if (tx) mine.set(mb.matchIdBytes32(delta.matchId), { matchId: delta.matchId, settledAt: Date.now(), status: 'settled', ledger });
+    if (tx) { const d = duty(key, delta.matchId, 'host', null); Object.assign(d, { status: 'settled', settledAt: Date.now() }); saveDuties(); }
     return tx;
   };
 
@@ -170,15 +190,41 @@ export function createMatchBook({
     if (seenLog.has(id)) return;
     seenLog.add(id);
     decoded.push(e);
-    if (e.event === 'Committed') panels.set(e.matchId, { hostKey: e.hostKey, panel: e.panel });
+    const at = (blockTs.get(e.block) ?? Date.now() / 1000) * 1000; // the block's own clock once stamped, ours until then
+    if (e.event === 'Committed') {
+      panels.set(e.matchId, { hostKey: e.hostKey, panel: e.panel });
+      const seat = e.panel.indexOf(nodeId);
+      const mineToDrive = e.hostKey === nodeId ? duty(e.matchId, e.matchId, 'host', null) : seat >= 0 ? duty(e.matchId, e.matchId, 'seat', seat) : null;
+      if (mineToDrive && mineToDrive.status === 'none') Object.assign(mineToDrive, { status: 'committed', committedAt: at, block: e.block }); // never behind a Settled we already saw
+    }
     if (e.event === 'Settled') settled.set(e.matchId, { ...e, seenAt: Date.now() });
-    if (e.event === 'Escalating' && mine.has(e.matchId)) Object.assign(mine.get(e.matchId), { status: 'escalating', drawBlock: e.drawBlock, feedBy: e.feedBy });
-    if (e.event === 'Escalated') { escalation.set(e.matchId, { panel: e.panel, at: Date.now() }); if (mine.has(e.matchId)) Object.assign(mine.get(e.matchId), { status: 'escalated', escalatedAt: Date.now() }); }
-    if (e.event === 'Finalized') { if (mine.has(e.matchId)) mine.get(e.matchId).status = e.status; emit('chain-final', { matchId: e.matchId, status: e.status, finalHash: e.finalHash }); }
+    const d = duties.get(e.matchId);
+    if (d) {
+      if (e.event === 'Settled') Object.assign(d, { status: 'settled', settledAt: at, block: e.block, tried: {} });
+      if (e.event === 'Extended') Object.assign(d, { status: 'settled', settledAt: at, block: e.block, tried: {} }); // the contract reset the clock
+      if (e.event === 'Escalating') Object.assign(d, { status: 'escalating', drawBlock: e.drawBlock, feedBy: e.feedBy, tried: {} });
+      if (e.event === 'Escalated') Object.assign(d, { status: 'escalated', escalatedAt: at, block: e.block, tried: {} });
+      if (e.event === 'Finalized') { duties.delete(e.matchId); ledgers.delete(e.matchId); }
+      saveDuties();
+    }
+    if (e.event === 'Escalated') escalation.set(e.matchId, { panel: e.panel, at: Date.now() });
+    if (e.event === 'Finalized') emit('chain-final', { matchId: e.matchId, status: e.status, finalHash: e.finalHash });
+  };
+  const duty = (key, matchId, role, seat) => { let d = duties.get(key); if (!d) { d = { key, matchId, role, seat, status: 'none', tried: {} }; duties.set(key, d); } return d; };
+  /** The contract's windows, from the contract: a file can be stale (npm run params changes them live). */
+  let paramsAt = 0;
+  const readParams = async () => {
+    if (Date.now() - paramsAt < PARAMS_TTL_MS) return;
+    paramsAt = Date.now();
+    try {
+      const ret = (await call('eth_call', [{ to: contract, data: selector('params()') }, 'latest'])).replace(/^0x/, '');
+      const w = (i) => Number(BigInt('0x' + ret.slice(i * 64, i * 64 + 64)));
+      if (ret.length >= 6 * 64) Object.assign(windows, { settleWindow: w(0), attestWindow: w(1), escalationWindow: w(2) });
+    } catch { paramsAt = Date.now() - PARAMS_TTL_MS + 60_000; /* try again in a minute */ }
   };
   /** The timestamp of every block a Finalized event sits in, read once. */
   const stampBlocks = async () => {
-    const want = [...new Set(decoded.filter((e) => e.event === 'Finalized' && !blockTs.has(e.block)).map((e) => e.block))];
+    const want = [...new Set(decoded.filter((e) => e.event === 'Finalized' && !blockTs.has(e.block)).map((e) => e.block).concat([...duties.values()].map((d) => d.block).filter((b) => b != null && !blockTs.has(b))))];
     for (const n of want.slice(0, 50)) { try { const b = await call('eth_getBlockByNumber', ['0x' + n.toString(16), false]); if (b?.timestamp) blockTs.set(n, parseInt(b.timestamp, 16)); } catch { /* next poll */ } }
   };
   /** The hour's tree over the FINALIZED set, as every reader of the log computes it (§11.6). */
@@ -276,6 +322,7 @@ export function createMatchBook({
       ]);
       if (delta?.error || ledger?.error) throw new Error(delta?.error ?? ledger?.error);
       if (mb.ledgerHash(ledger) !== s.ledgerHash) throw new Error('the ledger the host serves is not the one it committed');
+      if (onFirst) ledgers.set(s.matchId, ledger); // a seat keeps what it verified: it may have to feed the escalation
       const res = await settlement.cosign(delta, ledger);
       const ours = res.ok ? delta.resultHash : res.ours;
       if (!ours) throw new Error(`could not verify: ${res.reason}`);
@@ -286,28 +333,40 @@ export function createMatchBook({
     finally { witnessing.delete(s.matchId); }
   };
 
-  /** Drive my own hosted matches through their windows. */
+  /** Drive every match this node has a duty on through its windows: the host first, each seat one stagger later
+   *  if the chain still shows the match where the host should have moved it. A call the host already made
+   *  reverts here with WrongStatus at estimateGas — one read, no transaction. */
   const drive = async () => {
+    if (!driving || duties.size === 0) return;
     const now = Date.now();
-    for (const [id, m] of mine) {
-      // finalize as soon as all three answered, else once the window (plus a margin for clock skew) has passed
-      const answered = decoded.filter((e) => e.event === 'Attested' && e.matchId === id && !e.escalation).length;
-      if (m.status === 'settled' && (answered >= 3 || now - m.settledAt > (windows.attestWindow + 5) * 1000) && !m.finalizeTried) {
-        m.finalizeTried = now;
-        const tx = await trySend(mb.finalizeCalldata(m.matchId), 'finalize', m.matchId);
-        if (!tx) m.finalizeTried = null; // WindowOpen (an extension) or a hiccup: try again next window
-        else m.settledAt = now;           // an Extended reply resets the clock; a Finalized/Escalating event updates status
+    const order = (d) => (d.role === 'host' ? 0 : d.seat + 1);
+    // the clock a window runs on is the block's, once stamped (a restarted node re-reads old events at 'now')
+    const since = (d, local) => (d.block != null && blockTs.has(d.block) ? blockTs.get(d.block) * 1000 : local);
+    let head = null;
+    const headBlock = async () => head ?? (head = parseInt(await call('eth_blockNumber', []), 16));
+    for (const d of [...duties.values()]) {
+      const late = order(d) * SEAT_STAGGER_MS;
+      const once = async (what, calldata) => {
+        if (d.tried[what]) return;
+        d.tried[what] = now;
+        const tx = await trySend(calldata, what, d.matchId);
+        if (!tx) d.tried[what] = null; // WindowOpen, a hiccup, or the host got there first: the next event or window decides
+        else if (d.role === 'seat') emit('backstop', { matchId: d.matchId, what, seat: d.seat, tx });
+      };
+      if (d.status === 'committed' && d.role === 'seat' && now - since(d, d.committedAt) > (windows.settleWindow + WINDOW_MARGIN_S) * 1000 + late) {
+        await once('expire', mb.expireCalldata(d.matchId)); // the host committed and never settled: void it, so it is not "pending" for ever
       }
-      if (m.status === 'escalating' && !m.fed) {
-        const head = parseInt(await call('eth_blockNumber', []), 16);
-        if (head > (m.drawBlock ?? Infinity)) { m.fed = true; const tx = await trySend(mb.escalateCalldata(m.matchId, m.ledger), 'escalate', m.matchId); if (!tx) m.fed = false; }
+      if (d.status === 'settled') {
+        // the host finalizes as soon as all three answered; otherwise host, then seats, once the window has passed
+        const answered = d.role === 'host' ? decoded.filter((e) => e.event === 'Attested' && e.matchId === d.key && !e.escalation).length : 0;
+        if (answered >= 3 || now - since(d, d.settledAt) > (windows.attestWindow + WINDOW_MARGIN_S) * 1000 + late) await once('finalize', mb.finalizeCalldata(d.matchId));
       }
-      if (m.status === 'escalated' && now - (m.escalatedAt ?? now) > (windows.escalationWindow + 5) * 1000 && !m.resolveTried) {
-        m.resolveTried = true;
-        const tx = await trySend(mb.resolveCalldata(m.matchId), 'resolve', m.matchId);
-        if (!tx) m.resolveTried = false;
+      if (d.status === 'escalating' && d.drawBlock != null && (await headBlock()) > d.drawBlock + order(d) * FEED_STAGGER_BLOCKS) {
+        const ledger = ledgers.get(d.key) ?? settlement.ledger?.(d.matchId) ?? settlement.ledger?.(d.key) ?? null;
+        if (ledger) await once('escalate', mb.escalateCalldata(d.matchId, ledger));
+        else if (!d.tried.noLedger) { d.tried.noLedger = now; log(`matchbook: ${d.matchId.slice(0, 12)} is escalating and this ${d.role} holds no ledger to feed it`); }
       }
-      void id;
+      if (d.status === 'escalated' && now - since(d, d.escalatedAt) > (windows.escalationWindow + WINDOW_MARGIN_S) * 1000 + late) await once('resolve', mb.resolveCalldata(d.matchId));
     }
   };
 
@@ -317,6 +376,7 @@ export function createMatchBook({
     polling = true; lastPoll = Date.now();
     try {
       if (delegated === null || !funded) await checkDelegate();
+      await readParams();
       await autoEnrol();
       await readReceipts();
       void scan();
@@ -348,7 +408,7 @@ export function createMatchBook({
     address, commit, settle, poll, ladder, statusOf, epoch, propose, hints, absorbHints, ingestReceipt,
     proof: (matchId) => { const key = mb.matchIdBytes32(matchId); const fin = decoded.find((e) => e.event === 'Finalized' && e.matchId === key); if (!fin) return null; const ts = blockTs.get(fin.block); if (ts == null) return null; return mb.chainProof(epoch(hourOf(ts * 1000)), key); },
     chainStatus: (matchId) => ({ matchId, key: mb.matchIdBytes32(matchId), status: statusOf(mb.matchIdBytes32(matchId)), panel: panels.get(mb.matchIdBytes32(matchId))?.panel ?? null, events: decoded.filter((e) => e.matchId === mb.matchIdBytes32(matchId)) }),
-    status: () => ({ contract, epochAnchor, delegate: address, delegated, funded, enrolled, cursor, scanRange, scanMs, scanError, receipts: ingested.size, pendingReceipts: pendingReceipts.size, events: decoded.length, sends, lastTx, lastError, hosting: mine.size, attested: attested.size, proposed: [...proposedHours] }),
+    status: () => ({ contract, epochAnchor, delegate: address, delegated, funded, enrolled, cursor, scanRange, scanMs, scanError, receipts: ingested.size, pendingReceipts: pendingReceipts.size, events: decoded.length, sends, lastTx, lastError, hosting: [...duties.values()].filter((d) => d.role === 'host').length, seated: [...duties.values()].filter((d) => d.role === 'seat').length, windows: { ...windows }, attested: attested.size, proposed: [...proposedHours] }),
   };
 }
 

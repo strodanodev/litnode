@@ -5,9 +5,36 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-## [0.11.8] — 2026-09-22 — the ladder scan keeps up, and the mesh forgets the dead
+## [0.11.8] — 2026-09-22 — a match reaches its end without its host; one commit per match
+
+### Added
+- **The liveness backstop.** Every window call on MatchBook (`finalize`,
+  `expire`, `escalate`, `resolve`) is permissionless, but only the host's
+  process made them, from memory: a host that restarted or vanished between
+  `settle` and `finalize` stranded the match in `Settled` for ever. Now
+  every node keeps a duty list — the matches it hosts and the panels it
+  sits on, persisted in `matchbook-duties.json` — and drives each through
+  its windows: the host first, each seat one stagger (20 s) later if the
+  chain still shows the match where the host should have moved it. A seat
+  feeds an escalation with the ledger it verified when it attested,
+  staggered in blocks (the seed is `blockhash(drawBlock)`, gone 256 blocks
+  later — 64 s on Liteforge). A lost race costs one `eth_estimateGas`, no
+  transaction. `/health.matchBook` shows `hosting`, `seated` and the
+  `windows`; a seat's action is the `backstop` event.
+  `demo/backstop.test.mjs`: a host that settles and then does nothing —
+  a seat finalizes; a commit never settled — a seat expires it.
+- **The windows come from the contract.** `params()` is read at start and
+  hourly; the deployment file was stale the moment `npm run params` ran.
 
 ### Fixed
+- **One match, four commits.** The client posts a queue entry per bucket
+  until it sees its placement, and every one of those entries became a
+  fresh placement — and a fresh commit the host paid for — a bucket later;
+  a peer that paired a later bucket before the placement reached it made
+  another. A placement now spends the player's entries up to the bucket
+  after the one it was computed in; one placement per pair stands on every
+  node (the earliest bucket, then the smaller id); a rematch pairs at once.
+  The end-to-end test asserts exactly one `Committed` for one match.
 - **Both live nodes' log cursors were 35 minutes behind the head and
   falling further.** Liteforge's `eth_getLogs` cost is not linear in the
   range: measured today, ≤20 blocks answer in 1–3 s and 25+ blocks take
