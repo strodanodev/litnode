@@ -61,6 +61,9 @@ follows [Keep a Changelog](https://keepachangelog.com/).
   Hints are unverified hashes; one envelope may now enqueue at most 20,
   200 may wait at once, and a poll reads 10 — this node's own transactions
   first. A host's hint list is the newest 50 matches, not its whole day.
+- **A restarted settler re-proposed hours whose root was already final** and
+  reported the contract's refusal as an error. `rootOf(hour)` is read first;
+  a finalized hour needs nothing from us.
 - `demo/deploy.test.mjs` derived nothing: it hard-coded the window sum
   from before `settleWindow` went to 30 minutes and failed. It now
   computes the tool's own formula over the config it feeds the tool.

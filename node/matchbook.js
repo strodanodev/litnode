@@ -236,6 +236,12 @@ export function createMatchBook({
     if (proposedHours.has(hour)) return null;
     const ep = epoch(hour);
     if (ep.count === 0) return null;
+    // a restart forgets what it proposed; the chain does not — an hour with a finalized root needs nothing from us
+    // (the desktop re-proposed a finalized hour after every restart and reported the revert as an error, 22 Sep 2026)
+    try {
+      const root = await call('eth_call', [{ to: epochAnchor, data: selector('rootOf(uint64)') + hour.toString(16).padStart(64, '0') }, 'latest']);
+      if (root && !/^0x0*$/.test(root)) { proposedHours.add(hour); return null; }
+    } catch { /* unknown: propose and let the contract answer */ }
     proposedHours.add(hour);
     const tx = await trySend(proposeCalldata(hour, ep.root, nodeId), 'propose', String(hour), epochAnchor);
     if (tx) emit('proposed', { epoch: hour, root: ep.root, count: ep.count, tx });
