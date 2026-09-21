@@ -85,6 +85,7 @@ export function createMatchBook({
   let cursor = (() => { try { return JSON.parse(readFileSync(cursorPath, 'utf8')).cursor ?? null; } catch { return null; } })(); // last block fully scanned; null = not started
   let scanError = null;
   const txlog = new Map();                  // matchId (chain key) → { txs: [{ what, tx, at }] } — what this node sent, for hints and receipts
+  const seenTx = new Map();                 // matchId (chain key) → { txs: Set, at } — every transaction whose events this node holds, passed on as hints
   const ingested = new Set();               // tx hashes whose receipts are absorbed
   const pendingReceipts = new Map();        // tx → { since, tries } waiting for a receipt
   let delegated = null, funded = null, lastError = null, lastTx = null, polling = false, sends = 0;
@@ -196,6 +197,10 @@ export function createMatchBook({
     seenLog.add(id);
     decoded.push(e);
     if (!replaying) { try { appendFileSync(eventsPath, JSON.stringify(e) + '\n'); } catch { /* read-only data dir */ } }
+    // What we hold, we pass on: a match's transactions travel as hints from every node that holds their events,
+    // not only from the node that sent them — a restarted peer, or one that joined late, learns the day's
+    // matches from anyone (after 0.11.10 every node had restarted and nobody could tell anyone about the finals).
+    if (e.tx) { const rec = seenTx.get(e.matchId) ?? { txs: new Set(), at: 0 }; rec.txs.add(e.tx); rec.at = Math.max(rec.at, (blockTs.get(e.block) ?? Date.now() / 1000) * 1000); seenTx.set(e.matchId, rec); }
     const at = (blockTs.get(e.block) ?? Date.now() / 1000) * 1000; // the block's own clock once stamped, ours until then
     if (e.event === 'Committed') {
       panels.set(e.matchId, { hostKey: e.hostKey, panel: e.panel });
@@ -315,6 +320,11 @@ export function createMatchBook({
   const hints = () => {
     const cut = Date.now() - HINT_TTL_MS; const out = [];
     for (const [key, rec] of txlog) { const txs = rec.txs.filter((t) => t.at > cut); if (txs.length) out.push({ key, at: txs[txs.length - 1].at, txs: txs.map((t) => t.tx) }); else txlog.delete(key); }
+    for (const [key, rec] of seenTx) {
+      if (rec.at <= cut) { seenTx.delete(key); continue; }
+      const mine = out.find((o) => o.key === key);
+      if (mine) { for (const tx of rec.txs) if (!mine.txs.includes(tx)) mine.txs.push(tx); } else out.push({ key, at: rec.at, txs: [...rec.txs] });
+    }
     // newest matches first, at most HINT_MAX of them: a busy host's day must not become every peer's heartbeat
     return out.sort((a, b) => b.at - a.at).slice(0, HINT_MAX).map(({ key, txs }) => ({ key, txs }));
   };

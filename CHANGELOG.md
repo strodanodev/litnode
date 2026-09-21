@@ -5,6 +5,13 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+- **What a node holds, it passes on.** Gossip hints now carry the transactions of
+  every match whose events this node holds (newest 50), not only the ones it
+  sent — a restarted peer, or one that joined late, learns the day's matches
+  from anyone. After 0.11.10 every node had restarted and nobody could tell
+  anyone about the two finals; they were handed back by hand.
+
 ## [0.11.11] — 2026-09-22 — a restart keeps the ladder
 
 ### Fixed
