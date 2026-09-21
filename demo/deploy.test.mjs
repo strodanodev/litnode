@@ -52,7 +52,7 @@ test('deploy tool: refuses windows the bond cannot cover; deploys v3 + registry 
   const d = JSON.parse(readFileSync(outPath, 'utf8'));
   for (const c of ['TestLITVM', 'NodeStake', 'ERC6699Registry', 'EpochAnchor', 'PlayerProfile', 'NodeBadge', 'NodeDirectory', 'ReleaseRegistry', 'MatchBook']) assert.match(d[c]?.address ?? '', /^0x[0-9a-fA-F]{40}$/, `${c} deployed`);
   assert.equal(d.NodeStake.version, 3); assert.equal(d.NodeStake.lockTerm, 600); assert.equal(d.NodeStake.eligibilityAge, 120);
-  assert.equal(d.MatchBook.attestWindowS, 120); assert.equal(d.MatchBook.hostSlashBps, 1000);
+  assert.equal(d.MatchBook.attestWindowS, base.MatchBook.attestWindowS); assert.equal(d.MatchBook.hostSlashBps, 1000);
   assert.equal(d.ReleaseRegistry.activationDelay, 60);
   assert.equal(d.chainId, 4441);
   assert.ok(existsSync(join(tmp, 'node', 'identity.json')), 'the local node identity was created and bonded');

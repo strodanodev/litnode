@@ -6,6 +6,13 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Changed
+- **`attestWindowS` 120 → 300** in `contracts/deploy.testnet.json` (the Ally answered the
+  second final match at ~116 s, four seconds inside the window). Applied to the live
+  MatchBook by `npm run params` (admin); nodes pick the new window up from `params()`
+  within the hour. `demo/deploy.test.mjs` reads the value from the config.
+- **The cabinet closes a title that reports its placed match played** (`cabinet:played`,
+  sent by agent-fighter after 21 Sep 2026): the next ranked match is placed by the cabinet,
+  never re-queued inside the title (where it became an unplaced wager room).
 - **A one-way link is a live link.** A peer we cannot push to (m16 and the Ally sit on
   another subnet and reach the desktop through its tunnel) graded D with 100% loss
   while pushing to us every second. `link.direction` is now `both | outbound |

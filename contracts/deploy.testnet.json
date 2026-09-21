@@ -34,7 +34,7 @@
   "MatchBook": {
     "status": "written, compile-tested, behaviour-tested in-process (demo/matchbook-vm.test.mjs); not deployed",
     "settleWindowS": 1800,
-    "attestWindowS": 120,
+    "attestWindowS": 300,
     "escalationWindowS": 300,
     "drawDelayBlocks": 2,
     "hostSlashBps": 1000,

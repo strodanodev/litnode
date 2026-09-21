@@ -866,6 +866,9 @@ window.addEventListener('message', async (e) => {
   if (e.source !== frame.contentWindow || !e.data?.type) return;
   if (e.data.type === 'cabinet:hello') sendInit();
   if (e.data.type === 'cabinet:exit') exit();
+  // The title played the placed match and handed back (agent-fighter after 21 Sep 2026): close the frame so the
+  // next ranked match is placed here — a rematch inside the title would be a room no node placed.
+  if (e.data.type === 'cabinet:played' && currentMatch && e.data.matchId === currentMatch.matchId) exit();
   // The title asks this shell to sign the ledger it just played (protocol 3):
   // the player key never leaves this origin. Signed only for the match this
   // shell launched, with the build it launched — a title cannot get a
