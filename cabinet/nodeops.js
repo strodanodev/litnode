@@ -24,9 +24,23 @@ async function rpc(method, params) {
   return j.result;
 }
 const hex = (n) => '0x' + BigInt(n).toString(16);
+/** Fees the site suggests, so the wallet's own estimate cannot undercut the
+ *  chain: MetaMask on a custom network set maxFeePerGas 0.01 % under
+ *  Liteforge's base fee, which moves a little every block, and the RPC
+ *  refused the bond ("max fee per gas less than block base fee", 21 Sep
+ *  2026). Twice the current base fee is headroom; the chain charges the
+ *  base fee, not the cap. */
+async function fees() {
+  try {
+    const b = await rpc('eth_getBlockByNumber', ['latest', false]);
+    const base = BigInt(b?.baseFeePerGas ?? (await rpc('eth_gasPrice', [])));
+    const tip = base / 10n > 0n ? base / 10n : 1n;
+    return { maxFeePerGas: hex(base * 2n + tip), maxPriorityFeePerGas: hex(tip) };
+  } catch { return {}; } // the wallet's estimate, as before
+}
 /** Send one call through the wallet and wait for its receipt. */
 async function send(from, to, data, value = 0n) {
-  const tx = await eth().request({ method: 'eth_sendTransaction', params: [{ from, to, data, ...(value ? { value: hex(value) } : {}) }] });
+  const tx = await eth().request({ method: 'eth_sendTransaction', params: [{ from, to, data, ...(value ? { value: hex(value) } : {}), ...(await fees()) }] });
   const t0 = Date.now();
   while (Date.now() - t0 < 120_000) {
     const r = await rpc('eth_getTransactionReceipt', [tx]).catch(() => null);

@@ -54,7 +54,11 @@ export async function bindingOf(playerKey) {
   return b.tokenId === 0n ? null : { ...b, owner: b.owner.toLowerCase() };
 }
 
-const send = async (from, data) => eth().request({ method: 'eth_sendTransaction', params: [{ from, to: CHAIN.PlayerProfile, data }] });
+/** Site-suggested fees with headroom over the base fee (see nodeops.js fees()): the wallet's own estimate undercut Liteforge once. */
+async function fees() {
+  try { const b = await rpc('eth_getBlockByNumber', ['latest', false]); const base = BigInt(b?.baseFeePerGas ?? (await rpc('eth_gasPrice', []))); const tip = base / 10n > 0n ? base / 10n : 1n; return { maxFeePerGas: hex(base * 2n + tip), maxPriorityFeePerGas: hex(tip) }; } catch { return {}; }
+}
+const send = async (from, data) => eth().request({ method: 'eth_sendTransaction', params: [{ from, to: CHAIN.PlayerProfile, data, ...(await fees()) }] });
 /** One transaction: mint the profile and bind this key. Returns the tx hash. */
 export const register = (from, playerKey, name) => send(from, registerCalldata(playerKey, name));
 export const bindKey = (from, playerKey) => send(from, bindKeyCalldata(playerKey));

@@ -5,6 +5,16 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.11.4] — 2026-09-21 — wallet fees
+
+### Fixed
+- **"max fee per gas less than block base fee" on Bond this node.** The
+  cabinet handed transactions to MetaMask without fee fields, and its
+  estimate on a custom network landed 0.01 % under Liteforge's base fee,
+  which moves every block. The cabinet now suggests fees itself — twice
+  the current base fee as the cap, a tenth as the tip (the chain charges the
+  base fee, not the cap) — for operator actions and the profile mint.
+
 ## [0.11.3] — 2026-09-21 — RPC budget
 
 ### Fixed
