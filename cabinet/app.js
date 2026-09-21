@@ -677,7 +677,8 @@ function operatorPanel(h) {
   const mine = !!i?.bonded && i.operator === me;
   const ann = h.directory?.announcer?.address?.toLowerCase() ?? null;
   const rows = [
-    `<dt>wallet</dt><dd class="mono">${esc(me)}${i?.balance != null ? ` · ${tok(i.balance)} tLITVM` : ''}</dd>`,
+    `<dt>wallet</dt><dd class="mono">${esc(me)}${i?.balance != null ? ` · ${tok(i.balance)} tLITVM` : ''}${i?.gas != null ? ` · ${(Number(i.gas / 10n ** 12n) / 1e6).toFixed(4)} zkLTC` : ''}</dd>`,
+    i && i.gas === 0n ? `<dt>gas</dt><dd><span style="color:var(--red)">no zkLTC — nothing can be signed.</span> Get some at <a href="https://liteforge.hub.caldera.xyz" target="_blank" rel="noopener">liteforge.hub.caldera.xyz</a> (a bond is four small transactions; 0.005 is plenty), then come back.</dd>` : '',
     `<dt>bond</dt><dd>${i ? (i.bonded ? `${tok(i.amount)} tLITVM by <span class="mono">${esc(i.operator.slice(0, 10))}…</span>${mine ? ' (you)' : ''}` : `none · minimum ${tok(i.minStake)} tLITVM`) : 'reading…'}</dd>`,
     ann ? `<dt>announcer</dt><dd class="mono">${esc(ann.slice(0, 10))}… ${i?.announcer === ann ? '<span class="dim">delegated</span>' : '<span class="dim">not delegated</span>'}</dd>` : '',
     ann && i?.bonded ? `<dt>delegate</dt><dd class="mono">${i.delegate ? `${esc(i.delegate.slice(0, 10))}… <span class="dim">${i.delegate === ann ? 'the node’s hot key' : 'another key'}</span>` : '<span class="dim">not set — the node cannot commit, attest or propose</span>'}</dd>` : '',

@@ -58,11 +58,12 @@ export async function inspect(nodeId, account) {
   const s = decodeStanding(standingHex);
   const minStake = BigInt(minHex);
   const balance = account && CHAIN.TestLITVM ? BigInt(await rpc('eth_call', [balanceOfCall(CHAIN.TestLITVM, account), 'latest'])) : null;
+  const gas = account ? BigInt(await rpc('eth_getBalance', [account, 'latest'])) : null; // zkLTC: without it no transaction can be signed
   const announcer = CHAIN.NodeDirectory ? decodeAddress(await rpc('eth_call', [announcerOfCall(CHAIN.NodeDirectory, nodeId), 'latest'])).toLowerCase() : null;
   // NodeStake v3: the delegate (the node's hot key) — null on a v2 contract or when unset
   let delegate = null;
   try { const d = decodeAddress(await rpc('eth_call', [delegateOfCall(CHAIN.NodeStake, nodeId), 'latest'])).toLowerCase(); delegate = /^0x0{40}$/.test(d) ? null : d; } catch { /* v2 */ }
-  return { bonded: s.active, amount: s.amount, operator: s.operator.toLowerCase(), minStake, balance, announcer: announcer && /^0x0{40}$/.test(announcer) ? null : announcer, delegate };
+  return { bonded: s.active, amount: s.amount, operator: s.operator.toLowerCase(), minStake, balance, gas, announcer: announcer && /^0x0{40}$/.test(announcer) ? null : announcer, delegate };
 }
 
 export const connectOperator = () => connect();
