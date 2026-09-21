@@ -38,8 +38,16 @@ async function fees() {
     return { maxFeePerGas: hex(base * 2n + tip), maxPriorityFeePerGas: hex(tip) };
   } catch { return {}; } // the wallet's estimate, as before
 }
-/** Send one call through the wallet and wait for its receipt. */
+/** A revert's reason, from the RPC's error data (Error(string)), so a
+ *  simulation failure reads "balance" or "allowance", not MetaMask's
+ *  "Network fee unavailable". */
+const revertReason = (e) => { const m = /execution reverted:?s*([^"]*)/i.exec(String(e?.message ?? e)); return m?.[1]?.trim() || String(e?.message ?? e); };
+/** Send one call through the wallet and wait for its receipt. The call is
+ *  SIMULATED first (eth_estimateGas from this account): a transaction that
+ *  would revert never reaches the wallet, and the panel says why. */
 async function send(from, to, data, value = 0n) {
+  try { await rpc('eth_estimateGas', [{ from, to, data, ...(value ? { value: hex(value) } : {}) }]); }
+  catch (e) { throw new Error(`this transaction would fail: ${revertReason(e)} (nothing was sent)`); }
   const tx = await eth().request({ method: 'eth_sendTransaction', params: [{ from, to, data, ...(value ? { value: hex(value) } : {}), ...(await fees()) }] });
   const t0 = Date.now();
   while (Date.now() - t0 < 120_000) {
@@ -77,8 +85,12 @@ export async function faucet(from) { return send(from, CHAIN.TestLITVM, faucetCa
  *  enrols itself in the witness pool once it sees the delegation. */
 export async function bond(from, nodeId, { onStep = () => {}, delegate = null } = {}) {
   const minStake = BigInt(await rpc('eth_call', [minStakeCall(CHAIN.NodeStake), 'latest']));
-  onStep(`approve ${minStake} wei of tLITVM — confirm in your wallet`);
-  await send(from, CHAIN.TestLITVM, approveCalldata(CHAIN.NodeStake, minStake));
+  // short of tLITVM: pull the faucet first (the CLI does the same), so the order of clicks cannot be wrong
+  const have = CHAIN.TestLITVM ? BigInt(await rpc('eth_call', [balanceOfCall(CHAIN.TestLITVM, from), 'latest'])) : 0n;
+  if (have < minStake && CHAIN.TestLITVM) { onStep('faucet tLITVM — confirm in your wallet'); await send(from, CHAIN.TestLITVM, faucetCalldata()); }
+  const allowance = CHAIN.TestLITVM ? BigInt(await rpc('eth_call', [{ to: CHAIN.TestLITVM, data: '0xdd62ed3e' + from.replace(/^0x/, '').toLowerCase().padStart(64, '0') + CHAIN.NodeStake.replace(/^0x/, '').toLowerCase().padStart(64, '0') }, 'latest'])) : 0n;
+  if (allowance < minStake) { onStep(`approve ${minStake} wei of tLITVM — confirm in your wallet`); await send(from, CHAIN.TestLITVM, approveCalldata(CHAIN.NodeStake, minStake)); }
+  else onStep('already approved — skipping to stake');
   onStep('stake — confirm in your wallet');
   const tx = await send(from, CHAIN.NodeStake, stakeCalldata(nodeId, minStake));
   if (delegate) { onStep('delegate the node\'s hot key — confirm in your wallet'); await send(from, CHAIN.NodeStake, setDelegateCalldata(nodeId, delegate)); }
