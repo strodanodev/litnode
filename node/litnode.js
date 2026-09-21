@@ -15,6 +15,7 @@ import { generateKeypair, seal, opened, verify } from '../protocol/keys.js';
 import { snapshot as buildSnapshot, verifyHeartbeats, HEARTBEAT_TAG, epochOf, EPOCH_MS } from '../protocol/snapshot.js';
 import { applyStakes } from '../protocol/staking.js';
 import { pair, QUEUE_TAG, bucketOf, isStale } from '../protocol/pairing.js';
+import { install as installDoh } from './dns.js';
 import { placement } from '../protocol/placement.js';
 import { createChain } from './chain.js';
 import { createSettlement } from './settle.js';
@@ -143,6 +144,7 @@ export async function createNode({
   const emit = (type, data = {}) => { try { onEvent({ t: Date.now(), type, ...data }); } catch { /* observer's problem */ } };
   mkdirSync(dataDir, { recursive: true });
   mkdirSync(join(dataDir, 'rulesets'), { recursive: true });
+  if (!offline) installDoh({ log }); // once per process: quick-tunnel names — ours and our peers' — resolve through Cloudflare's DoH
   const startedAt = Date.now(); // /health reports it so a dashboard can show process uptime
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
   version ??= (() => { try { return JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version ?? null; } catch { return null; } })();
@@ -418,6 +420,7 @@ export async function createNode({
   // Peers on another protocol version are heard and listed, never placed,
   // never witnesses: old and new rules must not meet inside one match.
   const incompatible = new Map(); // nodeId → { version, protocol, at }
+  const FORGET_AFTER_EPOCHS = Math.ceil(10 * 60_000 / EPOCH_MS); // a heartbeat this old is neither learned nor kept (forgetStale below)
   const mergeHeartbeats = async (envelopes) => {
     for (const b of await verifyHeartbeats(envelopes ?? [])) {
       if (b.nodeId !== nodeId && (b.protocol ?? 1) !== PROTOCOL_VERSION) {
@@ -427,6 +430,7 @@ export async function createNode({
         continue;
       }
       incompatible.delete(b.nodeId);
+      if (b.nodeId !== nodeId && (b.epoch ?? 0) < epochOf(Date.now()) - FORGET_AFTER_EPOCHS) continue; // too old to learn: a peer on older code still forwards the dead
       const cur = heartbeats.get(b.nodeId);
       if (!cur || b.epoch >= cur.epoch) heartbeats.set(b.nodeId, b);
       if (b.addr && b.nodeId !== nodeId) peersKnown.add(b.addr);
@@ -477,7 +481,6 @@ export async function createNode({
   // from the incompatible list. Without this every node ever heard of stayed in every peer's gossip until a
   // restart (four dead test nodes from the day before were still travelling the mesh on 21 Sep 2026), and a
   // payload that grows with churn is exactly what "anyone can run a node" produces.
-  const FORGET_AFTER_EPOCHS = Math.ceil(10 * 60_000 / EPOCH_MS);
   const forgetStale = () => {
     const floor = epochOf(Date.now()) - FORGET_AFTER_EPOCHS;
     for (const [id, b] of heartbeats) if (id !== nodeId && (b.epoch ?? 0) < floor) { heartbeats.delete(id); emit('peer.forgotten', { nodeId: id, operator: b.operator ?? null }); }
@@ -568,6 +571,7 @@ export async function createNode({
     }
     for (const env of msg.heartbeats ?? []) if (env?.body?.nodeId && env.body.nodeId !== nodeId) {
       const cur = envelopeCache.get(env.body.nodeId);
+      if ((env.body.epoch ?? 0) < epochOf(Date.now()) - FORGET_AFTER_EPOCHS) continue; // not ours to forward either
       if (!cur || env.body.epoch >= cur.body.epoch) envelopeCache.set(env.body.nodeId, env);
     }
     for (const env of msg.queue ?? []) if (env?.body) queueEnvelopes.set(`${env.body.bucket}|${env.body.playerId}`, env);
@@ -1022,7 +1026,10 @@ export async function createNode({
       // relay tunnel, looked up a moment later, was fine (22 Sep 2026). So a new URL is advertised and
       // announced only once THIS node has reached itself through it (a /whoami round trip), and a name that
       // never becomes reachable is rotated for a fresh one rather than kept.
-      const VERIFY_EVERY_MS = tunnelProbe ? 200 : 5000, VERIFY_GIVE_UP_MS = tunnelProbe ? 3000 : 3 * 60_000;
+      // The name is looked up through Cloudflare's DoH (node/dns.js), so a probe before the record exists fails
+      // cleanly instead of poisoning this machine's resolver for the zone's 30-minute negative TTL — the desktop
+      // rotated seven names in a row and had no public URL for 38 minutes that way (21 Sep 2026).
+      const VERIFY_EVERY_MS = tunnelProbe ? 200 : 5000, VERIFY_GIVE_UP_MS = tunnelProbe ? 3000 : 5 * 60_000;
       const probe = tunnelProbe ?? (async (u) => { const nonce = newNonce(); const r = await fetch(`${u}/whoami?nonce=${nonce}`, { signal: AbortSignal.timeout(8000) }); const c = await checkChallenge(await r.json(), { expectNodeId: nodeId, nonce }); if (!c.ok) throw new Error(c.reason ?? 'challenge failed'); return true; });
       let verifying = null;
       const verifyTunnel = (u) => {

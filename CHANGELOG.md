@@ -5,6 +5,30 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.11.9] — 2026-09-22 — quick-tunnel names resolve through Cloudflare, not the machine
+
+### Fixed
+- **No public URL for 38 minutes, and two peers blind for half an hour.**
+  A `*.trycloudflare.com` name exists the moment cloudflared prints it and
+  reaches DNS a little later; a resolver asked in between answers NXDOMAIN
+  and caches it for the zone's SOA minimum — **1800 s, thirty minutes**.
+  0.11.7 verified a new name before announcing it, but the very first probe
+  poisoned this machine's resolver, so every probe for three minutes failed,
+  the name was rotated, and the next one met the same fate: seven hostnames
+  in a row on the desktop (21 Sep 2026, 19:36–20:14), and the laptop and
+  the Ally — which read the announced name from NodeDirectory a second
+  before their own resolvers had it — cut off for the same half hour.
+  `node/dns.js`: `dns.lookup`, the function Node's fetch resolves with, now
+  asks Cloudflare's DNS-over-HTTPS (authoritative for the zone; 1.1.1.1,
+  then cloudflare-dns.com) for every trycloudflare name — a positive answer
+  cached for its TTL, a negative one not cached at all, the system resolver
+  only if DoH is unreachable; every other name is untouched. Verification
+  gives a name five minutes now. `demo/dns.test.mjs`.
+- **A 0.11.8 node re-learned every dead peer from a 0.11.7 peer's forwarded
+  envelopes and forgot them again every second** (five `peer.forgotten`
+  events a second on a node beside the desktop). A heartbeat older than the
+  forget floor is neither learned nor forwarded.
+
 ## [0.11.8] — 2026-09-22 — a match reaches its end without its host; one commit per match
 
 ### Added
