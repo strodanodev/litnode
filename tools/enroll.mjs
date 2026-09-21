@@ -64,12 +64,12 @@ try {
   if (leave === false && isIn) { console.log(`node ${nodeId.slice(0, 12)}… already enrolled`); return; }
   if (leave && !isIn) { console.log(`node ${nodeId.slice(0, 12)}… is not enrolled`); return; }
   const data = leave ? withdrawCalldata(nodeId) : enrollCalldata(nodeId);
-  const [nonce, gasPrice, gas] = await Promise.all([rpc('eth_getTransactionCount', [from, 'pending']), rpc('eth_gasPrice', []), rpc('eth_estimateGas', [{ from, to: book, data }])]);
+  const nonce = await rpc('eth_getTransactionCount', [from, 'pending']); const gasPrice = await rpc('eth_gasPrice', []); const gas = await rpc('eth_estimateGas', [{ from, to: book, data }]);
   const raw = signTransaction({ nonce: BigInt(nonce), gasPrice: BigInt(gasPrice) * 12n / 10n, gasLimit: BigInt(gas) * 13n / 10n, to: book, value: 0n, data, chainId }, key);
   const hash = await rpc('eth_sendRawTransaction', [raw]);
   let rc = null;
-  for (let i = 0; i < 60 && !rc; i++) { rc = await rpc('eth_getTransactionReceipt', [hash]); if (!rc) await new Promise((r) => setTimeout(r, 1000)); }
-  if (!rc || rc.status !== '0x1') throw new Error(`tx ${hash} ${rc ? 'reverted' : 'not mined in 60 s'}`);
+  for (let i = 0; i < 60 && !rc; i++) { try { rc = await rpc('eth_getTransactionReceipt', [hash], 1); } catch { /* 429 or a blip: the tx is out, ask again */ } if (!rc) await new Promise((r) => setTimeout(r, 2000)); }
+  if (!rc || rc.status !== '0x1') throw new Error(`tx ${hash} ${rc ? 'reverted' : 'not confirmed in 120 s — it may still land; check the explorer before re-sending'}`);
   console.log(`${leave ? 'left' : 'enrolled'} node ${nodeId.slice(0, 12)}… ${leave ? 'from' : 'in'} the MatchBook witness pool (tx ${hash})`);
   console.log(`pool now: ${(await pool()).length} node(s)`);
 } catch (e) { const m = String(e?.message ?? e); console.error('✗ ' + m + (/revert/i.test(m) ? ' (a revert here usually means the key is neither the operator nor the delegate of this node)' : '')); process.exitCode = 1; }

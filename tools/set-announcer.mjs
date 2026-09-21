@@ -52,11 +52,11 @@ async function rpc(method, params, tries = 6) {
 const wei = (zk) => BigInt(Math.round(Number(zk) * 1e6)) * 10n ** 12n;
 const fmt = (w) => (Number(BigInt(w) / 10n ** 12n) / 1e6).toString();
 async function send({ to, data = '0x', value = 0n }) {
-  const [nonce, gasPrice, gas] = await Promise.all([rpc('eth_getTransactionCount', [from, 'pending']), rpc('eth_gasPrice', []), rpc('eth_estimateGas', [{ from, to, data, value: '0x' + value.toString(16) }])]);
+  const nonce = await rpc('eth_getTransactionCount', [from, 'pending']); const gasPrice = await rpc('eth_gasPrice', []); const gas = await rpc('eth_estimateGas', [{ from, to, data, value: '0x' + value.toString(16) }]);
   const raw = signTransaction({ nonce: BigInt(nonce), gasPrice: BigInt(gasPrice) * 12n / 10n, gasLimit: BigInt(gas) * 13n / 10n, to, value, data, chainId }, key);
   const hash = await rpc('eth_sendRawTransaction', [raw]);
-  for (let i = 0; i < 60; i++) { const rc = await rpc('eth_getTransactionReceipt', [hash]); if (rc) { if (rc.status !== '0x1') throw new Error(`tx ${hash} reverted`); return hash; } await new Promise((r) => setTimeout(r, 1000)); }
-  throw new Error(`tx ${hash} not mined in 60 s`);
+  for (let i = 0; i < 60; i++) { let rc = null; try { rc = await rpc('eth_getTransactionReceipt', [hash], 1); } catch { /* 429 or a blip: the tx is out, ask again */ } if (rc) { if (rc.status !== '0x1') throw new Error(`tx ${hash} reverted`); return hash; } await new Promise((r) => setTimeout(r, 2000)); }
+  throw new Error(`tx ${hash} not confirmed in 120 s — it may still land; check the explorer before re-sending`);
 }
 
 try {

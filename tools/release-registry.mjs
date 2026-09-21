@@ -75,12 +75,12 @@ try {
     const cur = decodeStatus(await rpc('eth_call', [statusOfCall(reg, it.zipHash), 'latest']));
     if (cmd === 'register' && cur.registered) { console.log(`${it.name}: already registered`); show(it, cur); continue; }
     if (cmd === 'revoke' && (!cur.registered || cur.revoked)) { console.log(`${it.name}: ${cur.registered ? 'already revoked' : 'not registered'}`); continue; }
-    const [nonce, gasPrice, gas] = await Promise.all([rpc('eth_getTransactionCount', [from, 'pending']), rpc('eth_gasPrice', []), rpc('eth_estimateGas', [{ from, to: reg, data }])]);
+    const nonce = await rpc('eth_getTransactionCount', [from, 'pending']); const gasPrice = await rpc('eth_gasPrice', []); const gas = await rpc('eth_estimateGas', [{ from, to: reg, data }]);
     const raw = signTransaction({ nonce: BigInt(nonce), gasPrice: BigInt(gasPrice) * 12n / 10n, gasLimit: BigInt(gas) * 13n / 10n, to: reg, value: 0n, data, chainId }, key);
     const hash = await rpc('eth_sendRawTransaction', [raw]);
     let rc = null;
-    for (let i = 0; i < 60 && !rc; i++) { rc = await rpc('eth_getTransactionReceipt', [hash]); if (!rc) await new Promise((r) => setTimeout(r, 1000)); }
-    if (!rc || rc.status !== '0x1') throw new Error(`tx ${hash} ${rc ? 'reverted' : 'not mined in 60 s'}`);
+    for (let i = 0; i < 60 && !rc; i++) { try { rc = await rpc('eth_getTransactionReceipt', [hash], 1); } catch { /* 429 or a blip: the tx is out, ask again */ } if (!rc) await new Promise((r) => setTimeout(r, 2000)); }
+    if (!rc || rc.status !== '0x1') throw new Error(`tx ${hash} ${rc ? 'reverted' : 'not confirmed in 120 s — it may still land; check the explorer before re-sending'}`);
     console.log(`${cmd === 'register' ? 'registered' : 'revoked'} ${it.name} (tx ${hash})`);
     show(it, decodeStatus(await rpc('eth_call', [statusOfCall(reg, it.zipHash), 'latest'])));
   }

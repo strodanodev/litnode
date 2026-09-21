@@ -396,6 +396,7 @@ export async function createNode({
   // This node's own v3 standing (lock, eligibility age, delegate) and whether
   // NodeStake's admin is a contract. Read once a minute; null on a v2 contract.
   let myBond = null, stakeAdmin = null, lastBondRead = 0;
+  const STAKE_TTL = 15_000; let lastStakeRead = 0;
   const readMyBond = async ({ force = false } = {}) => {
     if (!nodeStake || offline || (!force && Date.now() - lastBondRead < 60_000)) return;
     lastBondRead = Date.now();
@@ -499,8 +500,14 @@ export async function createNode({
       const head = chain.status().head;
       const b = await chain.pollBlock();
       if (b && b.number !== head) emit('block', { number: b.number, hash: b.hash });
-      if (nodeStake && !offline) {
-        const ids = [...heartbeats.keys()];
+      // Standings are read every STAKE_TTL, not every tick: one eth_call per peer per second (two with
+      // witnessEligible) from every node on a machine was ~25 requests/s from one IP and Caldera's
+      // gateway answered 429 to everything, the operator's tools included (21 Sep 2026). A key we
+      // hold no standing for yet (a new peer) is read at once.
+      const ids = [...heartbeats.keys()];
+      const unknownKey = nodeStake && !offline && ids.some((k) => !stakes || !(k in stakes));
+      if (nodeStake && !offline && (unknownKey || Date.now() - lastStakeRead > STAKE_TTL)) {
+        lastStakeRead = Date.now();
         const st = await chain.standings(ids);
         // Merge, never replace: one transient RPC failure for one key must
         // not drop that peer from the bonded set for a tick (it changed a

@@ -5,6 +5,17 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.11.3] — 2026-09-21 — RPC budget
+
+### Fixed
+- **A node read every peer's standing every second** (two eth_calls per
+  peer with `witnessEligible`): two nodes on one machine were ~25 requests/s
+  to Caldera's gateway, which answered 429 to everything — the operator's
+  tools included, so registering 0.11.2 stalled after one zip. Standings are
+  now read every 15 s, at once for a peer whose key is new. The chain tools
+  read one value at a time and keep polling for a receipt through a 429
+  storm for two minutes instead of giving up on a transaction already sent.
+
 ## [0.11.2] — 2026-09-21 — cabinet parse fix
 
 ### Fixed
