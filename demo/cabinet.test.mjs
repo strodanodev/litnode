@@ -58,6 +58,10 @@ test('cabinet contract: fields by name, cabinet served at /, vendored protocol i
 
   // vendored copies are the source bytes
   assert.deepEqual(checkVendored(), [], 'cabinet/protocol drifted from protocol/ — run node tools/vendor-cabinet.mjs');
+  // the cabinet knows which release it is (cabinet/version.js): a copy served from elsewhere can show how far behind the node it is
+  const { CABINET_VERSION } = await import('../cabinet/version.js');
+  assert.equal(CABINET_VERSION, JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version, 'cabinet/version.js ≠ package.json — npm version keeps them equal (tools/sync-version.mjs)');
+  assert.equal((await json('/health')).cabinet.version, CABINET_VERSION, 'the node reports the cabinet version it serves');
 
   // the node is a frontend host: the cabinet at /, its files at the root, the protocol modules it imports
   const page = await get('/'); assert.match(page.headers.get('content-type'), /text\/html/); assert.match(await page.text(), /LIT GAMES/);

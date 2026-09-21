@@ -1,5 +1,10 @@
 # SPEC — litnode + cabinet
 
+> **Historical (17 Sep 2026).** This is the as-built spec of the v0.2 build. The
+> current design and the state of every claim is `BUILD-SPEC.md` (v0.3, with the
+> test behind each "built"); the chain-as-index settlement it describes replaced
+> §2's local deltas on 21 Sep 2026. Kept for the record; not maintained.
+
 As-built technical spec for what's in this repo: the litnode daemon
 (`node/`, `protocol/`, `rulesets/`, `titles/`, `tools/`) and the LIT GAMES
 cabinet frontend (`cabinet/`). This is ground truth for what exists today,

@@ -85,3 +85,14 @@ export function signTransaction(tx, privHex) {
   const v = BigInt(tx.chainId) * 2n + 35n + BigInt(recovery);
   return '0x' + hex(rlp([...fields, v, r, s]));
 }
+
+// ---------------------------------------------------------------- EIP-1559 transaction (type 2)
+/** { chainId, nonce, maxPriorityFeePerGas, maxFeePerGas, gasLimit, to, value, data } → signed raw tx hex
+ *  ('0x02' ‖ rlp). The fee is a ceiling, not a price: the chain charges its base fee, so a spike between the
+ *  estimate and the send (Liteforge moved 10M → 68M wei in a day) no longer rejects the transaction. */
+export function signTransaction2(tx, privHex) {
+  const fields = [tx.chainId, tx.nonce, tx.maxPriorityFeePerGas, tx.maxFeePerGas, tx.gasLimit, tx.to, tx.value ?? 0n, tx.data ?? '0x', []];
+  const digest = keccak(Buffer.concat([Buffer.from([2]), rlp(fields)]));
+  const { r, s, recovery } = sign(digest, privHex);
+  return '0x02' + hex(rlp([...fields, BigInt(recovery), r, s]));
+}

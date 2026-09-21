@@ -35,13 +35,13 @@ every name below.
 
 | Endpoint | Fields read by name |
 |---|---|
-| `GET /health` | `nodeId operator roles region addr epoch peers rulesets{rulesetId: buildHash} buildsHeld staking bonded chain.{offline,rpc,head,lastError} startedAt uptimeMs inbound.{peers,lastAt,reachable} profiles` |
+| `GET /health` | `nodeId operator roles region addr epoch peers rulesets{rulesetId: buildHash} buildsHeld staking bonded chain.{offline,rpc,head,lastError} startedAt uptimeMs inbound.{peers,lastAt,reachable} profiles version cabinet.version` — the cabinet compares `cabinet.version` with its own `cabinet/version.js` and flags a copy that is not the node's (0.11.12) |
 | `GET /profile?player=` | `player profiles owner tokenId active name` — the profile card; `profiles` is `unset` until `PlayerProfile` is deployed |
 | `GET /peers` | `peers[].{nodeId operator addr region roles fresh bonded clockSkewS rulesets}` |
 | `GET /snapshot` | `epoch peers[] manifests{rulesetId: {buildHash, services, …}} root staking` — the fold uses `manifests[rid].services`; placement verification uses `peers` and `root` |
 | `GET /leaderboard?ruleset=[&by=owner]` | `rulesetId by deriveVersion digest skipped leaderboard[].{rank player rating}` — `by=owner` folds bound keys into their wallet |
 | `GET /stats?ruleset=` | `{playerId: {matches wins ticks}}` |
-| `GET /deltas?ruleset=` | `deltas[].{matchId rulesetId buildHash mode participants teams? scores ticks hostId cosigners settledAt epoch attestation}` |
+| `GET /deltas?ruleset=` | `deltas[].{matchId rulesetId buildHash mode participants teams? scores ticks hostId cosigners settledAt epoch attestation chain official verification}` — with MatchBook, `chain` is the log's word (`none committed settled final void escalating escalated`) and `official`/`verification` follow it (0.11.12) |
 | `POST /queue`, `GET /match?playerId=` | through `cabinet/client.js` — the same file `demo/client.test.mjs` runs |
 
 ### 1.4 Player identity

@@ -931,7 +931,14 @@ manifest completeness, bounded ranked mapping. A title that passes is listed.
   every delta ever settled on every tick. This is the v0.2 model and it is
   wrong at any real scale (§0, "what changed"); it is replaced by §6/§11,
   not patched.
-- **Phases 1 and 2 are live on Liteforge (20–21 Sep 2026) with one final
+- **The node signs type-2 transactions with a fee ceiling (0.11.12);** the
+  cabinet's wallet path always did. What is still open on fees is phase 3:
+  nobody is reimbursed.
+- **The operator's dashboard reads `/fleet` (0.11.12, docs/FLEET-TELEMETRY.md)**
+  — links measured on the gossip push, a grade per peer, the graph from every
+  heartbeat's `links`, rooms, the purse — signed by the node key over a digest.
+  LITNODE-CONTROL 0.1.0 still draws fixtures until it binds to it.
+- **Phases 1 and 2 are live on Liteforge (20–21 Sep 2026) with two final
   match behind them.** Escalation, the nine-seat draw and slashing have
   run only on the in-process EVM. Fees and custody challenges (phase 3) are
   specified, not built. The cabinet does not yet show the `pending`

@@ -10,7 +10,8 @@
  *  the mesh works. */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { randomPrivateKey, addressOf, signTransaction } from '../protocol/evm.js';
+import { randomPrivateKey, addressOf } from '../protocol/evm.js';
+import { feeParams, signWithFee, capFromEnv } from './fees.js';
 import { entryOfCall, decodeEntry, announcerOfCall, decodeAddress, announceCalldata } from '../protocol/directory.js';
 
 const MIN_GAP_MS = 2 * 60_000;      // never send more often than this
@@ -42,12 +43,12 @@ export function createAnnouncer({ dataDir, nodeId, contract, chainId, rpc, log =
       funded = bal > 0n;
       if (!funded) { lastError = `announcer ${address} has no gas — send it a little zkLTC (faucet: liteforge.hub.caldera.xyz)`; return 'unfunded'; }
       const data = announceCalldata(nodeId, url, wsAddr || '');
-      const [nonceHex, gasPriceHex, gasHex] = await Promise.all([
+      const [nonceHex, fee, gasHex] = await Promise.all([
         call('eth_getTransactionCount', [address, 'pending']),
-        call('eth_gasPrice', []),
+        feeParams(call, { capWei: capFromEnv() }), // type 2 with a ceiling where the chain has a base fee (node/fees.js)
         call('eth_estimateGas', [{ from: address, to: contract, data }]),
       ]);
-      const raw = signTransaction({ nonce: BigInt(nonceHex), gasPrice: BigInt(gasPriceHex) * 12n / 10n, gasLimit: BigInt(gasHex) * 13n / 10n, to: contract, value: 0n, data, chainId: BigInt(chainId) }, key.privateKey);
+      const raw = signWithFee({ nonce: BigInt(nonceHex), gasLimit: BigInt(gasHex) * 13n / 10n, to: contract, value: 0n, data, chainId: BigInt(chainId) }, fee, key.privateKey);
       lastSentAt = Date.now();
       lastTx = await call('eth_sendRawTransaction', [raw]);
       lastError = null;

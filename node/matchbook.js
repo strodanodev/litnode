@@ -35,7 +35,8 @@
  *  Nothing here can move the bond. */
 import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { randomPrivateKey, addressOf, signTransaction } from '../protocol/evm.js';
+import { randomPrivateKey, addressOf } from '../protocol/evm.js';
+import { feeParams, signWithFee, effectivePrice, capFromEnv } from './fees.js';
 import * as mb from '../protocol/matchbook.js';
 import { mayActForCall, decodeBool } from '../protocol/staking.js';
 import { descriptorHash as descriptorHashOf } from './settle.js';
@@ -89,6 +90,22 @@ export function createMatchBook({
   const ingested = new Set();               // tx hashes whose receipts are absorbed
   const pendingReceipts = new Map();        // tx → { since, tries } waiting for a receipt
   let delegated = null, funded = null, lastError = null, lastTx = null, polling = false, sends = 0;
+  // The hot key's purse, for the operator's dashboard: balance read with the delegate check and every BALANCE_TTL,
+  // the price the last send paid, and from those how many clean matches (~670k gas as host) the key still covers.
+  // `low` flips at LOW_GAS_MATCHES matches left and is logged once — a host that runs dry mid-match voids it.
+  let balanceWei = null, balanceAt = 0, gasPriceWei = null, txType = null, lowLogged = false;
+  const BALANCE_TTL = 5 * 60_000, GAS_PER_MATCH = 670_000n, LOW_GAS_MATCHES = 25;
+  const purse = () => {
+    const price = gasPriceWei ?? 68_000_000n; // Liteforge, 22 Sep 2026, until a send tells us better
+    const matchesLeft = balanceWei == null ? null : Number(balanceWei / (GAS_PER_MATCH * price));
+    return { address, balanceWei: balanceWei == null ? null : balanceWei.toString(), balance: balanceWei == null ? null : (Number(balanceWei) / 1e18).toFixed(6), gasPriceWei: gasPriceWei == null ? null : gasPriceWei.toString(), txType, matchesLeft, low: matchesLeft != null && matchesLeft < LOW_GAS_MATCHES, readAt: balanceAt ? new Date(balanceAt).toISOString() : null };
+  };
+  const readBalance = async () => {
+    try { balanceWei = BigInt(await call('eth_getBalance', [address, 'latest'])); balanceAt = Date.now(); funded = balanceWei > 0n; } catch { /* unknown; keep the last */ }
+    const p = purse();
+    if (p.low && !lowLogged) { lowLogged = true; log(`matchbook: hot key ${address} is low — ${p.balance} zkLTC covers ~${p.matchesLeft} more matches as host; send it zkLTC (faucet: liteforge.hub.caldera.xyz)`); emit('gas-low', { address, balance: p.balance, matchesLeft: p.matchesLeft }); }
+    if (!p.low) lowLogged = false;
+  };
   const panels = new Map();                 // matchId → { hostKey, panel[] } from Committed
   const settled = new Map();                // matchId → Settled event
   // Every match this node has a duty on — as host or as a panel seat — with the clocks the contract runs on it.
@@ -113,15 +130,16 @@ export function createMatchBook({
   const send = (data, what, to) => { const p = chainOfSends.then(() => sendNow(data, what, to)); chainOfSends = p.catch(() => {}); return p; };
   const sendNow = async (data, what, to = contract) => {
     if (delegated === false) throw new Error(`delegate ${address} is not this node's delegate on NodeStake — operator: npm run delegate -- ${nodeId.slice(0, 12)}… ${address}`);
-    const [nonceHex, gasPriceHex, gasHex] = await Promise.all([
+    const [nonceHex, fee, gasHex] = await Promise.all([
       nonce === null ? call('eth_getTransactionCount', [address, 'pending']) : '0x' + nonce.toString(16),
-      call('eth_gasPrice', []),
+      feeParams(call, { capWei: capFromEnv() }), // type 2 with a ceiling where the chain has a base fee (node/fees.js); refuses above MAX_FEE_GWEI
       call('eth_estimateGas', [{ from: address, to, data }]),
     ]);
     nonce = BigInt(nonceHex);
-    const raw = signTransaction({ nonce, gasPrice: BigInt(gasPriceHex) * 12n / 10n, gasLimit: BigInt(gasHex) * 13n / 10n, to, value: 0n, data, chainId: BigInt(chainId) }, key.privateKey);
+    gasPriceWei = effectivePrice(fee);
+    const raw = signWithFee({ nonce, gasLimit: BigInt(gasHex) * 13n / 10n, to, value: 0n, data, chainId: BigInt(chainId) }, fee, key.privateKey);
     const hash = await call('eth_sendRawTransaction', [raw]);
-    nonce += 1n; sends++; lastTx = hash; lastError = null;
+    nonce += 1n; sends++; lastTx = hash; lastError = null; txType = fee.type;
     emit('tx', { what, tx: hash });
     return hash;
   };
@@ -140,7 +158,7 @@ export function createMatchBook({
   const checkDelegate = async () => {
     if (!stakeContract) { delegated = true; return; }
     try { delegated = decodeBool(await call('eth_call', [mayActForCall(stakeContract, nodeId, address), 'latest'])); } catch { /* keep the last answer */ }
-    try { funded = BigInt(await call('eth_getBalance', [address, 'latest'])) > 0n; } catch { /* unknown */ }
+    await readBalance();
   };
   // The witness pool for escalations: a delegated, funded WITNESS enrols itself — no operator step,
   // no tool. Asked once per start and again after any failure; a node that is not a witness stays out.
@@ -410,6 +428,7 @@ export function createMatchBook({
     polling = true; lastPoll = Date.now();
     try {
       if (delegated === null || !funded) await checkDelegate();
+      else if (Date.now() - balanceAt > BALANCE_TTL) await readBalance();
       await readParams();
       await autoEnrol();
       await readReceipts();
@@ -443,9 +462,11 @@ export function createMatchBook({
 
   return {
     address, commit, settle, poll, ladder, statusOf, epoch, propose, hints, absorbHints, ingestReceipt,
+    // The last n decided matches this node holds events for, newest last — the dashboard's "recent" strip.
+    recent: (n = 20) => decoded.filter((e) => e.event === 'Finalized').slice(-n).map((e) => ({ matchId: e.matchId, status: e.status, block: e.block, tx: e.tx ?? null, at: blockTs.get(e.block) ? new Date(blockTs.get(e.block) * 1000).toISOString() : null })),
     proof: (matchId) => { const key = mb.matchIdBytes32(matchId); const fin = decoded.find((e) => e.event === 'Finalized' && e.matchId === key); if (!fin) return null; const ts = blockTs.get(fin.block); if (ts == null) return null; return mb.chainProof(epoch(hourOf(ts * 1000)), key); },
     chainStatus: (matchId) => ({ matchId, key: mb.matchIdBytes32(matchId), status: statusOf(mb.matchIdBytes32(matchId)), panel: panels.get(mb.matchIdBytes32(matchId))?.panel ?? null, events: decoded.filter((e) => e.matchId === mb.matchIdBytes32(matchId)) }),
-    status: () => ({ contract, epochAnchor, delegate: address, delegated, funded, enrolled, cursor, scanRange, scanMs, scanError, receipts: ingested.size, pendingReceipts: pendingReceipts.size, events: decoded.length, sends, lastTx, lastError, hosting: [...duties.values()].filter((d) => d.role === 'host').length, seated: [...duties.values()].filter((d) => d.role === 'seat').length, windows: { ...windows }, attested: attested.size, proposed: [...proposedHours] }),
+    status: () => ({ contract, epochAnchor, delegate: address, delegated, funded, enrolled, purse: purse(), cursor, scanRange, scanMs, scanError, receipts: ingested.size, pendingReceipts: pendingReceipts.size, events: decoded.length, sends, lastTx, lastError, hosting: [...duties.values()].filter((d) => d.role === 'host').length, seated: [...duties.values()].filter((d) => d.role === 'seat').length, windows: { ...windows }, attested: attested.size, proposed: [...proposedHours] }),
   };
 }
 

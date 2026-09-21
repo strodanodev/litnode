@@ -91,8 +91,8 @@ export async function createRpcEvm({ chainId = 4441, startTime = Math.floor(Date
         case 'eth_getBlockByNumber': {
           const n = params[0] === 'latest' || params[0] === 'pending' ? number - 1 : parseInt(params[0], 16);
           const b = blocks.get(n) ?? { timestamp: now() };
-          // no baseFeePerGas: ethers then sends legacy (gasPrice) transactions, which is what the node signs too
-          return { number: '0x' + n.toString(16), timestamp: '0x' + b.timestamp.toString(16), hash: hashOf(n), parentHash: hashOf(n - 1), nonce: '0x0000000000000000', difficulty: '0x0', gasLimit: '0x1c9c380', gasUsed: '0x0', miner: '0x' + '00'.repeat(20), extraData: '0x', transactions: [], sha3Uncles: '0x' + '00'.repeat(32), logsBloom: '0x' + '00'.repeat(256), stateRoot: '0x' + '00'.repeat(32), receiptsRoot: '0x' + '00'.repeat(32), transactionsRoot: '0x' + '00'.repeat(32), mixHash: '0x' + '00'.repeat(32), size: '0x0', totalDifficulty: '0x0', uncles: [] };
+          // baseFeePerGas 1 wei: ethers and the node then send type-2 (EIP-1559) transactions, as they do on Liteforge (node/fees.js)
+          return { number: '0x' + n.toString(16), timestamp: '0x' + b.timestamp.toString(16), hash: hashOf(n), baseFeePerGas: '0x1', parentHash: hashOf(n - 1), nonce: '0x0000000000000000', difficulty: '0x0', gasLimit: '0x1c9c380', gasUsed: '0x0', miner: '0x' + '00'.repeat(20), extraData: '0x', transactions: [], sha3Uncles: '0x' + '00'.repeat(32), logsBloom: '0x' + '00'.repeat(256), stateRoot: '0x' + '00'.repeat(32), receiptsRoot: '0x' + '00'.repeat(32), transactionsRoot: '0x' + '00'.repeat(32), mixHash: '0x' + '00'.repeat(32), size: '0x0', totalDifficulty: '0x0', uncles: [] };
         }
         case 'eth_getCode': { const a = createAddressFromString(params[0]); const code = await vm.stateManager.getCode(a); return bytesToHex(code); }
         case 'eth_getTransactionByHash': return txs.get(params[0]) ?? null;

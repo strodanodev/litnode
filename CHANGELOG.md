@@ -3,9 +3,56 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.11.12] — 2026-09-22 — the demo sub-patch: telemetry for the operator's dashboard, type-2 fees, one answer per screen
+
+The "0.11.11.a" round: the weaknesses and quick fixes from the 22 Sep build report
+that fit before a production demo of a mesh of fewer than ten nodes. (Versions
+are three numbers — `newer()` in node/update.js and npm both say so — so the
+sub-patch is 0.11.12.)
+
+### Added
+- **`GET /fleet` — the operator's dashboard in one signed document**
+  (docs/FLEET-TELEMETRY.md). Per peer: the round trip **measured on the gossip
+  push every node already makes each second** (last, moving average, loss over
+  the last 20), a quality grade A–F from freshness + loss + rtt, bonded /
+  eligible / version. The mesh: active (fresh + self), known, bonded, version
+  histogram, real gossip bytes in/out per minute. A **graph** — every node's
+  heartbeat now carries `links` (who it reached in the last 10 s, and how fast)
+  so any one node can draw all the edges, for the exe's 3D view. Rooms
+  (`LIT-<matchId>`, state from the chain: placed → committing → committed →
+  settled → final | void), the queue, titles, the last 20 finals, the last 50
+  node events. The hot key's **purse**: balance, ~matches left as host, `low`
+  under 25 (logged once, `gas-low` event). RPC round trip and head lag. With
+  `?nonce=` the node key signs nonce + digest of the body (`answerChallenge`
+  grew an optional `digest`; `/whoami` is unchanged), so LITNODE-CONTROL shows
+  what this node said, now — never a proxy's or a replay. From memory, no RPC.
+  `demo/fleet.test.mjs`.
+- **`npm run fleet`** — the reference reader: verifies the proof, draws the table
+  (peers, rtt, loss, grade, rooms, events). **`npm run fleet -- spawn --count N`**
+  puts N more nodes on this machine, seeded from the watched one, for the
+  fewer-than-ten demo.
+- **`npm run prune:dist`** — dry run by default; keeps the current and last two
+  versions' packs (4.4 GB → ~0.4 GB here).
+- **`cabinet/version.js`** — the cabinet knows its release; `/health.cabinet.version`
+  says which copy the node serves; the Node page shows both and flags a copy
+  that is not the node's (the Vercel copy was 11 h behind and nothing said so).
+  `npm version` keeps it equal (`tools/sync-version.mjs`); the cabinet test asserts it.
 
 ### Changed
+- **Transactions are type 2 (EIP-1559) with a ceiling, not legacy at ×1.2.**
+  `node/fees.js`: maxFee = 2 × base + tip, capped at `MAX_FEE_GWEI` (default 5
+  gwei ≈ 70× Liteforge today; above it the send is refused rather than the key
+  drained). The chain charges base at inclusion, so a spike between estimate
+  and send (10M → 68M wei in a day) no longer rejects a settle. Legacy stays
+  where a block carries no base fee. `signTransaction2` checked byte for byte
+  against ethers; the in-process chain now reports a base fee so the end-to-end
+  test signs type 2 too. Both senders (MatchBook, announce) use it.
+- **One answer per screen.** With MatchBook, `/deltas` carries `chain` (the log's
+  word) and derives `official`/`verification` from it: a chain-final match no
+  longer reads `official: false` locally. The cabinet's history tags say
+  "final on chain" / "voided" / "on chain · settled" ahead of the v0.2 witness path.
+- `chain.status()` reports `rpcMs rpcLastMs rpcCalls rpcFailures headTs lagS`;
+  `matchBook.status()` reports `purse`.
 - **What a node holds, it passes on.** Gossip hints now carry the transactions of
   every match whose events this node holds (newest 50), not only the ones it
   sent — a restarted peer, or one that joined late, learns the day's matches

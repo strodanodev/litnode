@@ -43,6 +43,7 @@ import { RELEASE_PUBKEY } from './update.js';
 import { titleVerdict } from '../protocol/title.js';
 import { PROTOCOL_VERSION } from '../protocol/version.js';
 import { answerChallenge, checkChallenge, newNonce, NONCE_RE } from '../protocol/challenge.js';
+import { CABINET_VERSION } from '../cabinet/version.js';
 import { descriptorHash as descriptorHashOf } from './settle.js';
 import { proposeCalldata } from '../protocol/epoch.js';
 
@@ -142,7 +143,14 @@ export async function createNode({
   // Every observable thing the node does goes through emit(): the TUI draws
   // from it, a log file gets a line per event, tests can subscribe. Never
   // throws into the caller.
-  const emit = (type, data = {}) => { try { onEvent({ t: Date.now(), type, ...data }); } catch { /* observer's problem */ } };
+  // The last RECENT_MAX events worth a line on a dashboard — not the per-second ticks — served on /fleet.events.
+  const RECENT_MAX = 100, QUIET = new Set(['gossip.out', 'gossip.in', 'block']);
+  const recent = [];
+  const emit = (type, data = {}) => {
+    const ev = { t: Date.now(), type, ...data };
+    if (!QUIET.has(type)) { recent.push(ev); if (recent.length > RECENT_MAX) recent.shift(); }
+    try { onEvent(ev); } catch { /* observer's problem */ }
+  };
   mkdirSync(dataDir, { recursive: true });
   mkdirSync(join(dataDir, 'rulesets'), { recursive: true });
   if (!offline) installDoh({ log }); // once per process: quick-tunnel names — ours and our peers' — resolve through Cloudflare's DoH
@@ -345,6 +353,37 @@ export async function createNode({
   const queue = new Map();      // `${bucket}|${playerId}` → verified body
   const peersKnown = new Set(seeds);
   const unreachable = new Map(); // peer URL → when it first stopped answering our pushes
+  // Link telemetry, measured on the gossip push every tick already makes — never an extra probe: per peer URL,
+  // the last round trip, a moving average and the last LINK_WINDOW outcomes. /fleet folds it per node and the
+  // heartbeat carries a digest of it (`links`) so any node can draw the whole graph, not only its own edges.
+  const links = new Map(); // peer URL → { rttMs, emaMs, window: [1|0…], okAt, failAt, sent, ok }
+  const LINK_WINDOW = 20;
+  const linkNote = (peer, ok, ms = 0) => {
+    const l = links.get(peer) ?? { rttMs: null, emaMs: null, window: [], okAt: 0, failAt: 0, sent: 0, ok: 0 };
+    l.sent++; l.window.push(ok ? 1 : 0); if (l.window.length > LINK_WINDOW) l.window.shift();
+    if (ok) { l.ok++; l.okAt = Date.now(); l.rttMs = Math.round(ms); l.emaMs = l.emaMs == null ? l.rttMs : Math.round(l.emaMs * 0.7 + l.rttMs * 0.3); } else l.failAt = Date.now();
+    links.set(peer, l);
+  };
+  const linkOf = (peerUrl) => {
+    const l = peerUrl ? links.get(peerUrl) : null;
+    if (!l) return null;
+    const loss = l.window.length ? +(1 - l.window.reduce((a, b) => a + b, 0) / l.window.length).toFixed(2) : null;
+    return { rttMs: l.rttMs, emaMs: l.emaMs, loss, samples: l.window.length, sent: l.sent, ok: l.ok, okAt: l.okAt ? new Date(l.okAt).toISOString() : null, failAt: l.failAt ? new Date(l.failAt).toISOString() : null, direct: Date.now() - l.okAt < 10_000 };
+  };
+  // One number and a grade a dashboard can colour: heartbeat freshness, loss on our pushes, round trip. A peer we
+  // cannot push to but keep hearing from (behind NAT, forwarded by a third node) grades on freshness alone, capped at B.
+  const quality = (ageS, link) => {
+    if (ageS == null) return { score: 0, grade: 'F' };
+    let score = ageS <= 2 ? 100 : ageS <= 10 ? 80 : ageS <= 60 ? 50 : 20;
+    if (link?.samples) { score -= Math.round((link.loss ?? 0) * 60); if (link.emaMs != null) score -= link.emaMs > 2000 ? 30 : link.emaMs > 800 ? 15 : link.emaMs > 300 ? 5 : 0; }
+    else score = Math.min(score, 75);
+    score = Math.max(0, Math.min(100, score));
+    return { score, grade: score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 50 ? 'C' : score >= 25 ? 'D' : 'F' };
+  };
+  // Gossip volume over the last minute, for the dashboard's traffic view (real bytes, not a fixture).
+  const traffic = []; // { t, dir: 'out'|'in', bytes }
+  const trafficNote = (dir, bytes) => { const now = Date.now(); traffic.push({ t: now, dir, bytes }); while (traffic.length && traffic[0].t < now - 60_000) traffic.shift(); };
+  const trafficNow = () => { const cut = Date.now() - 60_000; const o = { outPerMin: 0, outBytesPerMin: 0, inPerMin: 0, inBytesPerMin: 0 }; for (const x of traffic) { if (x.t < cut) continue; if (x.dir === 'out') { o.outPerMin++; o.outBytesPerMin += x.bytes; } else { o.inPerMin++; o.inBytesPerMin += x.bytes; } } return o; };
   let stakes = null;            // nodeId → standing, when nodeStake configured
   let wsAddr = wsAddrIn;        // the relay this node fronts; a relay tunnel sets it live
   let lanAddr = null;           // what we listen on, kept for /health when a tunnel replaces addr
@@ -420,6 +459,8 @@ export async function createNode({
   const myHeartbeat = () => seal(HEARTBEAT_TAG, {
     nodeId, operator, roles, region, addr, wsAddr, standing: 0, version, protocol: PROTOCOL_VERSION, relayKeys,
     buildHashes: buildHashes(), manifests: manifests(), epoch: epochOf(Date.now()),
+    // who we reached in the last ten seconds and how fast (16 hex of the key, ms) — the mesh's edges, for /fleet.graph on any node; not part of the snapshot root
+    links: [...heartbeats.values()].filter((b) => b.nodeId !== nodeId && b.addr && Date.now() - (links.get(b.addr)?.okAt ?? 0) < 10_000).map((b) => ({ id: b.nodeId.slice(0, 16), ms: links.get(b.addr).emaMs })),
   }, identity);
 
   // Peers on another protocol version are heard and listed, never placed,
@@ -514,9 +555,11 @@ export async function createNode({
       const targets = [...peersKnown].filter((p) => p !== addr);
       if (targets.length) emit('gossip.out', { peers: targets.length, bytes: body.length, heartbeats: payload.heartbeats.length, queue: payload.queue.length, deltas: payload.deltas.length, matches: payload.matches.length });
       for (const peer of targets) {
+        const t0 = performance.now();
+        trafficNote('out', body.length);
         fetch(`${peer}/gossip`, { method: 'POST', headers: { 'content-type': 'application/json' }, body, signal: AbortSignal.timeout(8000) })
-          .then(async (r) => { if (r.ok) { unreachable.delete(peer); const text = await r.text(); const m = JSON.parse(text); await absorb(m, { from: peer, bytes: text.length, via: 'reply' }); } else unreachable.set(peer, unreachable.get(peer) ?? Date.now()); })
-          .catch(() => { unreachable.set(peer, unreachable.get(peer) ?? Date.now()); });
+          .then(async (r) => { if (r.ok) { linkNote(peer, true, performance.now() - t0); unreachable.delete(peer); const text = await r.text(); trafficNote('in', text.length); const m = JSON.parse(text); await absorb(m, { from: peer, bytes: text.length, via: 'reply' }); } else { linkNote(peer, false); unreachable.set(peer, unreachable.get(peer) ?? Date.now()); } })
+          .catch(() => { linkNote(peer, false); unreachable.set(peer, unreachable.get(peer) ?? Date.now()); });
       }
       // A peer URL that has not answered for a while is a hostname that rotated (a seed restarted on a new
       // quick tunnel: seen 21 Sep 2026 — two nodes pushed to a dead URL for 36 minutes while the new one sat
@@ -762,6 +805,84 @@ export async function createNode({
     return true;
   };
 
+  // ---------------------------------------------------------------- views
+  const titlesNow = () => {
+    const now = epochOf(Date.now());
+    const titles = new Map();
+    const take = (m, host, hostRoles) => {
+      const t = titles.get(m.rulesetId) ?? { rulesetId: m.rulesetId, kind: m.kind, buildHash: m.buildHash, publisher: m.publisher ?? null, owner: titleOwners.get(m.rulesetId) ?? null, build: loaded.get(m.rulesetId)?.buildHash === m.buildHash ? titleBuilds.get(m.rulesetId) ?? null : null, display: m.display ?? null, modes: m.modes, participants: m.participants, services: m.services, hosts: [], bondedHosts: 0, publisherHosts: 0, published: null };
+      if (!t.hosts.includes(host)) {
+        t.hosts.push(host);
+        // publisherHosts: bonded, carrying the HOST role, bonded from the wallet that holds the title
+        if (stakes?.[host]?.active) { t.bondedHosts++; if (t.owner && hostRoles.includes('host') && stakes[host].operator?.toLowerCase() === t.owner) t.publisherHosts++; }
+      }
+      // published: the title is registered on chain AND its publisher runs a bonded host for it. null = no registry configured (listing falls back to display + a bonded host).
+      t.published = titleRegistry ? !!t.owner && t.publisherHosts > 0 : null;
+      titles.set(m.rulesetId, t);
+    };
+    for (const m of Object.values(manifests())) take(m, nodeId, roles);
+    for (const b of heartbeats.values()) if (b.nodeId !== nodeId && b.epoch >= now - 2) for (const m of Object.values(b.manifests ?? {})) take(m, b.nodeId, b.roles ?? []);
+    return [...titles.values()];
+  };
+
+  // With MatchBook the chain says what is official; the v0.2 local flag (witness co-signs over gossip, which
+  // MatchBook nodes no longer send) read `official: false` for a match the chain had finalized — two answers on
+  // one screen. The local delta keeps its fields; `chain` says what the log says and `official` follows it.
+  const withChain = (deltas) => (mbook ? deltas.map((d) => {
+    const st = mbook.statusOf(matchIdBytes32(d.matchId));
+    return { ...d, chain: st, ...(st === 'none' ? {} : { official: st === 'final', verification: st === 'final' ? 'verified' : st === 'void' ? 'disputed' : d.verification }) };
+  }) : deltas);
+  /** The operator's whole view in one document, from memory: this node, its chain, the mesh as it hears it, every
+   *  link it measures, the rooms it holds, who is queued, the titles on offer, the last events. GET /fleet. */
+  const fleetNow = () => {
+    const now = Date.now(), nowEpoch = epochOf(now);
+    const s = currentSnapshot();
+    const eligible = new Set(s.peers.map((p) => p.nodeId));
+    const peers = [...heartbeats.values()].filter((b) => b.nodeId !== nodeId).map((b) => {
+      const ageS = Math.max(0, +(((nowEpoch - b.epoch) * EPOCH_MS) / 1000).toFixed(1));
+      const link = linkOf(b.addr);
+      return { nodeId: b.nodeId, operator: b.operator, addr: b.addr ?? null, wsAddr: b.wsAddr ?? null, region: b.region, roles: b.roles, version: b.version ?? null, protocol: b.protocol ?? 1,
+        fresh: b.epoch >= nowEpoch - 2, ageS, clockSkewS: +(((b.epoch - nowEpoch) * EPOCH_MS) / 1000).toFixed(1),
+        bonded: stakes ? !!stakes[b.nodeId]?.active : null, wallet: stakes?.[b.nodeId]?.operator ?? null, eligible: eligible.has(b.nodeId), rulesets: Object.keys(b.buildHashes ?? {}),
+        link, quality: quality(ageS, link), links: b.links ?? [] };
+    });
+    const byPrefix = (id16) => (nodeId.startsWith(id16) ? nodeId : peers.find((p) => p.nodeId.startsWith(id16))?.nodeId ?? null);
+    // The graph: our measured edges, then every edge a peer reports in its heartbeat (its own measurements).
+    const edges = [];
+    for (const p of peers) if (p.link?.direct) edges.push({ from: nodeId, to: p.nodeId, ms: p.link.emaMs, measured: true });
+    for (const p of peers) for (const l of p.links) { const to = byPrefix(l.id); if (to && to !== p.nodeId) edges.push({ from: p.nodeId, to, ms: l.ms ?? null, measured: false }); }
+    const versions = {};
+    for (const b of heartbeats.values()) versions[b.version ?? '?'] = (versions[b.version ?? '?'] ?? 0) + 1;
+    const local = new Map(settlement.list().map((d) => [d.matchId, d]));
+    const rooms = matchesNow().map((m) => {
+      const cs = mbook ? mbook.chainStatus(m.matchId) : null;
+      const d = local.get(m.matchId) ?? null;
+      const chainStatus = cs?.status ?? 'none';
+      const state = chainStatus !== 'none' ? chainStatus : d ? 'played' : m.commitTx ? 'committing' : 'placed';
+      return { matchId: m.matchId, room: `LIT-${m.matchId}`, rulesetId: m.rulesetId, mode: m.mode ?? 'casual', bucket: m.bucket, participants: m.participants, host: m.host, witness: m.witness ?? null, panel: m.panel ?? [], ours: m.host === nodeId, seated: (m.panel ?? []).includes(nodeId),
+        placedAt: new Date(m.computedAt).toISOString(), state, commitTx: m.commitTx ?? null, attests: cs ? cs.events.filter((e) => e.event === 'Attested').length : 0, chainEvents: cs?.events.length ?? 0, disputes: m.disputes?.length ?? 0, settledAt: d?.settledAt ?? null, ticks: d?.ticks ?? null };
+    });
+    const waiting = new Map();
+    for (const b of queue.values()) { const k = `${b.rulesetId}|${b.mode ?? 'casual'}`; const w = waiting.get(k) ?? { rulesetId: b.rulesetId, mode: b.mode ?? 'casual', waiting: 0, players: [], buckets: new Set() }; w.waiting++; if (!w.players.includes(b.playerId)) w.players.push(b.playerId); w.buckets.add(b.bucket); waiting.set(k, w); }
+    const mbs = mbook ? mbook.status() : null;
+    return {
+      at: new Date(now).toISOString(), nodeId, version, protocol: PROTOCOL_VERSION, cabinet: CABINET_VERSION,
+      self: { nodeId, operator, roles, region, version, addr, lanAddr, wsAddr, startedAt: new Date(startedAt).toISOString(), uptimeMs: now - startedAt,
+        bonded: stakes?.[nodeId]?.active ?? null, wallet: stakes?.[nodeId]?.operator ?? null, eligible: eligible.has(nodeId), bond: myBond ? { eligible: myBond.eligible, delegate: myBond.delegate, amount: myBond.amount.toString() } : null,
+        tunnel: tunnels.node?.status() ?? null, upnp: upnpCtl?.status() ?? null, update: (({ available, latest, checkedAt, lastError }) => ({ available, latest, checkedAt: checkedAt ?? null, lastError: lastError ?? null }))(updater.status()),
+        inbound: { peers: [...inbound.values()].filter((t) => now - t < 30_000).length, reachable: peersKnown.size ? [...inbound.values()].some((t) => now - t < 30_000) : null }, sandbox: sandbox.status() },
+      chain: { ...(({ rpc, head, headTs, lagS, rpcMs, rpcLastMs, rpcCalls, rpcFailures, rpcAt, lastError, offline }) => ({ rpc, head, headTs, lagS, rpcMs, rpcLastMs, rpcCalls, rpcFailures, rpcAt, lastError, offline }))(chain.status()),
+        matchBook: mbs ? { contract: mbs.contract, delegate: mbs.delegate, delegated: mbs.delegated, funded: mbs.funded, enrolled: mbs.enrolled, purse: mbs.purse, cursor: mbs.cursor, scanRange: mbs.scanRange, events: mbs.events, sends: mbs.sends, lastTx: mbs.lastTx, lastError: mbs.lastError, hosting: mbs.hosting, seated: mbs.seated, windows: mbs.windows } : null,
+        announcer: announcer?.status() ? (({ address, delegated, funded, lastTx, lastError }) => ({ address, delegated, funded, lastTx, lastError }))(announcer.status()) : null,
+        recentBlocks: chain.recentBlocks(12) },
+      mesh: { active: peers.filter((p) => p.fresh).length + 1, known: peers.length + 1, bonded: peers.filter((p) => p.bonded).length + (stakes?.[nodeId]?.active ? 1 : 0), eligible: s.peers.length, incompatible: incompatible.size,
+        snapshotRoot: s.root, epoch: s.epoch, versions, urls: peersKnown.size, unreachable: [...unreachable.keys()], gossip: trafficNow() },
+      peers, graph: { nodes: [{ nodeId, operator, self: true, fresh: true }, ...peers.map((p) => ({ nodeId: p.nodeId, operator: p.operator, self: false, fresh: p.fresh }))], edges },
+      rooms, queue: [...waiting.values()].map((w) => ({ ...w, buckets: [...w.buckets].sort() })), titles: titlesNow().map((t) => ({ rulesetId: t.rulesetId, display: t.display, hosts: t.hosts.length, bondedHosts: t.bondedHosts, published: t.published })),
+      recent: mbook ? mbook.recent(20) : [], events: recent.slice(-50),
+    };
+  };
+
   // ---------------------------------------------------------------- http
   const server = createServer(async (req, res) => {
     try {
@@ -783,6 +904,7 @@ export async function createNode({
           bond: myBond ? { eligible: myBond.eligible, delegate: myBond.delegate, bondedSince: myBond.bondedSince ? new Date(myBond.bondedSince * 1000).toISOString() : null, unbondAt: myBond.unbondAt ? new Date(myBond.unbondAt * 1000).toISOString() : null, amount: myBond.amount.toString() } : null,
           admin: stakeAdmin === null ? null : stakeAdmin ? 'contract' : 'eoa', matchBook: mbook ? mbook.status() : matchBookAddr ? { contract: matchBookAddr, offline: true } : null, chain: chain.status(), profiles: profileState(), version, repair: sdkMissing, update: updater.status(),
           sandbox: sandbox.status(), trust: { policy: titleTrust, publishers: trustedPublishers, titleRegistry: titleRegistry ?? null, relayKeys, courts: Object.keys(courts) }, registry: registry ? 'chain' : erc6699 ? 'offline' : 'unset',
+          cabinet: { version: CABINET_VERSION }, // the copy this node serves at /; a cabinet loaded from elsewhere compares its own
           wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, upnp: upnpCtl?.status() ?? null, gauntlet: gauntlet?.status() ?? null,
           directory: nodeDirectory ? { contract: nodeDirectory, seeds: chainSeeds.length, announcer: announcer?.status() ?? null } : null, startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt,
           // reachable: a peer has pushed gossip to us in the last 30 s. null = no peers known, so nothing to conclude.
@@ -798,23 +920,16 @@ export async function createNode({
       }
       // Every title the mesh hosts right now: this node's plus every fresh
       // peer's, from the manifests they gossip. The arcade lists from here.
-      if (req.method === 'GET' && url.pathname === '/titles') {
-        const now = epochOf(Date.now());
-        const titles = new Map();
-        const take = (m, host, hostRoles) => {
-          const t = titles.get(m.rulesetId) ?? { rulesetId: m.rulesetId, kind: m.kind, buildHash: m.buildHash, publisher: m.publisher ?? null, owner: titleOwners.get(m.rulesetId) ?? null, build: loaded.get(m.rulesetId)?.buildHash === m.buildHash ? titleBuilds.get(m.rulesetId) ?? null : null, display: m.display ?? null, modes: m.modes, participants: m.participants, services: m.services, hosts: [], bondedHosts: 0, publisherHosts: 0, published: null };
-          if (!t.hosts.includes(host)) {
-            t.hosts.push(host);
-            // publisherHosts: bonded, carrying the HOST role, bonded from the wallet that holds the title
-            if (stakes?.[host]?.active) { t.bondedHosts++; if (t.owner && hostRoles.includes('host') && stakes[host].operator?.toLowerCase() === t.owner) t.publisherHosts++; }
-          }
-          // published: the title is registered on chain AND its publisher runs a bonded host for it. null = no registry configured (listing falls back to display + a bonded host).
-          t.published = titleRegistry ? !!t.owner && t.publisherHosts > 0 : null;
-          titles.set(m.rulesetId, t);
-        };
-        for (const m of Object.values(manifests())) take(m, nodeId, roles);
-        for (const b of heartbeats.values()) if (b.nodeId !== nodeId && b.epoch >= now - 2) for (const m of Object.values(b.manifests ?? {})) take(m, b.nodeId, b.roles ?? []);
-        return json(res, 200, { titles: [...titles.values()] });
+      if (req.method === 'GET' && url.pathname === '/titles') return json(res, 200, { titles: titlesNow() });
+      if (req.method === 'GET' && url.pathname === '/fleet') {
+        // The operator's dashboard, signed: everything above folded into one document from memory (no RPC, no
+        // disk), a digest of it, and — with ?nonce= — the node key's answer over nonce + digest, so LITNODE-CONTROL
+        // knows it is looking at THIS node's word, now (docs/FLEET-TELEMETRY.md).
+        const nonce = url.searchParams.get('nonce');
+        if (nonce != null && !NONCE_RE.test(nonce)) return json(res, 400, { error: 'nonce=<16..64 hex> required' });
+        const body = fleetNow();
+        const digest = h('fleet', body);
+        return json(res, 200, { ...body, digest, proof: nonce ? await answerChallenge({ nodeId, nonce, addr, digest }, identity.privateKey) : null });
       }
       // Everyone we have heard from, bonded or not — for onboarding a new
       // machine (its full nodeId is what the bond tool needs). /snapshot is
@@ -843,6 +958,7 @@ export async function createNode({
         const text = await new Promise((resolve, reject) => { let b = ''; req.on('data', (d) => { b += d; if (b.length > 4e6) reject(new Error('body too large')); }); req.on('end', () => resolve(b)); req.on('error', reject); });
         const from = req.socket.remoteAddress ?? '?';
         inbound.set(from, Date.now());
+        trafficNote('in', text.length);
         await absorb(text ? JSON.parse(text) : {}, { from, bytes: text.length, via: 'push' });
         // Answer with everything we push, deltas included: a peer that can
         // reach us while we cannot reach it (NAT, a second subnet) must still
@@ -893,7 +1009,7 @@ export async function createNode({
         const d = settlement.delta(decodeURIComponent(url.pathname.slice(7)));
         return d ? json(res, 200, d) : json(res, 404, { error: 'unknown match' });
       }
-      if (req.method === 'GET' && url.pathname === '/deltas') return json(res, 200, { deltas: settlement.list(url.searchParams.get('ruleset') ?? undefined, { scope: url.searchParams.get('scope') === 'official' ? 'official' : 'all' }) });
+      if (req.method === 'GET' && url.pathname === '/deltas') return json(res, 200, { deltas: withChain(settlement.list(url.searchParams.get('ruleset') ?? undefined, { scope: url.searchParams.get('scope') === 'official' ? 'official' : 'all' })) });
       if (req.method === 'POST' && url.pathname === '/dispute') {
         const dsp = await readBody(req);
         if (stakes) { const w = stakes[dsp.witnessId], me = stakes[nodeId]; if (!w?.active) return json(res, 200, { ok: false, reason: 'witness not bonded' }); if (me?.operator && w.operator === me.operator) return json(res, 200, { ok: false, reason: 'witness shares the host\'s staking address' }); }

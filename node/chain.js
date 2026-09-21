@@ -14,12 +14,17 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
   let id = 0;
   const blocks = [];
   let lastError = null;
+  // RPC round-trip, for the operator's dashboard: the last call and a moving average (every call, not only polls).
+  let rpcMs = null, rpcLastMs = null, rpcCalls = 0, rpcFailures = 0, rpcLastAt = 0;
+  const timed = (t0, ok) => { rpcLastMs = Math.round(performance.now() - t0); rpcMs = rpcMs == null ? rpcLastMs : Math.round(rpcMs * 0.8 + rpcLastMs * 0.2); rpcCalls++; if (!ok) rpcFailures++; rpcLastAt = Date.now(); };
 
   // Liteforge's gateway answers 502/530 with an HTML page now and then. A
   // transient answer (5xx, non-JSON, network) is retried a few times with a
   // growing pause; a JSON-RPC error (a revert, a bad argument) is not.
   const call = async (method, params, tries = 4) => {
     for (let i = 1; ; i++) {
+      const t0 = performance.now();
+      let answered = false; // the gateway replied (a revert is an answer; a timeout or an HTML page is not)
       try {
         const r = await fetchImpl(rpc, {
           method: 'POST', headers: { 'content-type': 'application/json' },
@@ -31,9 +36,11 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
           const text = await r.text();
           try { j = JSON.parse(text); } catch { throw Object.assign(new Error(`${method}: HTTP ${r.status} non-JSON reply from the RPC gateway`), { transient: true }); }
         } else j = await r.json(); // a test fake with only json()
+        answered = true; timed(t0, true);
         if (j.error) throw new Error(`${method}: ${j.error.message}`);
         return j.result;
       } catch (e) {
+        if (!answered) timed(t0, false);
         const transient = e.transient || e.name === 'TimeoutError' || e.name === 'AbortError' || /fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN/.test(String(e.message));
         if (!transient || i >= tries) throw e;
         await new Promise((res) => setTimeout(res, 1000 * i));
@@ -182,6 +189,10 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
 
   return {
     pollBlock, beaconFor, standings, nodeInfo, stakeAdminIsContract, releaseStatus, titleBuild, titleOwner, getLogs, blockNumber, profiles, profileName, directory, agentAt, rpc: call,
-    status: () => ({ rpc, offline, nodeStake, playerProfile, nodeDirectory, erc6699, releaseRegistry, titleRegistry, blocks: blocks.length, head: blocks.at(-1)?.number ?? null, lastError }),
+    // The last n blocks this node sampled (number, hash, timestamp) — for a dashboard's block strip; real hashes, not a fixture.
+    recentBlocks: (n = 12) => blocks.slice(-n).map((b) => ({ number: b.number, hash: b.hash, timestamp: b.timestamp })),
+    status: () => ({ rpc, offline, nodeStake, playerProfile, nodeDirectory, erc6699, releaseRegistry, titleRegistry, blocks: blocks.length, head: blocks.at(-1)?.number ?? null, headTs: blocks.at(-1)?.timestamp ?? null, lastError,
+      // `lagS`: seconds between the head we hold and now — the RPC's freshness, or ours; Liteforge makes a block every 0.25 s.
+      rpcMs, rpcLastMs, rpcCalls, rpcFailures, rpcAt: rpcLastAt ? new Date(rpcLastAt).toISOString() : null, lagS: blocks.at(-1)?.timestamp ? Math.max(0, Math.round(Date.now() / 1000 - blocks.at(-1).timestamp)) : null }),
   };
 }

@@ -24,6 +24,7 @@ import * as air from './air.js';
 import * as nodeops from './nodeops.js';
 import * as seeds from './seeds.js';
 import { CHAIN } from './config.js';
+import { CABINET_VERSION } from './version.js';
 
 const $ = (id) => document.getElementById(id);
 const view = (name) => document.querySelector(`.view[data-view="${name}"]`);
@@ -188,7 +189,7 @@ function history(rid, who = player.id) {
     if (!mine) continue;
     const res = sa === 0.5 ? 'draw' : (mine === 'A') === (sa === 1) ? 'win' : 'loss';
     const opp = (mine === 'A' ? B : A).filter((p) => p !== who);
-    out.push({ matchId: d.matchId, when: d.settledAt, res, opp, ticks: d.ticks ?? 0, rating: tables.rating[who] ?? 1200, mode: d.mode, cosigned: (d.cosigners?.length ?? 0) > 0, verification: d.verification ?? (d.cosigners?.length ? 'verified' : 'unverified'), official: !!d.official, attestation: d.attestation });
+    out.push({ matchId: d.matchId, when: d.settledAt, res, opp, ticks: d.ticks ?? 0, rating: tables.rating[who] ?? 1200, mode: d.mode, cosigned: (d.cosigners?.length ?? 0) > 0, verification: d.verification ?? (d.cosigners?.length ? 'verified' : 'unverified'), official: !!d.official, attestation: d.attestation, chain: d.chain ?? null });
   }
   return out;
 }
@@ -289,7 +290,7 @@ const panel = (title, body, more = '', cls = '') => `<section class="panel ${cls
 const moreLink = (href, label = 'view all') => `<a class="more" href="${href}">${label} ›</a>`;
 const gameTag = () => '<span class="tag live">Live</span>';
 /** What backs a result, in one word: verified (players signed + independent witness agreed), disputed, or unverified — and whether it counts. */
-const verifyTag = (d) => d.verification === 'verified' ? `<span class="tag live" title="players signed, an independent witness reached the same result${d.official ? '; counts toward the official ladder' : ''}">verified${d.official ? '' : ' · unofficial'}</span>` : d.verification === 'disputed' ? '<span class="tag court" title="a witness recomputed a different result">disputed</span>' : `<span class="tag" title="${esc(d.attestation ?? '')}: not independently verified; not on the official ladder">unverified</span>`;
+const verifyTag = (d) => d.chain === 'final' ? '<span class="tag live" title="finalized on chain: committed before play, settled by the host, attested by three witnesses; counts toward the official ladder">final on chain</span>' : d.chain === 'void' ? '<span class="tag court" title="voided on chain: the witnesses disagreed, or the host never settled">voided</span>' : d.chain && d.chain !== 'none' ? `<span class="tag" title="on chain, ${esc(d.chain)}: attestations still arriving">on chain · ${esc(d.chain)}</span>` : d.verification === 'verified' ? `<span class="tag live" title="players signed, an independent witness reached the same result${d.official ? '; counts toward the official ladder' : ''}">verified${d.official ? '' : ' · unofficial'}</span>` : d.verification === 'disputed' ? '<span class="tag court" title="a witness recomputed a different result">disputed</span>' : `<span class="tag" title="${esc(d.attestation ?? '')}: not independently verified; not on the official ladder">unverified</span>`;
 const statusTag = (g) => g.status === 'attested' ? '<span class="tag court">Court</span>' : g.status === 'external' ? '<span class="tag hosted">Hosted</span>' : g.status === 'mesh' ? '<span class="tag hosted">Mesh</span>' : '';
 const tagRow = (g) => `<div class="chips">${(g.tags ?? []).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}${statusTag(g)}</div>`;
 /** Rank badge: the number inside bracket ticks. */
@@ -767,6 +768,7 @@ function renderNode() {
       <dt>tunnel</dt><dd>${h.tunnel?.node ? `${esc(h.tunnel.node.mode)} · ${esc(h.tunnel.node.state)}${h.tunnel.node.url ? ` · ${esc(h.tunnel.node.url)}` : ''}${h.tunnel.node.lastError ? ` · ${esc(h.tunnel.node.lastError)}` : ''}` : 'none — LAN address only'}</dd>
       <dt>relay</dt><dd>${h.wsAddr ? `${esc(h.wsAddr)}${h.tunnel?.relay ? ` (${esc(h.tunnel.relay.state)})` : ''}` : 'none advertised'}</dd>
       <dt>version</dt><dd>${esc(h.version ?? '?')}${h.update?.available ? ` — <b>${esc(h.update.latest)} available</b>` : h.update?.checkedAt ? ' — up to date' : ''}${h.update?.lastError ? ` <span class="dim">(check failed: ${esc(h.update.lastError)})</span>` : ''}</dd>
+      <dt>cabinet</dt><dd>${esc(CABINET_VERSION)}${h.version && h.version !== CABINET_VERSION ? ` — <b>this copy of the arcade is not the node's (node serves ${esc(h.cabinet?.version ?? h.version)})</b>; open http://localhost:${esc(String(new URL(h.addr ?? 'http://x:7801').port || '7801'))}/ for the matching one` : ' — matches the node'}</dd>
       <dt>reachable</dt><dd>${h.inbound ? (h.inbound.reachable === null ? 'no peers known yet' : h.inbound.reachable ? `yes — ${h.inbound.peers} peer${h.inbound.peers === 1 ? '' : 's'} push gossip to this node` : `no peer has reached this node in 30 s — fine for a witness; a seed, LAN host or relay needs allow-firewall.cmd or a tunnel`) : '—'}</dd>
       <dt>epoch</dt><dd>${h.epoch}</dd><dt>chain</dt><dd>${h.chain.offline ? 'offline beacon' : `${esc(h.chain.rpc)} · block ${h.chain.head ?? '?'}`}${h.chain.lastError ? ` · ${esc(h.chain.lastError)}` : ''}</dd>
       <dt>rulesets</dt><dd>${Object.entries(h.rulesets).map(([k, v]) => `${esc(k)} @ ${v.slice(0, 10)}`).join(', ')}</dd><dt>builds held</dt><dd>${h.buildsHeld}</dd>

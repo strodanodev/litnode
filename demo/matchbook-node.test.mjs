@@ -130,6 +130,16 @@ test('phase 2: commit → settle → three attests → final on the chain, and e
   assert.ok(wr.receipts >= 2, `a witness learned commit + settle from hinted receipts (${wr.receipts})`);
   const wh = await (await fetch(`${witnesses[0].addr}/health`)).json();
   assert.equal(wh.matchBook.delegated, true);
+  // the local record agrees with the chain: one answer on the screen (the v0.2 flag read official:false for a chain-final match)
+  const ld = (await (await fetch(`${host.addr}/deltas?scope=all`)).json()).deltas.find((x) => x.matchId === d.matchId);
+  assert.equal(ld.chain, 'final'); assert.equal(ld.official, true); assert.equal(ld.verification, 'verified');
+  const fl = await (await fetch(`${host.addr}/fleet`)).json();
+  const room = fl.rooms.find((r) => r.matchId === d.matchId);
+  assert.ok(room, 'the match is a room on /fleet while its placement lives');
+  assert.equal(room.state, 'final'); assert.equal(room.ours, true); assert.equal(room.attests, 3); assert.equal(room.room, `LIT-${d.matchId}`);
+  assert.equal(fl.recent.at(-1).matchId, mb.matchIdBytes32(d.matchId), 'the final is the newest on the recent strip');
+  assert.equal(fl.chain.matchBook.purse.txType, 2, 'the host signed type-2 transactions');
+  assert.ok(Number(fl.chain.matchBook.purse.balance) > 0 && fl.chain.matchBook.purse.matchesLeft > 0, 'the purse is read');
 
   // ---- the hour's root over the chain-finalized set: the same tree on a witness as on the host; the settler proposes it and it finalizes by stake
   const ep = await until(async () => { const e = await (await fetch(`${host.addr}/epoch`)).json(); return e.count >= 1 ? e : null; }, 20_000);
