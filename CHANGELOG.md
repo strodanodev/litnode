@@ -5,6 +5,22 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.11.6] — 2026-09-22 — a restarted witness advertises what it holds
+
+### Fixed
+- **A witness that restarted advertised no builds.** Its cached builds were
+  re-checked at boot as held-not-current, and `hydrateMissing` then tried
+  to re-FETCH them from peers (LAN addresses it could not reach, a tunnel
+  hostname mid-rotation) before making them current — advertising nothing
+  meanwhile, so the mesh's panel draw left it out and every ranked
+  placement seated two. A held build is made current from disk, no
+  network. `demo/held-build.test.mjs`.
+- **The host commits an ADOPTED placement too.** A placement descriptor a
+  node adopted from a bonded peer's gossip never reached `commit`; and a
+  peer's draw can seat fewer than three (it saw fewer fresh peers) — the
+  host now redraws from its own snapshot when the adopted panel is short,
+  since the host is the one the chain holds to the panel.
+
 ## [0.11.5] — 2026-09-22 — the first ranked match on chain, and what it taught
 
 ### Fixed

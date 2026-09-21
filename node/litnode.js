@@ -452,6 +452,10 @@ export async function createNode({
   const hydrateMissing = async (s) => {
     for (const [rid, m] of Object.entries(s.manifests)) {
       if (loaded.get(rid)?.buildHash === m.buildHash) continue;
+      // Already held (a cached build re-checked at boot, or a build fetched earlier and superseded): make it
+      // current from disk. A witness that restarted was re-fetching a build it had, from peers it could not
+      // reach, and advertised nothing meanwhile — so no panel could seat it (22 Sep 2026).
+      if (builds.has(m.buildHash) && builds.get(m.buildHash).rulesetId === rid) { const b = builds.get(m.buildHash); loaded.set(rid, b); log(`ruleset ${rid} @ ${m.buildHash.slice(0, 12)} current (held)`); emit('ruleset', { rulesetId: rid, buildHash: m.buildHash, current: true, bytes: b.source.length, origin: b.origin, held: true }); continue; }
       const holders = s.peers.filter((p) => p.buildHashes?.[rid] === m.buildHash && p.addr && p.nodeId !== nodeId);
       for (const p of holders) {
         try {
@@ -636,10 +640,29 @@ export async function createNode({
       emit('placed', { matchId: m.matchId, rulesetId: m.rulesetId, host: d.host, witness: d.witness, panel: d.panel, beacon: d.beaconSource, snapshotRoot: d.snapshotRoot, participants: m.participants });
       gauntlet?.onPlaced({ ...d, participants: m.participants, mode: m.mode ?? null });
       seal(MATCH_TAG, d, identity).then((env) => { const e = matchBook.get(m.matchId); if (e) e.envelope = env; }).catch(() => {});
-      // The drawn host commits BEFORE play (§6): the panel is on chain before a tick is played.
-      if (mbook && d.host === nodeId && (m.mode ?? 'casual') === 'ranked') mbook.commit(d).then((tx) => { const e = matchBook.get(m.matchId); if (e) e.commitTx = tx; }).catch(() => {});
+      commitIfHost(m.matchId);
     }
     return [...matchBook.values()].map((e) => ({ ...e.descriptor, disputes: e.disputes, commitTx: e.commitTx ?? null }));
+  };
+  /** The drawn host commits BEFORE play (§6): the panel is on chain before a tick is played. Runs for a
+   *  placement this node computed AND for one it adopted from a peer — the adopted path used to commit
+   *  nothing at all. A peer's draw may seat fewer than three (it saw fewer fresh peers than we do: a
+   *  LAN-only witness beside us is not always fresh across the house); the host redraws from ITS OWN
+   *  snapshot then, since the host is the one the chain holds to the panel. */
+  const commitIfHost = (matchId) => {
+    const e = matchBook.get(matchId);
+    if (!mbook || !e || e.commitTx || e.committing) return;
+    const d = e.descriptor;
+    if (d.host !== nodeId || (d.mode ?? 'casual') !== 'ranked') return;
+    let desc = d;
+    if ((d.panel?.length ?? 0) < 3) {
+      const s = currentSnapshot();
+      const manifest = s.manifests[d.rulesetId];
+      const place = manifest ? placement({ nodes: s.peers, manifest, rulesetId: d.rulesetId, matchId: d.matchId, beacon: d.beacon, regions: d.regions }) : null;
+      if (place?.panel?.length === 3) { desc = { ...d, panel: place.panel.map((n) => n.nodeId) }; e.descriptor = desc; log(`placement ${matchId.slice(0, 12)}: ${d.computedBy === nodeId ? 'our' : 'an adopted'} draw seated ${d.panel?.length ?? 0}; redrawn from our snapshot: ${desc.panel.map((k) => k.slice(0, 8)).join(',')}`); }
+    }
+    e.committing = true;
+    mbook.commit(desc).then((tx) => { e.commitTx = tx; }).catch(() => {}).finally(() => { e.committing = false; });
   };
   /** Adopt or dispute a peer's descriptor. */
   const absorbMatch = async (env) => {
@@ -648,7 +671,7 @@ export async function createNode({
     if ((d.protocol ?? 1) !== PROTOCOL_VERSION) return; // another protocol's placement is not ours to adopt
     if (stakes && !stakes[d.computedBy]?.active) return; // only bonded peers' descriptors count
     const mine = matchBook.get(d.matchId);
-    if (!mine) { matchBook.set(d.matchId, { descriptor: { ...d, disputes: undefined }, envelope: env, disputes: [] }); return; }
+    if (!mine) { matchBook.set(d.matchId, { descriptor: { ...d, disputes: undefined }, envelope: env, disputes: [], commitTx: null }); commitIfHost(d.matchId); return; }
     if (mine.descriptor.host !== d.host && !mine.disputes.some((x) => x.by === d.computedBy)) {
       mine.disputes.push({ by: d.computedBy, host: d.host, snapshotRoot: d.snapshotRoot });
       emit('dispute', { matchId: d.matchId, ours: mine.descriptor.host, theirs: d.host, by: d.computedBy });
