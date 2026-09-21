@@ -20,6 +20,7 @@ import { placement } from '../protocol/placement.js';
 import { createChain } from './chain.js';
 import { createSettlement } from './settle.js';
 import { createMatchBook } from './matchbook.js';
+import { matchIdBytes32 } from '../protocol/matchbook.js';
 import { createUpdater, RESTART_EXIT } from './update.js';
 import { createTunnel } from './tunnel.js';
 import { createGauntlets } from './gauntlet.js';
@@ -695,6 +696,8 @@ export async function createNode({
     if (!mbook || !e || e.commitTx || e.committing) return;
     const d = e.descriptor;
     if (d.host !== nodeId || (d.mode ?? 'casual') !== 'ranked') return;
+    if (mbook.statusOf(matchIdBytes32(d.matchId)) !== 'none') { e.commitTx = 'on-chain'; return; } // committed before (a restart, a re-adoption): the chain already has it
+    if (e.commitFailedAt && Date.now() - e.commitFailedAt < 60_000) return; // a reverted commit is not retried twice a second
     if (!e.commitAt) {
       e.commitAt = Date.now() + COMMIT_SETTLE_MS;
       e.committed = new Promise((resolve) => { e.resolveCommitted = resolve; }); // a settle that lands first waits on this
@@ -710,7 +713,7 @@ export async function createNode({
       if (place?.panel?.length === 3) { desc = { ...d, panel: place.panel.map((n) => n.nodeId) }; e.descriptor = desc; log(`placement ${matchId.slice(0, 12)}: ${d.computedBy === nodeId ? 'our' : 'an adopted'} draw seated ${d.panel?.length ?? 0}; redrawn from our snapshot: ${desc.panel.map((k) => k.slice(0, 8)).join(',')}`); }
     }
     e.committing = true;
-    mbook.commit(desc).then((tx) => { e.commitTx = tx; }).catch(() => {}).finally(() => { e.committing = false; e.resolveCommitted?.(); });
+    mbook.commit(desc).then((tx) => { e.commitTx = tx; if (!tx) e.commitFailedAt = Date.now(); }).catch(() => { e.commitFailedAt = Date.now(); }).finally(() => { e.committing = false; e.resolveCommitted?.(); });
   };
   /** Adopt or dispute a peer's descriptor. */
   const absorbMatch = async (env) => {
@@ -718,6 +721,7 @@ export async function createNode({
     if (!d?.matchId || !d.host || d.computedBy !== env.signer || !(await opened(MATCH_TAG, env))) return;
     if ((d.protocol ?? 1) !== PROTOCOL_VERSION) return; // another protocol's placement is not ours to adopt
     if (stakes && !stakes[d.computedBy]?.active) return; // only bonded peers' descriptors count
+    if (Date.now() - (d.computedAt ?? 0) > matchTtlMs) return; // older than our own TTL: it was pruned here once and would be again (re-adopting one made the host retry a reverted commit twice a second for 20 minutes, 21 Sep 2026)
     const mine = matchBook.get(d.matchId);
     if (!mine) {
       // The same players, already placed here under another id (a peer paired a later bucket before our placement

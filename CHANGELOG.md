@@ -5,6 +5,14 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- **A host retried a reverted commit twice a second for twenty minutes.** Its own
+  copy of the placement expired by TTL (15 min), a peer's gossip delivered the
+  descriptor again, and the fresh entry — no `commitTx` — committed a match the
+  chain already had (1,005 reverted `estimateGas` calls, 21 Sep 2026 21:10–21:28).
+  A descriptor older than the TTL is never adopted; a placement the chain
+  already knows is never committed again; a reverted commit backs off a minute.
+
 ## [0.11.10] — 2026-09-22 — one beacon per bucket on every node; the host commits once
 
 ### Fixed
