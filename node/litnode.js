@@ -307,7 +307,11 @@ export async function createNode({
   let mbook = null; // the MatchBook driver, created below once the settlement exists
   const settlement = createSettlement({
     dataDir, nodeId, identity, loaded, builds, sandbox, log, registry, courts, relayKeys,
-    onSettled: (delta, ledger) => { const e = matchBook.get(delta.matchId); if (e) e.settled = true; return mbook?.settle(delta, ledger); },
+    onSettled: async (delta, ledger) => {
+      const e = matchBook.get(delta.matchId);
+      if (e) { e.settled = true; if (e.committed && !e.commitTx) await Promise.race([e.committed, new Promise((r) => setTimeout(r, 15_000))]); } // a match settled within seconds of placement: let the commit go first
+      return mbook?.settle(delta, ledger);
+    },
     descriptorFor: (matchId) => { const e = matchBook.get(matchId); return e ? { descriptor: e.descriptor, envelope: e.envelope } : null; },
     verifyDescriptor: async (env) => {
       const d = env?.body;
@@ -681,11 +685,23 @@ export async function createNode({
    *  nothing at all. A peer's draw may seat fewer than three (it saw fewer fresh peers than we do: a
    *  LAN-only witness beside us is not always fresh across the house); the host redraws from ITS OWN
    *  snapshot then, since the host is the one the chain holds to the panel. */
+  // The commit waits one gossip round after the placement is first known: a peer that saw an earlier bucket for
+  // the same players sends its placement within a tick or two, and the earliest must be the one on chain. Three
+  // commits went out in two seconds for one match on 21 Sep 2026 — one per replacement. Once committed, a
+  // placement is never replaced (absorbMatch).
+  const COMMIT_SETTLE_MS = 3000;
   const commitIfHost = (matchId) => {
     const e = matchBook.get(matchId);
     if (!mbook || !e || e.commitTx || e.committing) return;
     const d = e.descriptor;
     if (d.host !== nodeId || (d.mode ?? 'casual') !== 'ranked') return;
+    if (!e.commitAt) {
+      e.commitAt = Date.now() + COMMIT_SETTLE_MS;
+      e.committed = new Promise((resolve) => { e.resolveCommitted = resolve; }); // a settle that lands first waits on this
+      setTimeout(() => commitIfHost(matchId), COMMIT_SETTLE_MS + 50);
+      return;
+    }
+    if (Date.now() < e.commitAt) return;
     let desc = d;
     if ((d.panel?.length ?? 0) < 3) {
       const s = currentSnapshot();
@@ -694,7 +710,7 @@ export async function createNode({
       if (place?.panel?.length === 3) { desc = { ...d, panel: place.panel.map((n) => n.nodeId) }; e.descriptor = desc; log(`placement ${matchId.slice(0, 12)}: ${d.computedBy === nodeId ? 'our' : 'an adopted'} draw seated ${d.panel?.length ?? 0}; redrawn from our snapshot: ${desc.panel.map((k) => k.slice(0, 8)).join(',')}`); }
     }
     e.committing = true;
-    mbook.commit(desc).then((tx) => { e.commitTx = tx; }).catch(() => {}).finally(() => { e.committing = false; });
+    mbook.commit(desc).then((tx) => { e.commitTx = tx; }).catch(() => {}).finally(() => { e.committing = false; e.resolveCommitted?.(); });
   };
   /** Adopt or dispute a peer's descriptor. */
   const absorbMatch = async (env) => {
@@ -711,6 +727,7 @@ export async function createNode({
       if (rival) {
         const earlier = (d.bucket ?? Infinity) < (rival.descriptor.bucket ?? Infinity) || (d.bucket === rival.descriptor.bucket && d.matchId < rival.descriptor.matchId);
         if (!earlier) return; // ours stands; theirs is a re-pairing of placed players
+        if (rival.commitTx || rival.committing) { log(`placement ${d.matchId.slice(0, 12)} from ${d.computedBy.slice(0, 8)} is earlier than ${rival.descriptor.matchId.slice(0, 12)}, but ours is on chain — it stands`); return; }
         matchBook.delete(rival.descriptor.matchId); // theirs came first: it stands, ours goes (a commit already sent expires on its own)
         log(`placement ${d.matchId.slice(0, 12)} from ${d.computedBy.slice(0, 8)} replaces our later ${rival.descriptor.matchId.slice(0, 12)} for the same players`);
       }

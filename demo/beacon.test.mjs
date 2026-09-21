@@ -37,3 +37,29 @@ test('chain.beaconFor pins a bucket\'s beacon; a window that starts after the bu
   await late.pollBlock(); await late.pollBlock();
   assert.equal(late.beaconFor(bucket), null);
 });
+
+test('two nodes that sampled different blocks around the bucket end name the SAME beacon: the exact first block, found by number', async () => {
+  const bucket = bucketOf(Date.now()) - 10;
+  const end = bucketEnd(bucket) / 1000;
+  // the chain: blocks a quarter second apart, timestamps in whole seconds as the chain reports them; 201 is the first at or after the end
+  const chainBlocks = { 199: end - 0.5, 200: end - 0.25, 201: end + 0.0, 202: end + 0.25, 203: end + 0.5, 204: end + 0.75 };
+  const hashOf = (n) => '0x' + n.toString(16).padStart(64, '0');
+  const rpcOf = (sampled) => async (_url, init) => {
+    const { method, params } = JSON.parse(init.body);
+    if (method !== 'eth_getBlockByNumber') throw new Error(`unexpected ${method}`);
+    const n = params[0] === 'latest' ? sampled.shift() : parseInt(params[0], 16);
+    return { status: 200, text: async () => JSON.stringify({ jsonrpc: '2.0', id: 1, result: { number: hex(n), timestamp: hex(Math.floor(chainBlocks[n])), hash: hashOf(n) } }) };
+  };
+  // node A sampled 199 then 203; node B sampled 200 then 204; neither saw 201
+  const A = createChain({ rpc: 'http://fake', fetchImpl: rpcOf([199, 203]) });
+  const B = createChain({ rpc: 'http://fake', fetchImpl: rpcOf([200, 204]) });
+  await A.pollBlock(); await A.pollBlock(); await B.pollBlock(); await B.pollBlock();
+  assert.equal(A.beaconFor(bucket), null, 'A brackets the end but is not sure which block was first: waits');
+  assert.equal(B.beaconFor(bucket), null);
+  await new Promise((r) => setTimeout(r, 50));
+  const a = A.beaconFor(bucket), b = B.beaconFor(bucket);
+  assert.ok(a && b, 'both resolved');
+  assert.equal(a.beacon, b.beacon, 'the same beacon on both');
+  assert.equal(a.source, 'chain');
+  assert.equal(a.block, 201, 'the first block of the second the bucket ended in — by number, not by who sampled what');
+});

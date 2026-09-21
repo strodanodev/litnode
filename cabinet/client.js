@@ -92,6 +92,29 @@ export function createClient({ nodeUrl, player, fetchImpl = globalThis.fetch, rp
       reason: sameSnapshot ? 'node named a host the rule did not produce' : 'computed against a different snapshot (eligible set moved)' };
   };
 
+  /** A ranked placement is the HOST's to commit on chain, and the host commits the earliest placement it knows
+   *  for these players — which may not be the one the node we poll showed first (two nodes can pair the same
+   *  players a bucket apart while gossip catches up). So before launching, ask the host itself: the entry it
+   *  lists for us WITH a commit transaction is the match. Unreachable host (a LAN address from a browser
+   *  elsewhere) → the placement we have, unconfirmed. */
+  const confirmWithHost = async (m, s, { deadlineMs = 15_000, signal } = {}) => {
+    if ((m.mode ?? 'casual') !== 'ranked') return null;
+    const host = s.peers?.find((p) => p.nodeId === m.host);
+    if (!host?.addr) return null;
+    const end = Date.now() + deadlineMs;
+    while (Date.now() < end && !signal?.aborted) {
+      try {
+        const r = await fetchImpl(`${host.addr}/match?playerId=${player.publicKey}`, { signal: AbortSignal.timeout(4000) });
+        if (!r.ok) return null;
+        const ours = (await r.json()).matches.filter((x) => x.rulesetId === m.rulesetId && x.mode === 'ranked' && m.participants.every((p) => x.participants.includes(p)));
+        const committed = ours.find((x) => x.commitTx);
+        if (committed) return { ...committed, confirmedByHost: true };
+      } catch { return null; }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return null;
+  };
+
   /** Poll until paired (or timeout), then verify. With `requeue`, a fresh
    *  entry is signed for every bucket while waiting: an entry lives in ONE
    *  2 s bucket (protocol/pairing.js), so two players who click ten seconds
@@ -104,6 +127,8 @@ export function createClient({ nodeUrl, player, fetchImpl = globalThis.fetch, rp
       onTick?.(m);
       if (m) {
         const s = (await verifiedSnapshot().catch(() => null)) ?? await snapshot();
+        const confirmed = await confirmWithHost(m, s, { deadlineMs: Math.max(0, Math.min(15_000, t0 + timeoutMs - Date.now())), signal });
+        if (confirmed) Object.assign(m, confirmed);
         const check = verifyPlacement(m, s);
         const beacon = await verifyBeacon(m);
         if (beacon.ok === false) { check.ok = false; check.reason = `beacon: ${beacon.reason}`; }
@@ -116,5 +141,5 @@ export function createClient({ nodeUrl, player, fetchImpl = globalThis.fetch, rp
     return null;
   };
 
-  return { base, player, snapshot, verifiedSnapshot, verifyBeacon, health, leaderboard, stats, deltas, epoch, queue, match, verifyPlacement, waitForMatch };
+  return { base, player, snapshot, verifiedSnapshot, verifyBeacon, health, leaderboard, stats, deltas, epoch, queue, match, verifyPlacement, confirmWithHost, waitForMatch };
 }

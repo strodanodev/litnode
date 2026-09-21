@@ -5,6 +5,37 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.11.10] — 2026-09-22 — one beacon per bucket on every node; the host commits once
+
+### Fixed
+- **Three commits for one match, two seconds apart.** The beacon was "the
+  first block at or after the bucket end *that this node sampled*". Liteforge
+  makes a block every 0.25 s and a node samples the head every ~2 s, so each
+  node's window held a different "first" block, named a different beacon for
+  the same bucket and players, and minted a different match id; the host
+  committed its own, then each earlier-looking one a peer sent
+  (`f7ce7dea…`, `6ad06824…`, `5be1af4a…` on 21 Sep 2026 20:55). `chain.js`
+  now finds THE first block after the bucket end by number (a short binary
+  search between the sampled blocks that bracket it, cached) before a bucket
+  is pinned; until then the bucket waits a tick rather than guess.
+  `demo/beacon.test.mjs`: two nodes that sampled different blocks name the
+  same beacon.
+- **The host waits one gossip round (3 s) before committing**, so a peer's
+  earlier placement for the same players can arrive first, and a placement
+  that is on chain is never replaced. A ledger that settles within seconds
+  of placement waits for the pending commit instead of settling locally only.
+- **The cabinet client confirms a ranked placement with the host** — the
+  entry the host lists for these players WITH a commit transaction is the
+  match it launches (`confirmWithHost`); it used to launch on whichever
+  placement the node it polled showed first.
+
+### Noted
+- A match played through Agent Fighter's own wager matchmaking after a
+  cabinet launch (`wager · fee 10` in the relay log, room `mmu9ze8aw9438-7`
+  rather than `LIT-…`) carries no mesh ledger and settles `relay · unplaced`:
+  nothing reaches MatchBook. The AF client's binding to the launched room is
+  the open item, in the AF repo.
+
 ## [0.11.9] — 2026-09-22 — quick-tunnel names resolve through Cloudflare, not the machine
 
 ### Fixed

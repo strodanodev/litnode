@@ -1,7 +1,8 @@
 /** litVM RPC, the thin part. No wallet, no signing — the node only reads.
  *  Every read reports its source so a fallback never looks like a chain read. */
-import { beaconFromBlocks, blockOf, localBeacon } from '../protocol/beacon.js';
-import { bucketOf } from '../protocol/pairing.js';
+import { blockOf, localBeacon } from '../protocol/beacon.js';
+import { h } from '../protocol/canonical.js';
+import { bucketOf, bucketEnd } from '../protocol/pairing.js';
 import { standingCall, decodeStanding, nodeOfCall, decodeNode, adminIsContractCall, decodeBool, witnessEligibleCall } from '../protocol/staking.js';
 import { statusOfCall, decodeStatus } from '../protocol/release.js';
 import { buildStatusCall, decodeBuildStatus, titleOfCall, decodeTitle } from '../protocol/title.js';
@@ -55,15 +56,38 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
   // window rolls on, and a placement frozen on one beacon must keep it.
   const pinned = new Map(); // bucket → { beacon, source, block }
   const PIN_MS = 30 * 60_000;
+  // The beacon is THE first block at or after the bucket end — not the first such block this node happened
+  // to sample. Liteforge makes a block every 0.25 s and a node samples the head every ~2 s, so two nodes'
+  // windows held different 'first' blocks, named different beacons for the same bucket and players, and
+  // minted three match ids — three commits — for one match (21 Sep 2026). When the sampled blocks bracket
+  // the end without being adjacent, the exact block is found by number (a short binary search, cached)
+  // before the bucket is pinned; until then the bucket waits a tick rather than guess.
+  const resolving = new Map(); // bucket → promise of the exact first block
+  const byNumber = new Map();  // number → block, for the search
+  const fetchBlock = async (n) => { let b = byNumber.get(n); if (!b) { b = blockOf(await call('eth_getBlockByNumber', ['0x' + n.toString(16), false])); byNumber.set(n, b); if (byNumber.size > 4000) byNumber.delete(byNumber.keys().next().value); } return b; };
+  const resolveExact = (bucket, lo, hi) => {
+    // lo: a block with timestamp < end; hi: a block with timestamp ≥ end; find the least number ≥ end
+    const t = bucketEnd(bucket) / 1000;
+    const p = (async () => {
+      let a = lo, b = hi;
+      while (b - a > 1) { const m = Math.floor((a + b) / 2); const blk = await fetchBlock(m); if (blk.timestamp >= t) b = m; else a = m; }
+      return fetchBlock(b);
+    })();
+    resolving.set(bucket, p);
+    p.then((blk) => { if (!pinned.has(bucket)) pin(bucket, { beacon: h('beacon', blk.hash), source: 'chain', block: blk.number }); }).catch(() => {}).finally(() => resolving.delete(bucket));
+  };
+  const pin = (bucket, b) => { pinned.set(bucket, b); if (pinned.size > 2000) { const cut = bucketOf(Date.now() - PIN_MS); for (const k of pinned.keys()) if (k < cut) pinned.delete(k); } };
   const beaconFor = (bucket) => {
     if (offline) return localBeacon(bucket);
     const p = pinned.get(bucket);
     if (p) return p;
-    const b = beaconFromBlocks(bucket, blocks);
-    if (b) {
-      pinned.set(bucket, b);
-      if (pinned.size > 2000) { const cut = bucketOf(Date.now() - PIN_MS); for (const k of pinned.keys()) if (k < cut) pinned.delete(k); }
-      return b;
+    const t = bucketEnd(bucket) / 1000;
+    const before = blocks.filter((x) => x.timestamp < t).sort((x, y) => y.number - x.number)[0];
+    const after = blocks.filter((x) => x.timestamp >= t).sort((x, y) => x.number - y.number)[0];
+    if (before && after) {
+      if (after.number === before.number + 1) { pin(bucket, { beacon: h('beacon', after.hash), source: 'chain', block: after.number }); return pinned.get(bucket); }
+      if (!resolving.has(bucket)) resolveExact(bucket, before.number, after.number);
+      return null; // exact block on its way: a tick later
     }
     if (lastError) return { ...localBeacon(bucket), source: 'local-fallback', error: lastError };
     return null; // chain reachable, block not yet seen → wait
