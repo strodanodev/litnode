@@ -5,6 +5,17 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- **A peer that stopped answering triggers a NodeDirectory re-read at once.**
+  When the desktop restarted for an update its quick-tunnel hostname
+  rotated; the laptop and the Ally kept pushing gossip to the dead URL for
+  36 minutes (21 Sep 2026) although the new one was on chain, because a node
+  re-read the directory only when it had NO fresh peers (they had each
+  other) or on the ten-minute cycle. Now a known peer URL that has not
+  answered for 30 s prompts a re-read (rate-limited to one a minute), and a
+  URL dead for ten minutes is forgotten. `demo/directory.test.mjs`: a seed
+  restarted on a new port is found again within a minute.
+
 ## [0.11.4] — 2026-09-21 — wallet fees
 
 ### Fixed

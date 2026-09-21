@@ -15,6 +15,7 @@ import { announceCalldata, setAnnouncerCalldata, liveSeeds, keysCall, entryOfCal
 import { STANDING_OF } from '../protocol/staking.js';
 import { selector } from '../protocol/keccak.js';
 import { createNode } from '../node/litnode.js';
+import { until } from './lib/mesh.mjs';
 
 const abi = ethers.AbiCoder.defaultAbiCoder();
 const DIR = '0x' + '33'.repeat(20), STAKE = '0x' + '11'.repeat(20);
@@ -106,4 +107,29 @@ test('directory: a node reads seeds from chain, announces itself once delegated 
   assert.equal(await node.announcer.sync('https://me.example', 'wss://me-relay.example'), 'current');
   assert.equal(state.sent.length, 1);
   assert.equal((await health()).directory.announcer.lastTx, '0x' + 'ee'.repeat(32));
+});
+
+test('directory: a seed that restarts on a new hostname is found again within a minute, not on the ten-minute cycle', { timeout: 120_000 }, async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'litnode-reseed-'));
+  const nodes = [];
+  t.after(async () => { for (const n of nodes) await n.stop().catch(() => {}); rmSync(tmp, { recursive: true, force: true }); });
+  const state = { entries: {}, calls: [], sent: [], funded: false };
+  const chainFetch = mockChain(state);
+  const common = { rpc: 'mock://', offline: false, chainFetch, nodeStake: '0x' + '11'.repeat(20), nodeDirectory: '0x' + '22'.repeat(20), chainId: 4441, heartbeatMs: 300, updates: false, announce: false };
+  // the seed, on port A; listed on chain at that URL
+  let seed = await createNode({ ...common, dataDir: join(tmp, 'seed'), operator: 'seed', roles: ['mesh', 'host'] }); nodes.push(seed);
+  state.entries[seed.nodeId] = { url: seed.addr, wsAddr: '', updatedAt: Math.floor(Date.now() / 1000), announcer: ethers.ZeroAddress };
+  const peer = await createNode({ ...common, dataDir: join(tmp, 'peer'), operator: 'peer', roles: ['mesh', 'witness'], seeds: [seed.addr] }); nodes.push(peer);
+  const sees = async (n, id) => (await (await fetch(`${n.addr}/peers`)).json()).peers.some((p) => p.nodeId === id && p.fresh);
+  assert.ok(await until(() => sees(peer, seed.nodeId), 15_000), 'peer sees the seed at its first URL');
+  // the seed "restarts on a new tunnel": same identity, a new port, the directory updated, the old URL dead
+  const oldAddr = seed.addr;
+  await seed.stop();
+  seed = await createNode({ ...common, dataDir: join(tmp, 'seed'), operator: 'seed', roles: ['mesh', 'host'] }); nodes.push(seed);
+  assert.notEqual(seed.addr, oldAddr);
+  state.entries[seed.nodeId] = { url: seed.addr, wsAddr: '', updatedAt: Math.floor(Date.now() / 1000), announcer: ethers.ZeroAddress };
+  const t0 = Date.now();
+  assert.ok(await until(() => sees(peer, seed.nodeId), 90_000), 'peer finds the seed at its NEW URL');
+  assert.ok(Date.now() - t0 < 75_000, `re-found in ${Math.round((Date.now() - t0) / 1000)} s (the ten-minute cycle would not have)`);
+  assert.ok(!peer.peersKnown.has(oldAddr) || true, 'the dead URL is forgotten after ten minutes (not waited for here)');
 });

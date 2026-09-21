@@ -335,6 +335,7 @@ export async function createNode({
   const inbound = new Map();
   const queue = new Map();      // `${bucket}|${playerId}` → verified body
   const peersKnown = new Set(seeds);
+  const unreachable = new Map(); // peer URL → when it first stopped answering our pushes
   let stakes = null;            // nodeId → standing, when nodeStake configured
   let wsAddr = wsAddrIn;        // the relay this node fronts; a relay tunnel sets it live
   let lanAddr = null;           // what we listen on, kept for /health when a tunnel replaces addr
@@ -484,10 +485,19 @@ export async function createNode({
       const targets = [...peersKnown].filter((p) => p !== addr);
       if (targets.length) emit('gossip.out', { peers: targets.length, bytes: body.length, heartbeats: payload.heartbeats.length, queue: payload.queue.length, deltas: payload.deltas.length, matches: payload.matches.length });
       for (const peer of targets) {
-        fetch(`${peer}/gossip`, { method: 'POST', headers: { 'content-type': 'application/json' }, body })
-          .then(async (r) => { if (r.ok) { const text = await r.text(); const m = JSON.parse(text); await absorb(m, { from: peer, bytes: text.length, via: 'reply' }); } })
-          .catch(() => {});
+        fetch(`${peer}/gossip`, { method: 'POST', headers: { 'content-type': 'application/json' }, body, signal: AbortSignal.timeout(8000) })
+          .then(async (r) => { if (r.ok) { unreachable.delete(peer); const text = await r.text(); const m = JSON.parse(text); await absorb(m, { from: peer, bytes: text.length, via: 'reply' }); } else unreachable.set(peer, unreachable.get(peer) ?? Date.now()); })
+          .catch(() => { unreachable.set(peer, unreachable.get(peer) ?? Date.now()); });
       }
+      // A peer URL that has not answered for a while is a hostname that rotated (a seed restarted on a new
+      // quick tunnel: seen 21 Sep 2026 — two nodes pushed to a dead URL for 36 minutes while the new one sat
+      // on NodeDirectory). Re-read the directory now, not on the ten-minute cycle, and forget the URL once
+      // it has been dead for long enough that it is not coming back.
+      const deadFor = (peer) => Date.now() - (unreachable.get(peer) ?? Date.now());
+      if (nodeDirectory && !offline && Date.now() - lastDirectoryRead > 60_000 && [...unreachable.keys()].some((p) => deadFor(p) > 30_000)) {
+        lastDirectoryRead = Date.now(); log('a known peer stopped answering — re-reading NodeDirectory'); readDirectory().catch(() => {});
+      }
+      for (const [p] of unreachable) if (deadFor(p) > 10 * 60_000) { unreachable.delete(p); peersKnown.delete(p); seedChecks.delete(p); }
       // Lonely with a directory configured: every fresh peer is gone (a seed
       // restarted on a new tunnel hostname, say). Re-read NodeDirectory now
       // rather than on the 10-minute cycle — the desktop's restart left its
