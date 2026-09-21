@@ -5,6 +5,43 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.11.8] — 2026-09-22 — the ladder scan keeps up, and the mesh forgets the dead
+
+### Fixed
+- **Both live nodes' log cursors were 35 minutes behind the head and
+  falling further.** Liteforge's `eth_getLogs` cost is not linear in the
+  range: measured today, ≤20 blocks answer in 1–3 s and 25+ blocks take
+  10–16 s. The fixed 40-block range sat past that knee, so the scan
+  advanced ~0.6 blocks/s against a chain making 4, and — worse — it ran
+  INSIDE the live poll, so a 16 s scan sat between a `Settled` receipt
+  and the attest it called for. The range now adapts to the answer
+  (4–32 blocks, grows under 1 s, halves over 3 s) and the scan runs beside
+  the poll, never in it; `/health.matchBook` shows `scanRange` and
+  `scanMs`. Nothing live waited on the scan by design (receipts and hints
+  carry the live events); now nothing live waits behind it either.
+- **Every node ever heard of stayed in every peer's gossip until a
+  restart.** Four dead test nodes from the day before were still travelling
+  the mesh in every heartbeat payload. A heartbeat nobody renewed for ten
+  minutes is forgotten: from the table, from the envelopes a node forwards,
+  from `/peers`, from the incompatible list (`peer.forgotten` event;
+  `demo/forget.test.mjs`). A payload that grows with churn is exactly what
+  "anyone can run a node" produces.
+- **A witness that could not reach a settled match's host retried every two
+  seconds forever.** It now stops once the contract would no longer count
+  the answer: two attest windows (one extension) or the escalation window,
+  plus a minute.
+- **A peer's gossip hints could make a node read any number of receipts.**
+  Hints are unverified hashes; one envelope may now enqueue at most 20,
+  200 may wait at once, and a poll reads 10 — this node's own transactions
+  first. A host's hint list is the newest 50 matches, not its whole day.
+- `demo/deploy.test.mjs` derived nothing: it hard-coded the window sum
+  from before `settleWindow` went to 30 minutes and failed. It now
+  computes the tool's own formula over the config it feeds the tool.
+
+### Changed
+- `BUILD-SPEC.md` §0 and §16 say what is live (generation 3, the first
+  final match, what Liteforge measured) instead of "built, undeployed".
+
 ## [0.11.7] — 2026-09-22 — a tunnel URL is verified before anyone hears it
 
 ### Fixed

@@ -473,9 +473,22 @@ export async function createNode({
 
   // ---------------------------------------------------------------- gossip loop
   let timer = null, updateTimer = null, directoryTimer = null;
+  // A heartbeat nobody has renewed in this long is forgotten: from the table, from the envelopes we forward and
+  // from the incompatible list. Without this every node ever heard of stayed in every peer's gossip until a
+  // restart (four dead test nodes from the day before were still travelling the mesh on 21 Sep 2026), and a
+  // payload that grows with churn is exactly what "anyone can run a node" produces.
+  const FORGET_AFTER_EPOCHS = Math.ceil(10 * 60_000 / EPOCH_MS);
+  const forgetStale = () => {
+    const floor = epochOf(Date.now()) - FORGET_AFTER_EPOCHS;
+    for (const [id, b] of heartbeats) if (id !== nodeId && (b.epoch ?? 0) < floor) { heartbeats.delete(id); emit('peer.forgotten', { nodeId: id, operator: b.operator ?? null }); }
+    for (const [id, env] of envelopeCache) if ((env.body?.epoch ?? 0) < floor) envelopeCache.delete(id);
+    const cut = Date.now() - FORGET_AFTER_EPOCHS * EPOCH_MS;
+    for (const [id, x] of incompatible) if (x.at < cut) incompatible.delete(id);
+  };
   const tick = async () => {
     try {
       await mergeHeartbeats([await myHeartbeat()]);
+      forgetStale();
       const payload = { heartbeats: [], queue: [] };
       for (const b of heartbeats.values()) if (b.nodeId === nodeId) payload.heartbeats.push(await myHeartbeat());
       // Forward what we know: our own sealed heartbeat plus cached envelopes we received.

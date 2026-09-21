@@ -32,7 +32,8 @@ test('deploy tool: refuses windows the bond cannot cover; deploys v3 + registry 
   writeFileSync(cfgPath, JSON.stringify({ ...base, rpc: http.url, NodeStake: { ...base.NodeStake, unbondingPeriod: 10 } }));
   let r = await run(env);
   assert.notEqual(r.code, 0);
-  assert.match(r.out, /unbondingPeriod \(10s\) must exceed the MatchBook windows \(900s\)/);
+  const windows = base.MatchBook.settleWindowS + 2 * base.MatchBook.attestWindowS + 2 * base.MatchBook.escalationWindowS; // the tool's formula, over the live config
+  assert.match(r.out, new RegExp(`unbondingPeriod \\(10s\\) must exceed the MatchBook windows \\(${windows}s\\)`));
   assert.ok(!existsSync(outPath), 'nothing written');
 
   // 2. the real parameters deploy the whole set — starting from a v2 file that carries `migratedFrom` (the v1 → v2

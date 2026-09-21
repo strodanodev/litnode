@@ -1,0 +1,158 @@
+{
+  "chainId": 4441,
+  "rpc": "https://liteforge.rpc.caldera.xyz/http",
+  "block": 52989459,
+  "at": "2026-09-21T01:13:10.275Z",
+  "compromised": "0xa6d840c28b3df4f931f1ac2fb940c59b9e9dfdfe",
+  "holdings": [
+    {
+      "contract": "NodeStake",
+      "role": "admin (sets params, names adjudicator contracts; a WALLET — should become a multisig behind a timelock)",
+      "address": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
+      "heldByCompromised": false,
+      "note": ""
+    },
+    {
+      "contract": "NodeStake",
+      "role": "treasury (receives slashed bonds)",
+      "address": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
+      "heldByCompromised": false,
+      "note": ""
+    },
+    {
+      "contract": "NodeStake",
+      "role": "slash (only adjudicator CONTRACTS, never a wallet)",
+      "address": "MatchBook 0x90D642d1f1Cb00EBFeB2268dd13Dee32A2852e5b",
+      "heldByCompromised": false,
+      "note": "v3: no slasher key exists"
+    },
+    {
+      "contract": "NodeStake",
+      "role": "operator of node 5b703f128876… (can unstake it; movable with transferOperator)",
+      "address": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
+      "heldByCompromised": false,
+      "note": "active bond"
+    },
+    {
+      "contract": "NodeStake",
+      "role": "delegate of node 5b703f128876… (commits, settles, attests, proposes for it; cannot move the bond)",
+      "address": "0x7467246301DF4e45c446a98AcB037c85315b560d",
+      "heldByCompromised": false,
+      "note": "hot key held by the node, not the operator"
+    },
+    {
+      "contract": "NodeDirectory",
+      "role": "announcer for node 5b703f128876… (can misdirect discovery of that node)",
+      "address": "0x7467246301DF4e45c446a98AcB037c85315b560d",
+      "heldByCompromised": false,
+      "note": "delegated key held by the node, not the operator"
+    },
+    {
+      "contract": "EpochAnchor",
+      "role": "admin (sets quorumBps = 5000 of active stake, stake contract)",
+      "address": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
+      "heldByCompromised": false,
+      "note": ""
+    },
+    {
+      "contract": "ERC6699Registry",
+      "role": "admin (names minters and progressors)",
+      "address": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
+      "heldByCompromised": false,
+      "note": ""
+    },
+    {
+      "contract": "ReleaseRegistry",
+      "role": "admin (registers and revokes releases; 4 registered, delay 60 s)",
+      "address": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
+      "heldByCompromised": false,
+      "note": ""
+    },
+    {
+      "contract": "MatchBook",
+      "role": "admin (sets windows and slash sizes; 1 node(s) enrolled for escalation)",
+      "address": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
+      "heldByCompromised": false,
+      "note": ""
+    }
+  ],
+  "contracts": {
+    "NodeStake": {
+      "address": "0x3CFe2D006d946A1E0E5Cf6B3E0958aFc3fF73717",
+      "version": 3,
+      "admin": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
+      "adminIsContract": false,
+      "treasury": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
+      "minStake": "1000000000000000000",
+      "lockTerm": 600,
+      "eligibilityAge": 120,
+      "unbondingPeriod": 1200,
+      "adjudicators": {
+        "MatchBook": true,
+        "EpochAnchor": false
+      },
+      "slasher": null
+    },
+    "EpochAnchor": {
+      "address": "0x919e9500785ab077d2058490a465F05bD8238a64",
+      "version": 3,
+      "admin": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
+      "quorumBps": 5000
+    },
+    "ERC6699Registry": {
+      "address": "0x38DF2543e039E775D3f674f7414df43e4eF2f883",
+      "version": 2,
+      "admin": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378"
+    },
+    "ReleaseRegistry": {
+      "address": "0x1a647C99625F3D6576657854E4a52507Db759555",
+      "admin": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
+      "activationDelay": 60,
+      "releases": 4
+    },
+    "MatchBook": {
+      "address": "0x90D642d1f1Cb00EBFeB2268dd13Dee32A2852e5b",
+      "admin": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
+      "enrolled": 1,
+      "windows": {
+        "settleWindowS": 60,
+        "attestWindowS": 120,
+        "escalationWindowS": 300
+      }
+    },
+    "PlayerProfile": {
+      "address": "0xe2cf46ab11eAfB18c1933409E35ae68CEce88882",
+      "note": "no privileged role"
+    },
+    "NodeBadge": {
+      "address": "0x6129faE9c919dbDEC778b127DB3b12002D0d9a3a",
+      "note": "no privileged role"
+    },
+    "TestLITVM": {
+      "address": "0x263dc221445901a4954e879AaAf18cfc547cc330",
+      "note": "no privileged role"
+    }
+  },
+  "nodes": [
+    {
+      "nodeId": "5b703f1288765c0ca3734ab0625df161121ef45a9eabafaaae539be1add95151",
+      "operator": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
+      "bonded": "1.0",
+      "active": true,
+      "delegate": "0x7467246301DF4e45c446a98AcB037c85315b560d",
+      "bondedSince": "2026-09-20T22:34:02.000Z",
+      "witnessEligible": true,
+      "announcer": "0x7467246301DF4e45c446a98AcB037c85315b560d",
+      "entry": {
+        "url": "https://milan-mineral-have-preservation.trycloudflare.com",
+        "wsAddr": "wss://premises-equality-executive-really.trycloudflare.com",
+        "updatedAt": "2026-09-21T01:12:34.000Z",
+        "announcedBy": "0x7467246301DF4e45c446a98AcB037c85315b560d"
+      }
+    }
+  ],
+  "summary": {
+    "heldByCompromised": 0,
+    "rotatable": "v3 set: every admin via setParams (hand it to a multisig behind a timelock), operator bindings via transferOperator, delegates via setDelegate, adjudicators via setAdjudicator — no redeploy needed. There is no slasher key."
+  }
+}

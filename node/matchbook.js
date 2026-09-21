@@ -18,10 +18,10 @@
  *         this node touched), so a witness learns of a Settled event in one
  *         receipt read (~2 s on Liteforge) instead of a log scan. The log
  *         scan (`eth_getLogs`) still runs for the ladder, in small ranges
- *         from a persisted cursor: Liteforge's public gateway serves logs at
- *         ~100 ms per block (measured 21 Sep 2026: 100 blocks 12 s, 500
- *         time out), slower than the chain makes them, so it can never be
- *         the path a live match depends on.
+ *         from a persisted cursor, beside the live poll rather than inside
+ *         it: Liteforge's public gateway answers eth_getLogs in 1–3 s for
+ *         ranges up to ~20 blocks and 10–16 s past that (21 Sep 2026), so
+ *         the range adapts to the answer and no live step waits on it.
  *  FOLD   protocol/matchbook.js foldChain over every decoded log, per
  *         ruleset: official (finalized) and pending (settled) ladders. The
  *         same fold the cabinet runs on RPC alone.
@@ -41,9 +41,17 @@ import { selector } from '../protocol/keccak.js';
 import { decodeBytes32Array } from '../protocol/abi.js';
 
 const POLL_MS = 2000;
-const SCAN_RANGE = 40;          // blocks per eth_getLogs — Liteforge answers ~100 ms/block; 40 keeps one call under its timeout
+// Blocks per eth_getLogs, adapted to what the gateway answers in time. Liteforge's cost is not linear in the
+// range: measured 21 Sep 2026 (0.25 s blocks), ≤20 blocks answer in 1–3 s, 25+ blocks take 10–16 s. A fixed 40
+// sat past that knee: both live nodes' cursors fell ~3.5 blocks/s behind the head and never caught up.
+const SCAN_MIN = 4, SCAN_MAX = 32, SCAN_START = 16;
+const SCAN_FAST_MS = 1000, SCAN_SLOW_MS = 3000; // grow the range under a fast answer, halve it under a slow one
 const SCAN_START_BEHIND = 400;  // a fresh node starts its ladder scan this far behind the head, not at the deploy block
 const HINT_TTL_MS = 24 * 3600_000;
+const HINT_MAX = 50;                 // matches per heartbeat hint list (newest first)
+const HINT_TAKE_PER_ENVELOPE = 20;   // receipts one peer's envelope may enqueue
+const RECEIPTS_MAX_PENDING = 200;    // receipts waiting at once (our own sends are always taken)
+const RECEIPTS_PER_POLL = 10;        // receipt reads per 2 s poll, our own first
 
 export function createMatchBook({
   dataDir, nodeId, contract, stakeContract = null, epochAnchor = null, chainId, rpc, fromBlock = 0, log = () => {}, emit = () => {},
@@ -103,7 +111,7 @@ export function createMatchBook({
       if (matchId && /^[0-9a-f]{64}$/i.test(matchId) || (matchId && what !== 'propose' && what !== 'enroll')) {
         const key = /^[0-9a-f]{64}$/i.test(matchId) ? matchId.toLowerCase() : mb.matchIdBytes32(matchId);
         const rec = txlog.get(key) ?? { txs: [] }; rec.txs.push({ what, tx, at: Date.now() }); txlog.set(key, rec);
-        pendingReceipts.set(tx, { since: Date.now(), tries: 0 });
+        pendingReceipts.set(tx, { since: Date.now(), tries: 0, own: true });
       }
       return tx;
     }
@@ -163,7 +171,7 @@ export function createMatchBook({
     seenLog.add(id);
     decoded.push(e);
     if (e.event === 'Committed') panels.set(e.matchId, { hostKey: e.hostKey, panel: e.panel });
-    if (e.event === 'Settled') settled.set(e.matchId, e);
+    if (e.event === 'Settled') settled.set(e.matchId, { ...e, seenAt: Date.now() });
     if (e.event === 'Escalating' && mine.has(e.matchId)) Object.assign(mine.get(e.matchId), { status: 'escalating', drawBlock: e.drawBlock, feedBy: e.feedBy });
     if (e.event === 'Escalated') { escalation.set(e.matchId, { panel: e.panel, at: Date.now() }); if (mine.has(e.matchId)) Object.assign(mine.get(e.matchId), { status: 'escalated', escalatedAt: Date.now() }); }
     if (e.event === 'Finalized') { if (mine.has(e.matchId)) mine.get(e.matchId).status = e.status; emit('chain-final', { matchId: e.matchId, status: e.status, finalHash: e.finalHash }); }
@@ -197,29 +205,58 @@ export function createMatchBook({
     for (const l of rc.logs ?? []) { if ((l.address ?? '').toLowerCase() !== contract.toLowerCase()) continue; const e = mb.decodeLog({ ...l, transactionHash: l.transactionHash ?? tx }); if (e) absorb(e); }
     return true;
   };
-  /** Receipts for what this node sent (retried until mined) and for what peers hinted. */
+  /** Receipts for what this node sent (retried until mined) and for what peers hinted. Bounded per poll: a peer's
+   *  hints are unverified hashes, and the gateway rate-limits one IP at ~25 req/s — our own sends go first. */
   const readReceipts = async () => {
-    for (const [tx, p] of [...pendingReceipts]) {
+    let reads = 0;
+    for (const [tx, p] of [...pendingReceipts].sort((a, b) => Number(b[1].own ?? 0) - Number(a[1].own ?? 0))) {
       if (p.tries > 40 && Date.now() - p.since > 10 * 60_000) { pendingReceipts.delete(tx); continue; }
+      if (reads++ >= RECEIPTS_PER_POLL) break;
       p.tries++;
       try { await ingestReceipt(tx); } catch { /* next poll */ }
     }
   };
   /** The ladder's log scan: SCAN_RANGE blocks per poll from a persisted cursor. A fresh node starts a little behind
    *  the head; history before that is a backfill job for later, not something a live match waits on. */
+  let scanRange = SCAN_START, scanning = false, scanMs = null;
   const read = async () => {
     const head = parseInt(await call('eth_blockNumber', []), 16);
     if (cursor === null) cursor = Math.max(fromBlock - 1, head - SCAN_START_BEHIND);
     if (cursor >= head) return;
-    const to = Math.min(head, cursor + SCAN_RANGE);
+    const to = Math.min(head, cursor + scanRange);
+    const t0 = Date.now();
     const logs = await call('eth_getLogs', [mb.logsFilter(contract, cursor + 1, to)]);
+    scanMs = Date.now() - t0;
+    if (scanMs < SCAN_FAST_MS) scanRange = Math.min(SCAN_MAX, Math.ceil(scanRange * 1.5));
+    else if (scanMs > SCAN_SLOW_MS) scanRange = Math.max(SCAN_MIN, Math.floor(scanRange / 2));
     for (const l of logs) { const e = mb.decodeLog(l); if (e) absorb(e); }
     cursor = to;
     try { writeFileSync(cursorPath, JSON.stringify({ cursor })); } catch { /* read-only data dir */ }
   };
+  /** The scan runs beside the live poll, never inside it: a 16 s eth_getLogs used to sit between a Settled
+   *  receipt and the attest it called for. Best effort — nothing live waits on the ladder's history. */
+  const scan = async () => {
+    if (scanning) return;
+    scanning = true;
+    try { await read(); scanError = null; } catch (e) { scanError = String(e.message ?? e); }
+    finally { scanning = false; }
+  };
   /** Gossip hints: the transactions of every match this node touched in the last day — bounded by time, never by history. */
-  const hints = () => { const cut = Date.now() - HINT_TTL_MS; const out = []; for (const [key, rec] of txlog) { const txs = rec.txs.filter((t) => t.at > cut); if (txs.length) out.push({ key, txs: txs.map((t) => t.tx) }); else txlog.delete(key); } return out; };
-  const absorbHints = (list) => { for (const h of list ?? []) for (const tx of h?.txs ?? []) if (typeof tx === 'string' && /^0x[0-9a-f]{64}$/i.test(tx) && !ingested.has(tx) && !pendingReceipts.has(tx)) pendingReceipts.set(tx, { since: Date.now(), tries: 0 }); };
+  const hints = () => {
+    const cut = Date.now() - HINT_TTL_MS; const out = [];
+    for (const [key, rec] of txlog) { const txs = rec.txs.filter((t) => t.at > cut); if (txs.length) out.push({ key, at: txs[txs.length - 1].at, txs: txs.map((t) => t.tx) }); else txlog.delete(key); }
+    // newest matches first, at most HINT_MAX of them: a busy host's day must not become every peer's heartbeat
+    return out.sort((a, b) => b.at - a.at).slice(0, HINT_MAX).map(({ key, txs }) => ({ key, txs }));
+  };
+  /** A peer's hints are hashes we have not verified: cap what one envelope may enqueue and how much may wait,
+   *  so a hostile peer can make us read a few receipts, not flood the gateway on our behalf. */
+  const absorbHints = (list) => {
+    let taken = 0;
+    for (const h of Array.isArray(list) ? list.slice(0, HINT_MAX) : []) for (const tx of Array.isArray(h?.txs) ? h.txs.slice(0, 8) : []) {
+      if (taken >= HINT_TAKE_PER_ENVELOPE || pendingReceipts.size >= RECEIPTS_MAX_PENDING) return;
+      if (typeof tx === 'string' && /^0x[0-9a-f]{64}$/i.test(tx) && !ingested.has(tx) && !pendingReceipts.has(tx)) { pendingReceipts.set(tx, { since: Date.now(), tries: 0 }); taken++; }
+    }
+  };
 
   /** I sit on this match's panel and it has settled: recompute and attest what I reached. */
   const witness = async (s) => {
@@ -282,8 +319,15 @@ export function createMatchBook({
       if (delegated === null || !funded) await checkDelegate();
       await autoEnrol();
       await readReceipts();
-      try { await read(); scanError = null; } catch (e) { scanError = String(e.message ?? e); } // the scan is best effort: nothing live waits on it
-      for (const s of settled.values()) { const st = statusOf(s.matchId); if (st === 'settled' || st === 'escalated') void witness(s); }
+      void scan();
+      for (const s of settled.values()) {
+        const st = statusOf(s.matchId);
+        // a seat is worth answering while the contract still counts the answer: attest window (one extension) or
+        // escalation window, plus a margin — not every two seconds forever for a host that went dark
+        const open = st === 'settled' ? Date.now() - s.seenAt < (2 * windows.attestWindow + 60) * 1000
+          : st === 'escalated' ? Date.now() - (escalation.get(s.matchId)?.at ?? 0) < (windows.escalationWindow + 60) * 1000 : false;
+        if (open) void witness(s);
+      }
       await drive();
       await stampBlocks();
       // the settler proposes every frozen hour it holds finalized matches for (the last three, in case a restart missed one)
@@ -304,7 +348,7 @@ export function createMatchBook({
     address, commit, settle, poll, ladder, statusOf, epoch, propose, hints, absorbHints, ingestReceipt,
     proof: (matchId) => { const key = mb.matchIdBytes32(matchId); const fin = decoded.find((e) => e.event === 'Finalized' && e.matchId === key); if (!fin) return null; const ts = blockTs.get(fin.block); if (ts == null) return null; return mb.chainProof(epoch(hourOf(ts * 1000)), key); },
     chainStatus: (matchId) => ({ matchId, key: mb.matchIdBytes32(matchId), status: statusOf(mb.matchIdBytes32(matchId)), panel: panels.get(mb.matchIdBytes32(matchId))?.panel ?? null, events: decoded.filter((e) => e.matchId === mb.matchIdBytes32(matchId)) }),
-    status: () => ({ contract, epochAnchor, delegate: address, delegated, funded, enrolled, cursor, scanError, receipts: ingested.size, pendingReceipts: pendingReceipts.size, events: decoded.length, sends, lastTx, lastError, hosting: mine.size, attested: attested.size, proposed: [...proposedHours] }),
+    status: () => ({ contract, epochAnchor, delegate: address, delegated, funded, enrolled, cursor, scanRange, scanMs, scanError, receipts: ingested.size, pendingReceipts: pendingReceipts.size, events: decoded.length, sends, lastTx, lastError, hosting: mine.size, attested: attested.size, proposed: [...proposedHours] }),
   };
 }
 
