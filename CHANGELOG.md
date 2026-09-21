@@ -5,6 +5,23 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.11.7] — 2026-09-22 — a tunnel URL is verified before anyone hears it
+
+### Fixed
+- **The desktop announced a hostname nobody could resolve.** A quick
+  tunnel's name exists before Cloudflare's DNS has published it; advertised
+  and announced at once, it was looked up at once — by the laptop, the Ally
+  and this very machine — and their resolvers cached the NXDOMAIN for
+  minutes. The laptop and the Ally did the right thing (read the directory,
+  tried `/whoami`, ignored the seed) and stayed cut off for 20 minutes
+  while the desktop's relay tunnel, looked up a moment later, was fine.
+  A node now reaches ITSELF through a new tunnel URL (`/whoami` from the
+  outside) before advertising or announcing it, and rotates a hostname
+  that never becomes reachable within three minutes (`tunnel.rotate()`).
+  `/health.tunnel` and the `tunnel` event carry `verifying` |
+  `up` | `unreachable`. `demo/tunnel.test.mjs`: advertised only once
+  the probe answers; rotated when it never does.
+
 ## [0.11.6] — 2026-09-22 — a restarted witness advertises what it holds
 
 ### Fixed

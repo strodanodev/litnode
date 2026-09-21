@@ -82,6 +82,8 @@ export async function createNode({
   // node's own port; relayPort fronts a title's relay on this machine and
   // advertises it as wsAddr. tunnelBin is for tests.
   tunnel = null, tunnelName = null, tunnelHost = null, relayPort = null, relayTunnelName = null, relayTunnelHost = null, tunnelBin = undefined,
+  // How a new tunnel URL is checked from the outside before it is advertised (tests inject one): url → true when this node answered through it.
+  tunnelProbe = null,
   // UPnP: ask the router to forward our port (and the relay's) — what a
   // torrent client does. Reports CGNAT when the ISP makes it pointless.
   upnp = false, upnpGateway = null,
@@ -976,8 +978,34 @@ export async function createNode({
   // does the same for wsAddr. Peers learn both from the next heartbeat.
   try {
     if (tunnel) {
-      tunnels.node = createTunnel({ port: actualPort, name: tunnel === 'named' ? tunnelName : null, hostname: tunnel === 'named' ? tunnelHost : null, log, bin: tunnelBin,
-        onUrl: (u) => { addr = u ?? lanAddr; emit('tunnel', { which: 'node', url: u }); if (u) announceNow(); } });
+      // A quick tunnel's hostname exists before Cloudflare's DNS has published it. Advertised at once, it is
+      // looked up at once — by peers reading NodeDirectory and by this very machine — and a resolver that got
+      // NXDOMAIN caches that for minutes: the desktop announced a name nobody could resolve while its own
+      // relay tunnel, looked up a moment later, was fine (22 Sep 2026). So a new URL is advertised and
+      // announced only once THIS node has reached itself through it (a /whoami round trip), and a name that
+      // never becomes reachable is rotated for a fresh one rather than kept.
+      const VERIFY_EVERY_MS = tunnelProbe ? 200 : 5000, VERIFY_GIVE_UP_MS = tunnelProbe ? 3000 : 3 * 60_000;
+      const probe = tunnelProbe ?? (async (u) => { const nonce = newNonce(); const r = await fetch(`${u}/whoami?nonce=${nonce}`, { signal: AbortSignal.timeout(8000) }); const c = await checkChallenge(await r.json(), { expectNodeId: nodeId, nonce }); if (!c.ok) throw new Error(c.reason ?? 'challenge failed'); return true; });
+      let verifying = null;
+      const verifyTunnel = (u) => {
+        if (verifying) { clearInterval(verifying.timer); verifying = null; }
+        if (!u) { addr = lanAddr; emit('tunnel', { which: 'node', url: null }); return; }
+        const started = Date.now();
+        emit('tunnel', { which: 'node', url: u, state: 'verifying' });
+        const attempt = async () => {
+          if (tunnels.node?.url !== u) { clearInterval(verifying?.timer); verifying = null; return; } // rotated meanwhile
+          try {
+            if (!(await probe(u))) throw new Error('not reachable yet');
+            clearInterval(verifying.timer); verifying = null;
+            addr = u; log(`tunnel: ${u} reachable from outside — advertising and announcing`); emit('tunnel', { which: 'node', url: u, state: 'up' }); announceNow();
+          } catch (e) {
+            if (Date.now() - started > VERIFY_GIVE_UP_MS) { clearInterval(verifying.timer); verifying = null; log(`tunnel: ${u} never became reachable (${e.cause?.code ?? e.message}) — rotating the hostname`); emit('tunnel', { which: 'node', url: u, state: 'unreachable' }); tunnels.node?.rotate(); }
+          }
+        };
+        verifying = { url: u, timer: setInterval(attempt, VERIFY_EVERY_MS) };
+        void attempt();
+      };
+      tunnels.node = createTunnel({ port: actualPort, name: tunnel === 'named' ? tunnelName : null, hostname: tunnel === 'named' ? tunnelHost : null, log, bin: tunnelBin, onUrl: verifyTunnel });
     }
     if (relayPort && !wsAddrIn) {
       tunnels.relay = createTunnel({ port: relayPort, name: relayTunnelName, hostname: relayTunnelHost, log, bin: tunnelBin,

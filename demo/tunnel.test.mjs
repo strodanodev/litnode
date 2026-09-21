@@ -5,7 +5,7 @@
  *    node --test demo/tunnel.test.mjs */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTunnel } from '../node/tunnel.js';
@@ -46,9 +46,9 @@ test('tunnel: quick tunnel announces, restarts after a crash with a new hostname
 });
 
 test('tunnel: the node advertises the tunnel URL and the relay as wsAddr; peers learn both by gossip', { timeout: 30_000 }, async (t) => {
-  const a = await createNode({ dataDir: join(tmp, 'a'), offline: true, heartbeatMs: 200, operator: 'seed', roles: ['mesh', 'host'], tunnel: 'quick', relayPort: 8477, tunnelBin: bin, updates: false });
+  const a = await createNode({ dataDir: join(tmp, 'a'), offline: true, heartbeatMs: 200, operator: 'seed', roles: ['mesh', 'host'], tunnel: 'quick', relayPort: 8477, tunnelBin: bin, tunnelProbe: async () => true, updates: false });
   const b = await createNode({ dataDir: join(tmp, 'b'), offline: true, heartbeatMs: 200, operator: 'peer', roles: ['mesh', 'witness'], seeds: [a.addr], updates: false });
-  t.after(async () => { await a.stop().catch(() => {}); await b.stop().catch(() => {}); rmSync(tmp, { recursive: true, force: true }); });
+  t.after(async () => { await a.stop().catch(() => {}); await b.stop().catch(() => {}); }); // tmp (and the fake) outlive this test
   const health = async () => (await fetch(`${a.addr}/health`)).json();
   assert.ok(await until(async () => { const h = await health(); return h.tunnel.node.state === 'up' && h.tunnel.relay?.state === 'up'; }), 'node and relay tunnels up');
   const h = await health();
@@ -58,9 +58,31 @@ test('tunnel: the node advertises the tunnel URL and the relay as wsAddr; peers 
   // peer b sees both through gossip (b reached a on its LAN address; what a advertises is the tunnel)
   assert.ok(await until(async () => { const s = await (await fetch(`${b.addr}/snapshot`)).json(); const p = s.peers.find((x) => x.nodeId === a.nodeId); return p?.addr === h.addr && p?.wsAddr === h.wsAddr; }), 'peer learned tunnel + relay from the heartbeat');
   // the named mode is refused without a hostname, and an explicit WS_ADDR wins over a relay tunnel
-  await assert.rejects(createNode({ dataDir: join(tmp, 'c'), offline: true, operator: 'c', tunnel: 'named', tunnelName: 'x', tunnelBin: bin, updates: false }), /TUNNEL_HOST/);
-  const d = await createNode({ dataDir: join(tmp, 'd'), offline: true, heartbeatMs: 200, operator: 'd', roles: ['mesh'], wsAddr: 'wss://explicit.example', relayPort: 8477, tunnelBin: bin, updates: false });
+  await assert.rejects(createNode({ dataDir: join(tmp, 'c'), offline: true, operator: 'c', tunnel: 'named', tunnelName: 'x', tunnelBin: bin, tunnelProbe: async () => true, updates: false }), /TUNNEL_HOST/);
+  const d = await createNode({ dataDir: join(tmp, 'd'), offline: true, heartbeatMs: 200, operator: 'd', roles: ['mesh'], wsAddr: 'wss://explicit.example', relayPort: 8477, tunnelBin: bin, tunnelProbe: async () => true, updates: false });
   t.after(() => d.stop().catch(() => {}));
   assert.equal((await (await fetch(`${d.addr}/health`)).json()).wsAddr, 'wss://explicit.example');
   assert.equal(d.tunnels.relay, null);
 });
+
+test('tunnel: a new hostname is advertised only once reachable from outside, and rotated when it never is', { timeout: 60_000 }, async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'litnode-tunnel-verify-'));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  // reachable on the third probe: advertised then, not before
+  let asked = 0;
+  const a = await createNode({ dataDir: join(tmp, 'a'), offline: true, heartbeatMs: 200, operator: 'a', roles: ['mesh'], tunnel: 'quick', tunnelBin: bin, tunnelProbe: async () => ++asked >= 3, updates: false });
+  t.after(() => a.stop());
+  await new Promise((r) => setTimeout(r, 150));
+  assert.match((await (await fetch(`${a.addr}/health`)).json()).addr, /^http:\/\/127\.0\.0\.1/, 'a fresh, unverified name is NOT the advertised address');
+  const advertised = await (async () => { const end = Date.now() + 10_000; while (Date.now() < end) { const h = await (await fetch(`${a.addr}/health`)).json(); if (h.addr.startsWith('https://')) return h.addr; await new Promise((r) => setTimeout(r, 100)); } return null; })();
+  assert.equal(advertised, `https://fake-${a.port}-g0.trycloudflare.com`, 'advertised once the probe answered');
+  assert.ok(asked >= 3);
+  // never reachable: the name is rotated (cloudflared restarted → generation 1), and the LAN address stays advertised meanwhile
+  const b = await createNode({ dataDir: join(tmp, 'b'), offline: true, heartbeatMs: 200, operator: 'b', roles: ['mesh'], tunnel: 'quick', tunnelBin: bin, tunnelProbe: async () => false, updates: false });
+  t.after(() => b.stop());
+  const rotated = await (async () => { const end = Date.now() + 15_000; while (Date.now() < end) { if (b.tunnels.node?.status().restarts >= 1) return true; await new Promise((r) => setTimeout(r, 200)); } return false; })();
+  assert.ok(rotated, 'a hostname that never became reachable was rotated');
+  assert.match((await (await fetch(`${b.addr}/health`)).json()).addr, /^http:\/\/127\.0\.0\.1/, 'never advertised');
+});
+
+test('cleanup', () => { rmSync(tmp, { recursive: true, force: true }); });

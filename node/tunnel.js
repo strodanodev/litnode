@@ -62,5 +62,7 @@ export function createTunnel({ port, name = null, hostname = null, onUrl = () =>
     get url() { return url; },
     status: () => ({ port, mode: name ? 'named' : 'quick', name, state, url, restarts, lastError }),
     stop() { stopped = true; clearTimeout(timer); if (child) { try { child.kill(); } catch { /* gone */ } } url = null; state = 'stopped'; },
+    /** Kill cloudflared so the supervisor brings it back on a NEW hostname (a quick tunnel whose name never resolved). */
+    rotate() { if (child) { try { child.kill(); } catch { /* gone */ } } },
   };
 }
