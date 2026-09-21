@@ -5,7 +5,17 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.11.11] — 2026-09-22 — a restart keeps the ladder
+
 ### Fixed
+- **A restart lost every match the node had seen.** The scan cursor was
+  persisted; the events were not. When all four nodes restarted for 0.11.10 the
+  first final match vanished from every ladder (the scan never re-reads, and
+  hints only carry what peers touched in the last day — and their memory went
+  with them). Every decoded event is appended to `matchbook-events.jsonl` and
+  replayed at start, before the persisted duties; the end-to-end test restarts
+  a witness with no peers and finds the match final, the ladder digest
+  unchanged. (The file grows with history; compaction is a later item.)
 - **A host retried a reverted commit twice a second for twenty minutes.** Its own
   copy of the placement expired by TTL (15 min), a peer's gossip delivered the
   descriptor again, and the fresh entry — no `commitTx` — committed a match the

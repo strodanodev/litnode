@@ -146,4 +146,16 @@ test('phase 2: commit → settle → three attests → final on the chain, and e
   assert.equal(rootOnChain.toLowerCase(), '0x' + ep.root);
   const ok = (await chain.read(anchor, 'verifyInclusion', [ep.epoch, '0x' + proof.leaf, proof.path.map((p) => '0x' + p.hash), proof.path.map((p) => p.left)]))[0];
   assert.equal(ok, true, 'the node\'s proof verifies against the root on chain');
+
+  // ---- a restart keeps the ladder: the events are on disk, not only the cursor (the first final match vanished from every node when all four restarted for 0.11.10)
+  const w3 = witnesses[3]; await w3.stop(); nodes.splice(nodes.indexOf(w3), 1);
+  const again = await spawn({ dataDir: ids[4].dir, operator: 'op5', roles: ['mesh', 'witness'], seeds: [] }); // no peers: no hints; no scan (logs unavailable) — what it knows, it read from disk
+  const cs = again.matchBook.chainStatus(d.matchId);
+  assert.equal(cs.status, 'final', 'the match is final on the restarted node');
+  assert.equal(cs.events.map((e) => e.event).sort().join(','), 'Attested,Attested,Attested,Committed,Finalized,Settled', 'every event it saw before is back');
+  const full = (await (await fetch(`${host.addr}/snapshot`)).json()).manifests['tug.v1']; // the conformance manifest (services), as the node folds with
+  const lb = again.matchBook.ladder('tug.v1', full);
+  assert.equal(lb.counts.official, 1, 'the final match is still on the ladder');
+  assert.equal(lb.digest, boards[0].digest, 'the same digest as before the restart');
+  assert.equal((await (await fetch(`${again.addr}/health`)).json()).matchBook.seated, 0, 'no duty outstanding for a final match');
 });

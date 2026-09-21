@@ -33,7 +33,7 @@
  *  funds IS the delegate (tools/delegate.mjs). Not delegated or unfunded →
  *  every send reports why on /health and the node keeps settling locally.
  *  Nothing here can move the bond. */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomPrivateKey, addressOf, signTransaction } from '../protocol/evm.js';
 import * as mb from '../protocol/matchbook.js';
@@ -95,7 +95,6 @@ export function createMatchBook({
   // settlement store), a seat resumes covering for the host.
   const dutiesPath = join(dataDir, 'matchbook-duties.json');
   const duties = new Map();                 // key → { matchId, role: 'host'|'seat', seat, status, committedAt, settledAt, drawBlock, escalatedAt, tried: {} }
-  for (const d of (() => { try { return JSON.parse(readFileSync(dutiesPath, 'utf8')); } catch { return []; } })()) if (d?.key) duties.set(d.key, { ...d, tried: {} });
   const saveDuties = () => { try { writeFileSync(dutiesPath, JSON.stringify([...duties.values()].map(({ tried, ledger, ...d }) => d))); } catch { /* read-only data dir */ } };
   const ledgers = new Map();                // key → ledger a seat fetched and verified (to feed an escalation if the host will not)
   const attested = new Set();               // matchIds this node answered (either panel)
@@ -185,11 +184,18 @@ export function createMatchBook({
   };
 
   // ---------------------------------------------------------------- watch
+  // Every decoded event is appended to <dataDir>/matchbook-events.jsonl and replayed at start: the cursor
+  // was persisted, the events were not, so a restart lost the ladder's history — the first final match
+  // vanished from every node when all four restarted for 0.11.10 (21 Sep 2026). Nothing re-scans on
+  // Liteforge; what this node has seen once, it keeps.
+  const eventsPath = join(dataDir, 'matchbook-events.jsonl');
+  let replaying = false;
   const absorb = (e) => {
     const id = `${e.tx ?? '?'}:${e.block}:${e.logIndex}`;
     if (seenLog.has(id)) return;
     seenLog.add(id);
     decoded.push(e);
+    if (!replaying) { try { appendFileSync(eventsPath, JSON.stringify(e) + '\n'); } catch { /* read-only data dir */ } }
     const at = (blockTs.get(e.block) ?? Date.now() / 1000) * 1000; // the block's own clock once stamped, ours until then
     if (e.event === 'Committed') {
       panels.set(e.matchId, { hostKey: e.hostKey, panel: e.panel });
@@ -205,10 +211,22 @@ export function createMatchBook({
       if (e.event === 'Escalating') Object.assign(d, { status: 'escalating', drawBlock: e.drawBlock, feedBy: e.feedBy, tried: {} });
       if (e.event === 'Escalated') Object.assign(d, { status: 'escalated', escalatedAt: at, block: e.block, tried: {} });
       if (e.event === 'Finalized') { duties.delete(e.matchId); ledgers.delete(e.matchId); }
-      saveDuties();
+      if (!replaying) saveDuties();
     }
     if (e.event === 'Escalated') escalation.set(e.matchId, { panel: e.panel, at: Date.now() });
-    if (e.event === 'Finalized') emit('chain-final', { matchId: e.matchId, status: e.status, finalHash: e.finalHash });
+    if (e.event === 'Finalized' && !replaying) emit('chain-final', { matchId: e.matchId, status: e.status, finalHash: e.finalHash });
+  };
+  /** Replay what this node saw before, in order; then the persisted duties (their clocks are the true ones). */
+  const replayEvents = () => {
+    let lines = [];
+    try { lines = readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean); } catch { return 0; }
+    replaying = true;
+    let n = 0;
+    for (const line of lines) { try { absorb(JSON.parse(line)); n++; } catch { /* a torn last line */ } }
+    replaying = false;
+    for (const d of (() => { try { return JSON.parse(readFileSync(dutiesPath, 'utf8')); } catch { return []; } })()) if (d?.key) duties.set(d.key, { ...d, tried: {} });
+    for (const k of [...duties.keys()]) if (decoded.some((e) => e.event === 'Finalized' && e.matchId === k)) duties.delete(k); // a duty file older than its events
+    return n;
   };
   const duty = (key, matchId, role, seat) => { let d = duties.get(key); if (!d) { d = { key, matchId, role, seat, status: 'none', tried: {} }; duties.set(key, d); } return d; };
   /** The contract's windows, from the contract: a file can be stale (npm run params changes them live). */
@@ -409,6 +427,9 @@ export function createMatchBook({
     const f = mb.foldChain(decoded, rulesetId, manifest, { rulesets: mb.rulesetKeys([...new Set([rulesetId, ...rulesetIds()])]) });
     return { ...(scope === 'pending' ? f.pending : f.official), scope, cursor: { block: cursor }, counts: f.counts, source: 'chain' };
   };
+
+  const replayed = replayEvents();
+  if (replayed) log(`matchbook: ${replayed} event(s) replayed from disk — ${duties.size} dut${duties.size === 1 ? 'y' : 'ies'} outstanding`);
 
   return {
     address, commit, settle, poll, ladder, statusOf, epoch, propose, hints, absorbHints, ingestReceipt,
