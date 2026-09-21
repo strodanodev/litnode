@@ -54,7 +54,7 @@ test('phase 2: commit → settle → three attests → final on the chain, and e
     await chain.send(i, token, 'approve', [stake, 10n * ONE]);
     await chain.send(i, stake, 'stake', ['0x' + kp.publicKey, (i === 2 ? 3n : 1n) * ONE]);
     await chain.send(i, stake, 'setDelegate', ['0x' + kp.publicKey, chain.addressOf(10 + i)]);
-    await chain.send(10 + i, book, 'enroll', ['0x' + kp.publicKey]);
+    if (i !== 5) await chain.send(10 + i, book, 'enroll', ['0x' + kp.publicKey]); // node 5 enrols ITSELF once it sees its delegation
     ids.push({ kp, dir });
   }
   chain.warp(2); // past eligibilityAge
@@ -67,6 +67,8 @@ test('phase 2: commit → settle → three attests → final on the chain, and e
   for (let i = 1; i < 5; i++) witnesses.push(await spawn({ dataDir: ids[i].dir, operator: `op${i + 1}`, roles: ['mesh', 'witness'], seeds: [host.addr] }));
   assert.ok(await until(() => witnesses.every((w) => w.rulesets()['tug.v1'] === manifest.buildHash), 30_000), 'every witness holds the build');
   assert.ok(await until(async () => (await (await fetch(`${host.addr}/health`)).json()).matchBook?.delegated === true, 20_000), 'the host knows its delegate is accepted');
+  assert.ok(await until(async () => (await chain.read(book, 'pool', []))[0].map((k) => k.toLowerCase()).includes('0x' + ids[4].kp.publicKey), 20_000), 'a delegated, funded witness enrols itself in the pool');
+  assert.equal((await (await fetch(`${witnesses[3].addr}/health`)).json()).matchBook.enrolled, true);
 
   // ---- place: two players queue at the host; the drawn host commits BEFORE play
   const [a, b] = [await generateKeypair(), await generateKeypair()];

@@ -680,11 +680,13 @@ function operatorPanel(h) {
     `<dt>wallet</dt><dd class="mono">${esc(me)}${i?.balance != null ? ` · ${tok(i.balance)} tLITVM` : ''}</dd>`,
     `<dt>bond</dt><dd>${i ? (i.bonded ? `${tok(i.amount)} tLITVM by <span class="mono">${esc(i.operator.slice(0, 10))}…</span>${mine ? ' (you)' : ''}` : `none · minimum ${tok(i.minStake)} tLITVM`) : 'reading…'}</dd>`,
     ann ? `<dt>announcer</dt><dd class="mono">${esc(ann.slice(0, 10))}… ${i?.announcer === ann ? '<span class="dim">delegated</span>' : '<span class="dim">not delegated</span>'}</dd>` : '',
+    ann && i?.bonded ? `<dt>delegate</dt><dd class="mono">${i.delegate ? `${esc(i.delegate.slice(0, 10))}… <span class="dim">${i.delegate === ann ? 'the node's hot key' : 'another key'}</span>` : '<span class="dim">not set — the node cannot commit, attest or propose</span>'}</dd>` : '',
   ].join('');
   const acts = [
     i && !i.bonded ? '<button class="btn sm primary" id="op-bond">Bond this node</button>' : '',
     i && !i.bonded && CHAIN.TestLITVM && i.balance != null && i.balance < i.minStake ? '<button class="btn sm" id="op-faucet">Faucet tLITVM</button>' : '',
     mine && ann && i.announcer !== ann ? '<button class="btn sm" id="op-delegate">Delegate + fund announcer</button>' : '',
+    mine && ann && i.delegate !== ann ? '<button class="btn sm" id="op-hotkey">Set hot key (delegate)</button>' : '',
     mine ? '<button class="btn sm" id="op-transfer">Transfer operator…</button>' : '',
   ].filter(Boolean).join(' ');
   return `<dl class="kv">${rows}</dl><div class="sub">${acts || '<span class="dim">nothing to do from this wallet</span>'}</div>${tx}${err}`;
@@ -696,7 +698,8 @@ async function opRun(what) {
     if (what === 'connect' || !Op.account) { Op.busy = 'connecting wallet…'; render(); Op.account = await nodeops.connectOperator(); }
     const step = (m) => { Op.busy = m; render(); };
     if (what === 'faucet') { step('faucet — confirm in your wallet'); Op.lastTx = await nodeops.faucet(Op.account); }
-    if (what === 'bond') { step('bonding…'); Op.lastTx = await nodeops.bond(Op.account, h.nodeId, { onStep: step }); }
+    if (what === 'bond') { step('bonding…'); Op.lastTx = await nodeops.bond(Op.account, h.nodeId, { onStep: step, delegate: h.directory?.announcer?.address ?? null }); }
+    if (what === 'hotkey') { step('setting the hot key…'); Op.lastTx = await nodeops.setDelegate(Op.account, h.nodeId, h.directory.announcer.address); }
     if (what === 'delegate') { step('delegating…'); Op.lastTx = await nodeops.delegateAnnouncer(Op.account, h.nodeId, h.directory.announcer.address, { onStep: step }); }
     if (what === 'transfer') { Op.busy = ''; render(); const to = await ask({ title: 'transfer node', label: 'New operator address', placeholder: '0x…', pattern: '0x[0-9a-fA-F]{40}', hint: 'the bond and the listing move with it', ok: 'Transfer' }); if (!to) { render(); return; } step('transfer — confirm in your wallet'); Op.lastTx = await nodeops.transferOperator(Op.account, h.nodeId, to.trim()); }
     step('reading the chain…');
@@ -791,7 +794,7 @@ function renderNode() {
     </div>`;
   $('node-edit2')?.addEventListener('click', editNode);
   $('update-btn')?.addEventListener('click', updateNode);
-  for (const w of ['connect', 'faucet', 'bond', 'delegate', 'transfer']) $(`op-${w}`)?.addEventListener('click', () => opRun(w));
+  for (const w of ['connect', 'faucet', 'bond', 'delegate', 'hotkey', 'transfer']) $(`op-${w}`)?.addEventListener('click', () => opRun(w));
   $('pub-signin')?.addEventListener('click', () => signInWithAir().then(render));
   for (const b of view('node').querySelectorAll('[data-pub]')) b.addEventListener('click', () => pubRun(b.dataset.pub, b.dataset.rid ?? null));
   $('seeds-refresh')?.addEventListener('click', () => { S.seedsAt = 0; findSeed().then(render); });

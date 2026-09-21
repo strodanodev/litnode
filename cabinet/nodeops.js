@@ -11,6 +11,7 @@
  *  delegate: NodeDirectory.setAnnouncer(nodeKey, announcer) + a little gas to the announcer */
 import { CHAIN } from './config.js';
 import { connect } from './wallet.js';
+import { setDelegateCalldata, delegateOfCall } from './protocol/staking.js';
 import { standingCall, decodeStanding, minStakeCall, stakeCalldata, transferOperatorCalldata, approveCalldata, faucetCalldata, balanceOfCall } from './protocol/staking.js';
 import { setAnnouncerCalldata, announcerOfCall, decodeAddress } from './protocol/directory.js';
 
@@ -44,21 +45,32 @@ export async function inspect(nodeId, account) {
   const minStake = BigInt(minHex);
   const balance = account && CHAIN.TestLITVM ? BigInt(await rpc('eth_call', [balanceOfCall(CHAIN.TestLITVM, account), 'latest'])) : null;
   const announcer = CHAIN.NodeDirectory ? decodeAddress(await rpc('eth_call', [announcerOfCall(CHAIN.NodeDirectory, nodeId), 'latest'])).toLowerCase() : null;
-  return { bonded: s.active, amount: s.amount, operator: s.operator.toLowerCase(), minStake, balance, announcer: announcer && /^0x0{40}$/.test(announcer) ? null : announcer };
+  // NodeStake v3: the delegate (the node's hot key) — null on a v2 contract or when unset
+  let delegate = null;
+  try { const d = decodeAddress(await rpc('eth_call', [delegateOfCall(CHAIN.NodeStake, nodeId), 'latest'])).toLowerCase(); delegate = /^0x0{40}$/.test(d) ? null : d; } catch { /* v2 */ }
+  return { bonded: s.active, amount: s.amount, operator: s.operator.toLowerCase(), minStake, balance, announcer: announcer && /^0x0{40}$/.test(announcer) ? null : announcer, delegate };
 }
 
 export const connectOperator = () => connect();
 
 export async function faucet(from) { return send(from, CHAIN.TestLITVM, faucetCalldata()); }
 
-/** approve + stake at the contract's minimum. Two wallet prompts. */
-export async function bond(from, nodeId, { onStep = () => {} } = {}) {
+/** approve + stake at the contract's minimum, then (NodeStake v3) name the
+ *  node's hot key as its delegate — the key it commits, settles, attests and
+ *  proposes with (BUILD-SPEC v0.3 §2.2). Three wallet prompts; `delegate` is
+ *  the node's announcer address (/health.directory.announcer). The node
+ *  enrols itself in the witness pool once it sees the delegation. */
+export async function bond(from, nodeId, { onStep = () => {}, delegate = null } = {}) {
   const minStake = BigInt(await rpc('eth_call', [minStakeCall(CHAIN.NodeStake), 'latest']));
   onStep(`approve ${minStake} wei of tLITVM — confirm in your wallet`);
   await send(from, CHAIN.TestLITVM, approveCalldata(CHAIN.NodeStake, minStake));
   onStep('stake — confirm in your wallet');
-  return send(from, CHAIN.NodeStake, stakeCalldata(nodeId, minStake));
+  const tx = await send(from, CHAIN.NodeStake, stakeCalldata(nodeId, minStake));
+  if (delegate) { onStep('delegate the node\'s hot key — confirm in your wallet'); await send(from, CHAIN.NodeStake, setDelegateCalldata(nodeId, delegate)); }
+  return tx;
 }
+/** Name (or change) the node's delegate on NodeStake v3 by itself. */
+export async function setDelegate(from, nodeId, delegate) { return send(from, CHAIN.NodeStake, setDelegateCalldata(nodeId, delegate)); }
 
 export async function transferOperator(from, nodeId, to) { return send(from, CHAIN.NodeStake, transferOperatorCalldata(nodeId, to)); }
 

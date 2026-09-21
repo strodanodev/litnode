@@ -28,6 +28,8 @@ import * as mb from '../protocol/matchbook.js';
 import { mayActForCall, decodeBool } from '../protocol/staking.js';
 import { descriptorHash as descriptorHashOf } from './settle.js';
 import { proposeCalldata, hourOf, freezeAt } from '../protocol/epoch.js';
+import { selector } from '../protocol/keccak.js';
+import { decodeBytes32Array } from '../protocol/abi.js';
 
 const POLL_MS = 2000;
 const MAX_RANGE = 2000; // blocks per eth_getLogs
@@ -86,6 +88,20 @@ export function createMatchBook({
     if (!stakeContract) { delegated = true; return; }
     try { delegated = decodeBool(await call('eth_call', [mayActForCall(stakeContract, nodeId, address), 'latest'])); } catch { /* keep the last answer */ }
     try { funded = BigInt(await call('eth_getBalance', [address, 'latest'])) > 0n; } catch { /* unknown */ }
+  };
+  // The witness pool for escalations: a delegated, funded WITNESS enrols itself — no operator step,
+  // no tool. Asked once per start and again after any failure; a node that is not a witness stays out.
+  let enrolled = null, enrolTried = 0;
+  const autoEnrol = async () => {
+    if (!hasRole('witness') || delegated !== true || !funded || enrolled === true || Date.now() - enrolTried < 5 * 60_000) return;
+    enrolTried = Date.now();
+    try {
+      const pool = decodeBytes32Array(await call('eth_call', [{ to: contract, data: selector('pool()') }, 'latest']));
+      enrolled = pool.includes(nodeId.toLowerCase());
+      if (enrolled) return;
+      const tx = await trySend(mb.enrollCalldata(nodeId), 'enroll', nodeId);
+      if (tx) { enrolled = true; emit('enrolled', { tx }); }
+    } catch (e) { lastError = `enroll: ${e.message}`; }
   };
 
   /** This node is the drawn host of a ranked placement: commit before play. */
@@ -212,6 +228,7 @@ export function createMatchBook({
     polling = true; lastPoll = Date.now();
     try {
       if (delegated === null || !funded) await checkDelegate();
+      await autoEnrol();
       await read();
       for (const s of settled.values()) { const st = statusOf(s.matchId); if (st === 'settled' || st === 'escalated') void witness(s); }
       await drive();
@@ -234,7 +251,7 @@ export function createMatchBook({
     address, commit, settle, poll, ladder, statusOf, epoch, propose,
     proof: (matchId) => { const key = mb.matchIdBytes32(matchId); const fin = decoded.find((e) => e.event === 'Finalized' && e.matchId === key); if (!fin) return null; const ts = blockTs.get(fin.block); if (ts == null) return null; return mb.chainProof(epoch(hourOf(ts * 1000)), key); },
     chainStatus: (matchId) => ({ matchId, key: mb.matchIdBytes32(matchId), status: statusOf(mb.matchIdBytes32(matchId)), panel: panels.get(mb.matchIdBytes32(matchId))?.panel ?? null, events: decoded.filter((e) => e.matchId === mb.matchIdBytes32(matchId)) }),
-    status: () => ({ contract, epochAnchor, delegate: address, delegated, funded, cursor, events: decoded.length, sends, lastTx, lastError, hosting: mine.size, attested: attested.size, proposed: [...proposedHours] }),
+    status: () => ({ contract, epochAnchor, delegate: address, delegated, funded, enrolled, cursor, events: decoded.length, sends, lastTx, lastError, hosting: mine.size, attested: attested.size, proposed: [...proposedHours] }),
   };
 }
 

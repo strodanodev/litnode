@@ -5,6 +5,15 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **One-click bonding, no keys typed.** The cabinet's *Bond this node* now
+  approves, stakes and sets the node's hot key as its NodeStake v3 delegate
+  (three wallet prompts); a *Set hot key* button covers a node bonded
+  before. A delegated, funded witness ENROLS ITSELF in the MatchBook pool
+  (`node/matchbook.js` autoEnrol; `/health.matchBook.enrolled`). The
+  operator's whole lifecycle is: open the cabinet, connect the wallet, one
+  click. `tools/enroll.mjs` stays as the manual path.
+
 ## [0.11.0] — 2026-09-22 — settlement v1.0: every ranked match on chain
 
 ### Added
@@ -161,6 +170,18 @@ follows [Keep a Changelog](https://keepachangelog.com/).
   and `build-a-title`; docs/BRING-YOUR-BACKEND.md, docs/BUILD-FROM-SCRATCH.md,
   docs/WEBSITE-COPY.md (site and litepaper copy against the code).
   `demo/publisher.test.mjs` runs both paths against live nodes.
+- **Gauntlet loops** (`node/gauntlet.js`): the node runs a title's headless
+  match server for every match it hosts, spawned per placement with a
+  per-match seat secret and the seats in its environment, one HMAC join
+  ticket per placed player (Pickle Brawl's ticket format), tickets served
+  and WebSocket rooms proxied on `RELAY_PORT` behind the relay tunnel
+  (`wss://<wsAddr>/<room>`), unknown rooms forwarded to `GAUNTLET_UPSTREAM`,
+  the process ended a few seconds after the match settles or at its TTL.
+  `GAUNTLETS=<rulesetId>=<json>` in `node.env`; `/health.gauntlet`;
+  `gauntlets/pickle-brawl.json`; `demo/gauntlet.test.mjs` (a real placement,
+  court, tickets, proxy, attested report, process gone; plus crash,
+  never-listens and TTL cases). Nothing of a title's backend has to be
+  hosted anywhere else.
 - **`npm run bridge -- resolve` and `--node auto`**: find the live node for a
   title through NodeDirectory on chain (bonded, fresh, proves its key,
   hosts the ruleset, settles), so a publisher's server is never pinned
