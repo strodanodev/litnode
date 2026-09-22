@@ -6,15 +6,18 @@
  *    npm run fleet -- --once | --json       one screen, or the raw signed document
  *    npm run fleet -- spawn --count 3       three more nodes on 7811…, seeded from the watched node, until Ctrl-C
  *                    [--seed URL] [--port 7811] [--roles mesh,witness] [--operator demo] [--rulesets a.js,b.js]
+ *    npm run fleet -- relay [--arcade]      what a TITLE finds: contracts.json (from the node, or the arcade) →
+ *                                           NodeDirectory → newest bonded relay → a WebSocket opens through it
  *
  *  Every read sends a nonce and checks the node key's answer over nonce + digest: the first answer pins the
  *  nodeId (or --node <id> pins it up front); a document another key signed, or one edited in flight, is refused. */
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkChallenge, newNonce } from '../protocol/challenge.js';
 import { h } from '../protocol/canonical.js';
+import { createChain } from '../node/chain.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -46,6 +49,7 @@ export function screen(f) {
   const s = f.self, c = f.chain, m = f.mesh;
   L.push(`litnode ${s.operator} · ${short(f.nodeId, 12)} · v${f.version} (cabinet ${f.cabinet}) · up ${ago(s.uptimeMs)} · ${s.roles.join(',')} · ${s.bonded ? 'bonded' : s.bonded === false ? 'NOT bonded' : 'bond ?'}${s.eligible ? ' · eligible' : ''} · ${f.at.slice(11, 19)}Z`);
   L.push(`public ${s.addr}${s.tunnel ? ` (${s.tunnel.mode} ${s.tunnel.state})` : ''} · inbound ${s.inbound.reachable === null ? '?' : s.inbound.reachable ? `yes (${s.inbound.peers})` : 'NO'}${s.update?.available ? ` · UPDATE ${s.update.latest} available` : ''}`);
+  if (s.relay) L.push(`relay ${s.relay.url ?? '(no tunnel yet)'} · ${s.relay.state.toUpperCase()}${s.relay.ms != null ? ` ${s.relay.ms} ms` : ''}${s.relay.lastError ? ` · ${s.relay.lastError}` : ''} · port ${s.relay.port}`);
   L.push(`chain ${c.offline ? 'offline' : `head ${c.head ?? '?'} · lag ${c.lagS ?? '?'}s · rpc ${c.rpcMs ?? '?'}ms (last ${c.rpcLastMs ?? '?'}) · ${c.rpcFailures}/${c.rpcCalls} failed`}${c.lastError ? ` · ${c.lastError.slice(0, 60)}` : ''}`);
   if (c.matchBook) { const p = c.matchBook.purse; L.push(`hot key ${short(p.address, 12)} · ${p.balance ?? '?'} zkLTC · ~${p.matchesLeft ?? '?'} matches${p.low ? ' · LOW' : ''} · type-${p.txType ?? '?'} · cursor ${c.matchBook.cursor} · events ${c.matchBook.events} · sends ${c.matchBook.sends} · hosting ${c.matchBook.hosting} · seated ${c.matchBook.seated}${c.matchBook.lastError ? ` · ${c.matchBook.lastError.slice(0, 50)}` : ''}`); }
   L.push(`mesh active ${m.active} · known ${m.known} · bonded ${m.bonded} · eligible ${m.eligible} · incompatible ${m.incompatible} · versions ${Object.entries(m.versions).map(([v, n]) => `${v}×${n}`).join(' ')} · gossip ${m.gossip.outPerMin}↑ ${m.gossip.inPerMin}↓ /min (${(m.gossip.outBytesPerMin / 1024).toFixed(0)}k↑ ${(m.gossip.inBytesPerMin / 1024).toFixed(0)}k↓)${m.unreachable.length ? ` · unreachable ${m.unreachable.length}` : ''}`);
@@ -82,6 +86,35 @@ async function watch() {
   }
 }
 
+/** The client's path, from the outside: exactly what Agent Fighter's mesh.ts does, so "server offline" is caught
+ *  here before a player sees it. Reads contracts.json from the watched node (or --arcade: what the public arcade
+ *  serves — the copy a standalone title reads), walks NodeDirectory, keeps bonded entries fresh within 7 days,
+ *  takes the newest relay, and opens a WebSocket through it. */
+async function relayProbe() {
+  let src = flag('arcade') ? 'https://arcade.litvm.games/contracts.json' : `${url}/cabinet/contracts.json`;
+  let set = null;
+  try { const r = await fetch(src, { signal: AbortSignal.timeout(8000) }); if (r.ok) set = await r.json(); else throw new Error(`HTTP ${r.status}`); }
+  catch (e) { console.log(`relay: ${src} — ${e.message} (a node before 0.11.14, or the arcade not redeployed): a title would fall back to its baked pair; using this checkout's contracts/deployed.testnet.json`); const d = JSON.parse(readFileSync(join(root, 'contracts', 'deployed.testnet.json'), 'utf8')); set = { generation: d.generation, rpc: d.rpc, contracts: d }; src = 'contracts/deployed.testnet.json'; }
+  const dir = set.contracts?.NodeDirectory?.address, stake = set.contracts?.NodeStake?.address;
+  console.log(`contracts: generation ${set.generation} from ${src}
+  NodeDirectory ${dir}
+  NodeStake     ${stake}`);
+  if (!dir || !stake) { console.error('relay: the contract set has no NodeDirectory/NodeStake'); process.exitCode = 1; return; }
+  const chain = createChain({ rpc: set.rpc ?? 'https://liteforge.rpc.caldera.xyz/http', nodeDirectory: dir, nodeStake: stake });
+  const entries = (await chain.directory()) ?? {};
+  const standings = (await chain.standings(Object.keys(entries))) ?? {};
+  const nowS = Math.floor(Date.now() / 1000);
+  const rows = Object.entries(entries).map(([k, e]) => ({ key: k, ...e, bonded: !!standings[k]?.active, fresh: nowS - e.updatedAt <= 7 * 24 * 3600 }));
+  for (const r of rows) console.log(`  ${short(r.key, 12)} ${r.bonded ? 'bonded  ' : 'unbonded'} ${r.fresh ? 'fresh' : 'stale'} ${new Date(r.updatedAt * 1000).toISOString()} ${r.wsAddr || '(no relay)'}`);
+  const pick = rows.filter((r) => r.bonded && r.fresh && r.wsAddr.startsWith('wss://')).sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  if (!pick) { console.error('relay: NO bonded, fresh entry advertises a relay — a title reading this directory says SERVER OFFLINE'); process.exitCode = 1; return; }
+  const t0 = Date.now();
+  try {
+    await new Promise((res, rej) => { const ws = new WebSocket(pick.wsAddr); const t = setTimeout(() => rej(new Error('timeout')), 8000); ws.onopen = () => { clearTimeout(t); ws.close(); res(); }; ws.onerror = () => { clearTimeout(t); rej(new Error('websocket error')); }; });
+    console.log(`relay: ${pick.wsAddr} (${short(pick.key, 12)}) opens a WebSocket in ${Date.now() - t0} ms — a title finds the mesh`);
+  } catch (e) { console.error(`relay: ${pick.wsAddr} is what the directory names and it does NOT answer (${e.message}) — SERVER OFFLINE for every title reading it`); process.exitCode = 1; }
+}
+
 function spawnNodes() {
   const count = Number(flag('count', 3));
   const port0 = Number(flag('port', 7811));
@@ -111,6 +144,7 @@ function spawnNodes() {
 
 if (import.meta.url === new URL(process.argv[1], 'file:').href || process.argv[1]?.endsWith('fleet.mjs')) {
   if (cmd === 'spawn') spawnNodes();
+  else if (cmd === 'relay') await relayProbe();
   else if (cmd === 'watch') await watch();
   else { console.error('usage: fleet [watch|spawn] …'); process.exit(1); }
 }

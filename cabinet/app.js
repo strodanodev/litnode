@@ -25,6 +25,7 @@ import * as nodeops from './nodeops.js';
 import * as seeds from './seeds.js';
 import { CHAIN } from './config.js';
 import { CABINET_VERSION } from './version.js';
+import { CONTRACTS } from './contracts.js';
 
 const $ = (id) => document.getElementById(id);
 const view = (name) => document.querySelector(`.view[data-view="${name}"]`);
@@ -864,11 +865,12 @@ document.addEventListener('click', (e) => {
 
 // ═══════════════════════════════════════════════ play ══
 // Shell → game: { type:'cabinet:init', version:1, player:{id,guest,name}, air:{id,email,address,tokenId,name}|null, node:{url,online}, game:{id,title},
+//                 chain:{chainId, rpc, generation, contracts:{NodeDirectory:{address},NodeStake:{address},…}}   ← the CURRENT contract set: a title that discovers the mesh on its own takes these, never its own constants
 //                 match?:{matchId, host, hostAddr, witness, wsAddr, beacon, beaconSource, participants, mode, buildHash, rulesetId} }   ← present when launched from a verified placement
 // Game → shell: { type:'cabinet:hello' } (ask for init) · { type:'cabinet:exit' }
 let current = null, currentMatch = null;
 const frame = $('game');
-const sendInit = () => { if (current && frame.contentWindow) frame.contentWindow.postMessage({ type: 'cabinet:init', version: 1, player: { id: player.id, guest: player.guest, name: player.name }, air: Ai.me.session?.address ? { id: Ai.me.id ?? null, email: Ai.me.email ?? null, address: Ai.me.session.address, tokenId: Ai.me.session.tokenId ?? null, name: Ai.me.session.name ?? null } : null, node: { url: nodeUrl(), online: S.online }, game: { id: current.id, title: current.title }, ...(currentMatch ? { match: currentMatch } : {}) }, '*'); };
+const sendInit = () => { if (current && frame.contentWindow) frame.contentWindow.postMessage({ type: 'cabinet:init', version: 1, player: { id: player.id, guest: player.guest, name: player.name }, air: Ai.me.session?.address ? { id: Ai.me.id ?? null, email: Ai.me.email ?? null, address: Ai.me.session.address, tokenId: Ai.me.session.tokenId ?? null, name: Ai.me.session.name ?? null } : null, node: { url: nodeUrl(), online: S.online }, game: { id: current.id, title: current.title }, chain: { chainId: CHAIN.chainId, rpc: CHAIN.rpc, generation: CHAIN.generation, contracts: CONTRACTS.contracts }, ...(currentMatch ? { match: currentMatch } : {}) }, '*'); };
 window.addEventListener('message', async (e) => {
   if (e.source !== frame.contentWindow || !e.data?.type) return;
   if (e.data.type === 'cabinet:hello') sendInit();

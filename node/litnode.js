@@ -87,6 +87,9 @@ export async function createNode({
   tunnel = null, tunnelName = null, tunnelHost = null, relayPort = null, relayTunnelName = null, relayTunnelHost = null, tunnelBin = undefined,
   // How a new tunnel URL is checked from the outside before it is advertised (tests inject one): url → true when this node answered through it.
   tunnelProbe = null,
+  // Relay verification: (url) → true when a WebSocket opens through it. Default: a real WebSocket open (8 s);
+  // tests pass a fake. A relay tunnel is advertised and announced only once this passes, and dropped when it stops.
+  relayProbe = null,
   // UPnP: ask the router to forward our port (and the relay's) — what a
   // torrent client does. Reports CGNAT when the ISP makes it pointless.
   upnp = false, upnpGateway = null,
@@ -436,6 +439,38 @@ export async function createNode({
   // (seen 20 Sep 2026: "server offline" for the length of the rate-limit
   // window). Wait a few seconds so one transaction carries both.
   const announceNow = () => { clearTimeout(announceDebounce); announceDebounce = setTimeout(announceSend, 4000); };
+  // ---------------------------------------------------------------- relay watch
+  // The relay tunnel's URL used to be advertised (heartbeat) and announced (NodeDirectory) the moment
+  // cloudflared printed it — with nothing checking that a WebSocket actually opens through it, or that the
+  // relay process behind relayPort is alive. A directory entry that points at a dead relay is worse than
+  // none: every client that trusts it says "server offline". Now: verify before advertising, keep checking,
+  // and withdraw (advertise/announce no wsAddr) when it stops answering.
+  const RELAY_VERIFY_MS = relayProbe ? 200 : 5000, RELAY_GIVE_UP_MS = relayProbe ? 3000 : 5 * 60_000, RELAY_WATCH_MS = relayProbe ? 500 : 60_000, RELAY_FAILS = 3;
+  const relay = { url: null, state: 'off', checkedAt: null, ms: null, lastError: null, fails: 0 }; // state: off | verifying | up | down | unreachable
+  const openWs = relayProbe ?? (async (u) => { const t0 = Date.now(); await new Promise((res, rej) => { const ws = new WebSocket(u); const t = setTimeout(() => { try { ws.close(); } catch { /* */ } rej(new Error('timeout')); }, 8000); ws.onopen = () => { clearTimeout(t); ws.close(); res(); }; ws.onerror = () => { clearTimeout(t); rej(new Error('websocket error')); }; }); return Date.now() - t0; });
+  let relayTimer = null;
+  const relayCheck = async () => {
+    const u = relay.url;
+    if (!u) return;
+    try {
+      const t0 = Date.now(); const ms = await openWs(u); relay.ms = typeof ms === 'number' ? ms : Date.now() - t0; relay.lastError = null; relay.fails = 0; relay.checkedAt = Date.now();
+      if (relay.state !== 'up') { relay.state = 'up'; wsAddr = u; log(`relay: ${u} answers a WebSocket (${relay.ms} ms) — advertising and announcing`); emit('tunnel', { which: 'relay', url: u, state: 'up' }); announceNow(); }
+    } catch (e) {
+      relay.lastError = e.message; relay.checkedAt = Date.now(); relay.fails++;
+      if (relay.state === 'up' && relay.fails >= RELAY_FAILS) { relay.state = 'down'; wsAddr = null; log(`relay: ${u} stopped answering (${e.message}) — withdrawing wsAddr from the heartbeat and the directory`); emit('tunnel', { which: 'relay', url: u, state: 'down' }); announceNow(); }
+      else if (relay.state === 'verifying' && Date.now() - relay.since > RELAY_GIVE_UP_MS) { relay.state = 'unreachable'; log(`relay: ${u} never answered a WebSocket (${e.message}) — rotating the hostname`); emit('tunnel', { which: 'relay', url: u, state: 'unreachable' }); tunnels.relay?.rotate(); }
+    }
+  };
+  const relayUrl = (u) => {
+    clearInterval(relayTimer); relayTimer = null;
+    if (relay.state === 'up' && wsAddr) { wsAddr = null; announceNow(); } // the old hostname is gone either way
+    Object.assign(relay, { url: u ? u.replace(/^https:/, 'wss:') : null, state: u ? 'verifying' : 'off', checkedAt: null, ms: null, lastError: null, fails: 0, since: Date.now() });
+    emit('tunnel', { which: 'relay', url: relay.url, state: relay.state });
+    if (!u) return;
+    relayTimer = setInterval(() => { void relayCheck().then(() => { if (relay.state === 'up' && relayTimer) { clearInterval(relayTimer); relayTimer = setInterval(() => void relayCheck(), RELAY_WATCH_MS); } }); }, RELAY_VERIFY_MS);
+    void relayCheck();
+  };
+  const relayStatus = () => ({ url: relay.url, port: relayPort, state: relay.state, checkedAt: relay.checkedAt ? new Date(relay.checkedAt).toISOString() : null, ms: relay.ms, lastError: relay.lastError });
   const announceSend = () => {
     if (!announcer || !announce) return;
     // Only a node with a public https address is worth announcing (a seed
@@ -878,7 +913,7 @@ export async function createNode({
       at: new Date(now).toISOString(), nodeId, version, protocol: PROTOCOL_VERSION, cabinet: CABINET_VERSION,
       self: { nodeId, operator, roles, region, version, addr, lanAddr, wsAddr, startedAt: new Date(startedAt).toISOString(), uptimeMs: now - startedAt,
         bonded: stakes?.[nodeId]?.active ?? null, wallet: stakes?.[nodeId]?.operator ?? null, eligible: eligible.has(nodeId), bond: myBond ? { eligible: myBond.eligible, delegate: myBond.delegate, amount: myBond.amount.toString() } : null,
-        tunnel: tunnels.node?.status() ?? null, upnp: upnpCtl?.status() ?? null, update: (({ available, latest, checkedAt, lastError }) => ({ available, latest, checkedAt: checkedAt ?? null, lastError: lastError ?? null }))(updater.status()),
+        tunnel: tunnels.node?.status() ?? null, relay: relayPort ? relayStatus() : null, upnp: upnpCtl?.status() ?? null, update: (({ available, latest, checkedAt, lastError }) => ({ available, latest, checkedAt: checkedAt ?? null, lastError: lastError ?? null }))(updater.status()),
         inbound: { peers: [...inbound.values()].filter((t) => now - t < 30_000).length, reachable: peersKnown.size ? [...inbound.values()].some((t) => now - t < 30_000) : null }, sandbox: sandbox.status() },
       chain: { ...(({ rpc, head, headTs, lagS, rpcMs, rpcLastMs, rpcCalls, rpcFailures, rpcAt, lastError, offline }) => ({ rpc, head, headTs, lagS, rpcMs, rpcLastMs, rpcCalls, rpcFailures, rpcAt, lastError, offline }))(chain.status()),
         matchBook: mbs ? { contract: mbs.contract, delegate: mbs.delegate, delegated: mbs.delegated, funded: mbs.funded, enrolled: mbs.enrolled, purse: mbs.purse, cursor: mbs.cursor, scanRange: mbs.scanRange, events: mbs.events, sends: mbs.sends, lastTx: mbs.lastTx, lastError: mbs.lastError, hosting: mbs.hosting, seated: mbs.seated, windows: mbs.windows } : null,
@@ -914,6 +949,7 @@ export async function createNode({
           admin: stakeAdmin === null ? null : stakeAdmin ? 'contract' : 'eoa', matchBook: mbook ? mbook.status() : matchBookAddr ? { contract: matchBookAddr, offline: true } : null, chain: chain.status(), profiles: profileState(), version, repair: sdkMissing, update: updater.status(),
           sandbox: sandbox.status(), trust: { policy: titleTrust, publishers: trustedPublishers, titleRegistry: titleRegistry ?? null, relayKeys, courts: Object.keys(courts) }, registry: registry ? 'chain' : erc6699 ? 'offline' : 'unset',
           cabinet: { version: CABINET_VERSION }, // the copy this node serves at /; a cabinet loaded from elsewhere compares its own
+          relay: relayPort ? relayStatus() : null, // the relay tunnel as a WebSocket client sees it: verified before it is advertised
           wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, upnp: upnpCtl?.status() ?? null, gauntlet: gauntlet?.status() ?? null,
           directory: nodeDirectory ? { contract: nodeDirectory, seeds: chainSeeds.length, announcer: announcer?.status() ?? null } : null, startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt,
           // reachable: a peer has pushed gossip to us in the last 30 s. null = no peers known, so nothing to conclude.
@@ -1200,7 +1236,7 @@ export async function createNode({
     }
     if (relayPort && !wsAddrIn) {
       tunnels.relay = createTunnel({ port: relayPort, name: relayTunnelName, hostname: relayTunnelHost, log, bin: tunnelBin,
-        onUrl: (u) => { wsAddr = u ? u.replace(/^https:/, 'wss:') : null; emit('tunnel', { which: 'relay', url: wsAddr }); if (u) announceNow(); } });
+        onUrl: relayUrl });
     }
   } catch (e) {
     // A misconfigured tunnel must not leave a half-started node listening.
@@ -1238,6 +1274,6 @@ export async function createNode({
     rulesets: () => buildHashes(), peers: () => heartbeats, inbound, operator, roles, region, startedAt,
     version, updater, restart, tunnels, upnp: upnpCtl, get wsAddr() { return wsAddr; }, get announcer() { return announcer; }, seeds: () => chainSeeds, seedChecks, admitSeed, sandbox, refused, incompatible, protocol: PROTOCOL_VERSION, peersKnown,
     get gauntlet() { return gauntlet; },
-    async stop() { clearInterval(timer); clearInterval(updateTimer); clearInterval(directoryTimer); clearTimeout(announceRetry); await gauntlet?.stopAll(); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); server.closeAllConnections?.(); await new Promise((r) => server.close(r)); },
+    async stop() { clearInterval(timer); clearInterval(updateTimer); clearInterval(directoryTimer); clearTimeout(announceRetry); clearInterval(relayTimer); await gauntlet?.stopAll(); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); server.closeAllConnections?.(); await new Promise((r) => server.close(r)); },
   };
 }

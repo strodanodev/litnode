@@ -55,6 +55,7 @@ The test asserts exactly this set of keys.
 | `startedAt uptimeMs` | process uptime |
 | `bonded wallet eligible bond{eligible,delegate,amount}` | on-chain standing (`bonded` null = no stake contract / unread); `wallet` = the operator address that bonded this node — the attestation, public on chain |
 | `tunnel{mode,state,url,restarts,lastError}` | the quick/named tunnel, or null |
+| `relay{url,port,state,checkedAt,ms,lastError}` | the relay tunnel as a WebSocket client sees it: `verifying` → `up` (a WebSocket opened through the public hostname; only then is `wsAddr` advertised and announced) → `down` (three misses in a row: `wsAddr` withdrawn from the heartbeat and NodeDirectory) / `unreachable` (never opened in 5 min: hostname rotated). Null when the node fronts no relay. **Show `down` red** — it is what a player would call "server offline" |
 | `inbound{peers,reachable}` | peers that pushed gossip to us in the last 30 s; `reachable` null = no peers known |
 | `update{available,latest,checkedAt,lastError}` | registry-gated release check |
 | `sandbox` | replay sandbox status |

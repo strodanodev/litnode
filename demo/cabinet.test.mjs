@@ -62,6 +62,15 @@ test('cabinet contract: fields by name, cabinet served at /, vendored protocol i
   const { CABINET_VERSION } = await import('../cabinet/version.js');
   assert.equal(CABINET_VERSION, JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version, 'cabinet/version.js ≠ package.json — npm version keeps them equal (tools/sync-version.mjs)');
   assert.equal((await json('/health')).cabinet.version, CABINET_VERSION, 'the node reports the cabinet version it serves');
+  // addresses have ONE source: contracts/deployed.testnet.json → cabinet/contracts.js (generated) → config.js CHAIN; a title fetches /cabinet/contracts.json
+  const { CONTRACTS } = await import('../cabinet/contracts.js'); // config.js itself reads location (browser-only); it takes every address from this module
+  const deployed = JSON.parse(readFileSync(new URL('../contracts/deployed.testnet.json', import.meta.url), 'utf8'));
+  for (const name of ['NodeStake', 'NodeDirectory', 'MatchBook', 'EpochAnchor', 'PlayerProfile', 'NodeBadge', 'TestLITVM', 'ReleaseRegistry', 'TitleRegistry']) assert.equal(CONTRACTS.contracts[name]?.address, deployed[name].address, `contracts.js ${name} is the deployed address`);
+  assert.equal(CONTRACTS.chainId, deployed.chainId);
+  assert.doesNotMatch(readFileSync(new URL('../cabinet/config.js', import.meta.url), 'utf8'), /0x[0-9a-fA-F]{40}/, 'config.js carries no address literal — they come from contracts.js');
+  const served = await json('/cabinet/contracts.json');
+  assert.equal(served.contracts.NodeDirectory.address, deployed.NodeDirectory.address, 'a title can fetch the current set from any node (and from the arcade)');
+  assert.equal(served.generation, deployed.generation);
 
   // the node is a frontend host: the cabinet at /, its files at the root, the protocol modules it imports
   const page = await get('/'); assert.match(page.headers.get('content-type'), /text\/html/); assert.match(await page.text(), /LIT GAMES/);

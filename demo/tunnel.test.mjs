@@ -46,7 +46,10 @@ test('tunnel: quick tunnel announces, restarts after a crash with a new hostname
 });
 
 test('tunnel: the node advertises the tunnel URL and the relay as wsAddr; peers learn both by gossip', { timeout: 30_000 }, async (t) => {
-  const a = await createNode({ dataDir: join(tmp, 'a'), offline: true, heartbeatMs: 200, operator: 'seed', roles: ['mesh', 'host'], tunnel: 'quick', relayPort: 8477, tunnelBin: bin, tunnelProbe: async () => true, updates: false });
+  // the relay behind the tunnel: a WebSocket must open through the public hostname before it is advertised
+  let relayAlive = true;
+  const relayProbe = async () => { if (!relayAlive) throw new Error('refused'); return 7; };
+  const a = await createNode({ dataDir: join(tmp, 'a'), offline: true, heartbeatMs: 200, operator: 'seed', roles: ['mesh', 'host'], tunnel: 'quick', relayPort: 8477, tunnelBin: bin, tunnelProbe: async () => true, relayProbe, updates: false });
   const b = await createNode({ dataDir: join(tmp, 'b'), offline: true, heartbeatMs: 200, operator: 'peer', roles: ['mesh', 'witness'], seeds: [a.addr], updates: false });
   t.after(async () => { await a.stop().catch(() => {}); await b.stop().catch(() => {}); }); // tmp (and the fake) outlive this test
   const health = async () => (await fetch(`${a.addr}/health`)).json();
@@ -54,12 +57,22 @@ test('tunnel: the node advertises the tunnel URL and the relay as wsAddr; peers 
   const h = await health();
   assert.equal(h.addr, `https://fake-${a.port}-g0.trycloudflare.com`, 'the advertised address IS the tunnel');
   assert.equal(h.lanAddr, a.addr);
-  assert.equal(h.wsAddr, 'wss://fake-8477-g0.trycloudflare.com', 'the relay tunnel is advertised as wsAddr');
+  assert.ok(await until(async () => (await health()).relay?.state === 'up'), 'the relay answered a WebSocket through the tunnel');
+  const h2 = await health();
+  assert.equal(h2.wsAddr, 'wss://fake-8477-g0.trycloudflare.com', 'the relay tunnel is advertised as wsAddr once verified');
+  assert.equal(h2.relay.ms, 7); assert.equal(h2.relay.port, 8477);
   // peer b sees both through gossip (b reached a on its LAN address; what a advertises is the tunnel)
-  assert.ok(await until(async () => { const s = await (await fetch(`${b.addr}/snapshot`)).json(); const p = s.peers.find((x) => x.nodeId === a.nodeId); return p?.addr === h.addr && p?.wsAddr === h.wsAddr; }), 'peer learned tunnel + relay from the heartbeat');
+  assert.ok(await until(async () => { const s = await (await fetch(`${b.addr}/snapshot`)).json(); const p = s.peers.find((x) => x.nodeId === a.nodeId); return p?.addr === h.addr && p?.wsAddr === h2.wsAddr; }), 'peer learned tunnel + relay from the heartbeat');
+  // the relay process dies: the hostname still resolves, nothing answers — wsAddr is withdrawn from the heartbeat
+  // (and the directory) rather than pointing every client at "server offline"
+  relayAlive = false;
+  assert.ok(await until(async () => { const x = await health(); return x.relay.state === 'down' && x.wsAddr === null; }, 15_000), 'a dead relay is withdrawn');
+  assert.ok(await until(async () => { const s = await (await fetch(`${b.addr}/snapshot`)).json(); const p = s.peers.find((x) => x.nodeId === a.nodeId); return p && !p.wsAddr; }), 'peers stop hearing a relay');
+  relayAlive = true;
+  assert.ok(await until(async () => { const x = await health(); return x.relay.state === 'up' && x.wsAddr === h2.wsAddr; }, 15_000), 'and it comes back when the relay does');
   // the named mode is refused without a hostname, and an explicit WS_ADDR wins over a relay tunnel
   await assert.rejects(createNode({ dataDir: join(tmp, 'c'), offline: true, operator: 'c', tunnel: 'named', tunnelName: 'x', tunnelBin: bin, tunnelProbe: async () => true, updates: false }), /TUNNEL_HOST/);
-  const d = await createNode({ dataDir: join(tmp, 'd'), offline: true, heartbeatMs: 200, operator: 'd', roles: ['mesh'], wsAddr: 'wss://explicit.example', relayPort: 8477, tunnelBin: bin, tunnelProbe: async () => true, updates: false });
+  const d = await createNode({ dataDir: join(tmp, 'd'), offline: true, heartbeatMs: 200, operator: 'd', roles: ['mesh'], wsAddr: 'wss://explicit.example', relayPort: 8477, tunnelBin: bin, tunnelProbe: async () => true, relayProbe, updates: false });
   t.after(() => d.stop().catch(() => {}));
   assert.equal((await (await fetch(`${d.addr}/health`)).json()).wsAddr, 'wss://explicit.example');
   assert.equal(d.tunnels.relay, null);

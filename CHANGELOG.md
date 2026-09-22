@@ -3,7 +3,27 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [0.11.14] — 2026-09-22 — a placed match always has a relay
+## [0.11.14] — 2026-09-22 — a placed match always has a relay; addresses have one source; a relay is verified before it is announced
+
+### Added
+- **One source for contract addresses.** `tools/vendor-cabinet.mjs` generates
+  `cabinet/contracts.js` (imported by `config.js`, which carries no address literal
+  any more) and `cabinet/contracts.json` from `contracts/deployed.testnet.json`;
+  the cabinet test fails when either lags. Every node serves
+  `/cabinet/contracts.json`, the arcade serves `/contracts.json`, and
+  `cabinet:init.chain` hands the set to every launched title. Agent Fighter's
+  client (`cdafd52`) reads it in that order and keeps a baked pair only as a last
+  resort, with a CI check against litnode master. `contracts/MIGRATION.md` has
+  the generation checklist: what moves together, and what catches drift.
+- **A relay is verified before it is advertised, and withdrawn when it dies.** A
+  WebSocket must open through the relay tunnel's public hostname before `wsAddr`
+  enters the heartbeat or NodeDirectory; it is re-checked every minute, three
+  misses withdraw it (heartbeat and directory), and it returns when the relay
+  does. `/health.relay` and `/fleet.self.relay` say `verifying | up | down |
+  unreachable` with the last round trip. `demo/tunnel.test.mjs`.
+- **`npm run fleet -- relay [--arcade]`** — the client's whole path from the
+  outside: contract set → NodeDirectory → newest bonded relay → a WebSocket opens.
+  Red means a title would say SERVER OFFLINE.
 
 ### Fixed
 - **"SERVER OFFLINE" on every Agent Fighter launch the desktop did not host.** The
