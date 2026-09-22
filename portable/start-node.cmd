@@ -57,6 +57,15 @@ if "%errorlevel%"=="75" (
     move /y runtime.new runtime >nul
     set "NODE=runtime\node.exe"
   )
+  rem Read node.env again: settings added while the node ran (a release that
+  rem brings new keys, say) must take effect on this relaunch, not only when
+  rem the scheduled task next starts. A removed line keeps its old value until
+  rem the task restarts; restart-node.cmd does that.
+  if exist node.env (
+    for /f "usebackq eol=# tokens=1,* delims==" %%k in ("node.env") do (
+      if not "%%k"=="" set "%%k=%%l"
+    )
+  )
   echo  restarting on the new build...
   goto run
 )
