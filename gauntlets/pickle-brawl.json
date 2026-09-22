@@ -1,18 +1,23 @@
 {
-  "$comment": "Pickle Brawl's court, run by this node per placed match (node/gauntlet.js). node.env: GAUNTLETS=pickle-brawl.v1=./gauntlets/pickle-brawl.json  RELAY_PORT=8478  GAUNTLET_UPSTREAM=ws://127.0.0.1:8477 (the Agent Fighter relay, if this node also fronts it). Set cwd to the Pickle Brawl checkout (needs a built .dist/game.js and pnpm install) and COURT_IDENTITY to the court key made by `npm run bridge -- key --kind attested --ruleset pickle-brawl.v1`.",
-  "command": "node",
-  "args": ["node_modules/tsx/dist/cli.mjs", "services/court/src/court.ts"],
-  "cwd": "E:/NPC/PICKLEBRAWLv2/PickleBrawl",
+  "$comment": "Example: Pickle Brawl's court, run by a node per placed match (node/gauntlet.js). ${node} is the node's own runtime (the court needs Node 22+). In node.env: GAUNTLETS=pickle-brawl.v1=<absolute path to this file>, GAUNTLET_GATEWAY_PORT=8478 (the gateway: the relay tunnel fronts it, and rooms it does not know go to the title relay on RELAY_PORT), COURTS=pickle-brawl.v1:<court public key>. cwd is the Pickle Brawl checkout (pnpm install, a built .dist/game.js); COURT_IDENTITY is the court key from npm run bridge -- key --kind attested --ruleset pickle-brawl.v1. Machine-specific: copy and edit.",
+  "command": "${node}",
+  "args": [
+    "node_modules/tsx/dist/cli.mjs",
+    "services/court/src/court.ts"
+  ],
+  "cwd": "E:/NPC/PICKLEBRAWLv2/pb-runtime",
   "env": {
     "PORT": "${port}",
     "COURT_TICKET_SECRET": "${secret}",
     "COURT_PUBLIC_URL": "${publicUrl}",
     "LITNODE_SEATS": "${seats}",
     "LITNODE_URL": "${nodeUrl}",
-    "COURT_IDENTITY": "C:/Users/sedano/.litnode/pickle-brawl-court.json",
-    "NIXPACKS_NODE_VERSION": "22"
+    "COURT_IDENTITY": "C:/Users/sedano/.litnode/pickle-brawl-court.json"
   },
-  "portRange": [7777, 7787],
+  "portRange": [
+    7777,
+    7787
+  ],
   "readyMs": 120000,
   "ttlMs": 900000,
   "ticketTtlMs": 600000,

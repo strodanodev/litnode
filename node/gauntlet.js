@@ -21,7 +21,7 @@
  *  on this machine, e.g. Agent Fighter's), so one wsAddr serves both.
  *
  *  Config, one object per rulesetId (node.env GAUNTLETS=<id>=<json path>,…):
- *    { "command": "node", "args": ["…/tsx/dist/cli.mjs", "services/court/src/court.ts"],
+ *    { "command": "${node}", "args": ["…/tsx/dist/cli.mjs", "services/court/src/court.ts"],
  *      "cwd": "E:/…/PickleBrawl",
  *      "env": { "PORT": "${port}", "COURT_TICKET_SECRET": "${secret}", "COURT_PUBLIC_URL": "${publicUrl}",
  *               "LITNODE_SEATS": "${seats}", "LITNODE_URL": "${nodeUrl}", "COURT_IDENTITY": "…" },
@@ -30,8 +30,8 @@
  *  Nothing here runs title code in the node process; the child is the
  *  publisher's own server, isolated exactly as far as a process is. */
 import { spawn } from 'node:child_process';
-import { createHmac, randomBytes } from 'node:crypto';
-import { createServer } from 'node:http';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createServer, request as httpRequest } from 'node:http';
 import { connect, createServer as createTcpServer } from 'node:net';
 import { existsSync, readFileSync } from 'node:fs';
 import { roomCodeFor } from '../protocol/pairing.js';
@@ -75,7 +75,7 @@ export function loadGauntletConfigs(spec, { root = process.cwd() } = {}) {
 const portFree = (port) => new Promise((res) => { const s = createTcpServer(); s.once('error', () => res(false)); s.listen(port, '127.0.0.1', () => s.close(() => res(true))); });
 const canConnect = (port) => new Promise((res) => { const s = connect(port, '127.0.0.1'); s.once('connect', () => { s.destroy(); res(true); }); s.once('error', () => res(false)); });
 
-export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', upstream = null, nodeUrl, wsAddr = () => null, nodeId = null, log = () => {}, emit = () => {}, spawnImpl = spawn }) {
+export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', upstream = null, nodeUrl, wsAddr = () => null, nodeId = null, log = () => {}, emit = () => {}, spawnImpl = spawn, services = null }) {
   const active = new Map();   // matchId → run
   const rooms = new Map();    // room → run
   const used = new Set();
@@ -98,9 +98,9 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
     active.set(matchId, run); rooms.set(room, run);
     try {
       run.port = await allocPort(cfg.portRange);
-      const vars = { port: run.port, secret, publicUrl: publicWs(room), seats: JSON.stringify(seats), matchId, room, nodeUrl, mode, placedMode: placedMode ?? 'casual', rulesetId };
+      const vars = { port: run.port, secret, publicUrl: publicWs(room), seats: JSON.stringify(seats), matchId, room, nodeUrl, mode, placedMode: placedMode ?? 'casual', rulesetId, node: process.execPath };
       const env = { ...process.env, ...Object.fromEntries(Object.entries(cfg.env).map(([k, v]) => [k, fill(v, vars)])), GAUNTLET_MATCH_ID: matchId, GAUNTLET_ROOM: room, GAUNTLET_PORT: String(run.port), GAUNTLET_SECRET: secret, GAUNTLET_SEATS: vars.seats, GAUNTLET_PUBLIC_URL: vars.publicUrl, GAUNTLET_NODE_URL: nodeUrl, GAUNTLET_MODE: mode, GAUNTLET_PLACED_MODE: vars.placedMode };
-      const child = spawnImpl(cfg.command, cfg.args.map((a) => fill(a, vars)), { cwd: cfg.cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      const child = spawnImpl(fill(cfg.command, vars), cfg.args.map((a) => fill(a, vars)), { cwd: cfg.cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
       run.child = child; run.pid = child.pid ?? null;
       const tail = (d) => { const line = String(d).trim().split('\n').pop(); if (line) run.lastLine = line.slice(0, 200); };
       child.stdout?.on('data', tail); child.stderr?.on('data', tail);
@@ -141,10 +141,30 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
 
   // --------------------------------------------------------------- gateway
   const json = (res, code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }); res.end(JSON.stringify(body)); };
+  /** /svc/<prefix>.<name>/rest → the publisher service (node/publisher-services.js) on its local port. */
+  const SVC_RE = /^\/svc\/([a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*)(\/.*)?$/;
+  const proxyHttp = (req, res, port, path, targetHost = '127.0.0.1') => {
+    const headers = { ...req.headers, host: `${targetHost}:${port}`, 'x-forwarded-host': req.headers.host ?? '', 'x-forwarded-proto': req.headers['x-forwarded-proto'] ?? (wsAddr()?.startsWith('wss:') ? 'https' : 'http') };
+    const up = httpRequest({ host: targetHost, port, method: req.method, path, headers }, (r) => { res.writeHead(r.statusCode ?? 502, r.headers); r.pipe(res); });
+    up.on('error', (e) => { if (!res.headersSent) json(res, 502, { error: `service unreachable: ${e.message}` }); else res.destroy(); });
+    req.pipe(up);
+  };
   const handle = (req, res) => {
     const url = new URL(req.url, 'http://x');
-    if (url.pathname === '/health' || url.pathname === '/') return json(res, 200, status());
+    // The gateway's own status. With an upstream relay behind it, '/' and '/health' are the RELAY's
+    // (Agent Fighter's relay serves its whole HTTP API on this origin), so the gateway answers only
+    // at /gateway; alone, it answers at all three.
+    if (url.pathname === '/gateway' || (!upstream && (url.pathname === '/health' || url.pathname === '/'))) return json(res, 200, status());
+    if (url.pathname === '/svc' || url.pathname === '/svc/') return json(res, 200, { services: services?.status() ?? [] });
+    const sv = SVC_RE.exec(url.pathname);
+    if (sv) {
+      const target = services?.route(sv[1]);
+      if (!target) return json(res, services?.names().includes(sv[1]) ? 503 : 404, { error: services?.names().includes(sv[1]) ? `service ${sv[1]} is not up` : `no service ${sv[1]} on this node` });
+      return proxyHttp(req, res, target.port, `${sv[2] || '/'}${url.search}`);
+    }
     const m = ROOM_RE.exec(url.pathname);
+    // Everything else belongs to the title relay behind the gateway, HTTP included.
+    if (!m && upstream) { const u = new URL(upstream); return proxyHttp(req, res, Number(u.port || 80), `${url.pathname}${url.search}`, u.hostname); }
     if (!m) return json(res, 404, { error: 'unknown room' });
     const run = rooms.get(m[1]);
     if (!run) return json(res, 404, { error: 'no gauntlet for this room (not placed here, ended, or timed out)' });
@@ -173,10 +193,31 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
     up.on('error', drop); socket.on('error', drop); up.on('close', drop); socket.on('close', drop);
   };
   const onUpgrade = (req, socket, head) => {
+    const sv = SVC_RE.exec(new URL(req.url, 'http://x').pathname);
+    if (sv) {
+      const target = services?.route(sv[1]);
+      if (target) return proxyUpgrade(req, socket, head, { port: target.port, path: `${sv[2] || '/'}${new URL(req.url, 'http://x').search}` });
+      socket.write('HTTP/1.1 404 Not Found\r\nconnection: close\r\n\r\n'); socket.destroy(); return;
+    }
     const m = ROOM_RE.exec(new URL(req.url, 'http://x').pathname);
     const run = m ? rooms.get(m[1]) : null;
     if (run && run.state === 'up') return proxyUpgrade(req, socket, head, { port: run.port });
     if (upstream) { const u = new URL(upstream); return proxyUpgrade(req, socket, head, { host: u.hostname, port: Number(u.port || 80), path: req.url }); }
+    // No upstream relay: the gateway IS this node's relay. The node verifies its relay tunnel by
+    // opening a WebSocket at the root (node/litnode.js relayCheck) and advertises wsAddr only when
+    // one opens, so answer that probe here, or a node hosting only gauntlet titles is never
+    // reachable. Accept, then close normally (1000).
+    const key = req.headers['sec-websocket-key'];
+    const path = new URL(req.url, 'http://x').pathname;
+    if (!m && key && (path === '/' || path === '/health')) {
+      const accept = createHash('sha1').update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
+      socket.on('error', () => {});
+      sockets.add(socket); socket.on('close', () => sockets.delete(socket));
+      socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+      socket.end(Buffer.from([0x88, 0x02, 0x03, 0xe8]));
+      setTimeout(() => socket.destroy(), 1000).unref?.(); // a client that never closes its half does not hold the gateway open
+      return;
+    }
     socket.write('HTTP/1.1 404 Not Found\r\nconnection: close\r\n\r\n'); socket.destroy();
   };
 
@@ -188,7 +229,7 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
     server.listen(port, host, () => { actualPort = server.address().port; log(`gauntlet gateway on :${actualPort}${upstream ? ` (unknown rooms → ${upstream})` : ''}: ${Object.keys(configs).join(', ') || 'no titles configured'}`); res(actualPort); });
   });
 
-  const status = () => ({ port: actualPort, upstream, titles: Object.keys(configs), active: [...active.values()].map((r) => ({ matchId: r.matchId, rulesetId: r.rulesetId, room: r.room, state: r.state, mode: r.mode, seats: r.seats.length, port: r.port, pid: r.pid, since: new Date(r.startedAt).toISOString(), lastError: r.lastError, exitCode: r.exitCode })) });
+  const status = () => ({ port: actualPort, upstream, titles: Object.keys(configs), services: services?.status() ?? [], active: [...active.values()].map((r) => ({ matchId: r.matchId, rulesetId: r.rulesetId, room: r.room, state: r.state, mode: r.mode, seats: r.seats.length, port: r.port, pid: r.pid, since: new Date(r.startedAt).toISOString(), lastError: r.lastError, exitCode: r.exitCode })) });
 
   /** Hooks the node calls. A placement is ours when it names this node as host. */
   const onPlaced = (d) => { if (configs[d.rulesetId] && (!nodeId || d.host === nodeId)) start({ matchId: d.matchId, rulesetId: d.rulesetId, participants: d.participants, mode: d.mode ?? null }).catch(() => {}); };

@@ -58,12 +58,32 @@ idempotent, so re-running is always safe.
    `npm run host -- bond`; the harness passes the nodeId to
    `tools/bond-node.mjs`. A witness must be bonded from a **different
    wallet** than the host it witnesses.
+7b. **Settlement keys (settlement v1.0, MatchBook).** A host or witness
+   also needs a hot key and, to sit on escalation panels, enrolment:
+   `npm run delegate -- <nodeId> <announcer address> --fund 0.005` names
+   the node's own announcer as its delegate (the key it sends commit,
+   settle, attest and finalize with; gas only, never the bond) and
+   `npm run enroll -- <nodeId>` joins the nine-seat pool. Both take
+   `OPERATOR_KEY` from the shell. `/health.matchBook` and `/health.bond`
+   (`eligible`, `delegate`) say where the node stands; a bond younger than
+   `eligibilityAge` is not drawn to witness yet. The arcade's Nodes page
+   does the same with a wallet and shows the live checklist from the
+   node's signed `/fleet`; `npm run fleet` reads it in a terminal.
 8. **Service.** `install-service` (Windows: scheduled task, needs an admin
    prompt — exit 2 says so; Linux: `systemd --user` unit + `loginctl
    enable-linger`; macOS: LaunchAgent). `install-service --remove` undoes it.
 9. **Verify.** `verify --json` exits 0 only when every required stage is
    done; otherwise 3 with `failing[]`. Report the `stages` table to the
    operator, plus the public URL and `nodeId`.
+
+## Running a title's match server on the node (gauntlet)
+
+`init --gauntlets <id>=<json> --courts <id>:<court key>` and, when the node
+already runs a title relay on `RELAY_PORT` (Agent Fighter), `--gauntlet-gateway-port
+8478`. `doctor` refuses a gateway that would land on the relay's port. The node
+then advertises the title in its heartbeat and placement draws it first for
+that title. `status` shows `/health.gauntlet`. The config and the title's side are in
+`docs/BRING-YOUR-BACKEND.md` section 6a and the `migrate-a-title` skill.
 
 ## Hosting a title
 
@@ -83,6 +103,7 @@ under `hosting`, and `GET /titles` on the node lists it with its display.
 | bonded | `NodeStake.standingOf(nodeId).active` on litVM |
 | announced | `NodeDirectory.entryOf(nodeId).url` equals what the node advertises |
 | service | a scheduled task / unit / agent **for this folder** exists |
+| delegate, enrolled (Nodes page / `/health`) | `NodeStake.delegateOf(nodeId)` is the funded hot key; MatchBook lists the key in its pool |
 
 ## Do not
 

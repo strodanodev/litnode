@@ -75,7 +75,7 @@ const commands = {
   async init() {
     const current = readEnv() ?? {};
     const values = {};
-    const map = { operator: 'OPERATOR', seeds: 'SEEDS', roles: 'ROLES', port: 'PORT', host: 'HOST', 'public-addr': 'PUBLIC_ADDR', rulesets: 'RULESETS', region: 'REGION', tunnel: 'TUNNEL', 'tunnel-name': 'TUNNEL_NAME', 'tunnel-host': 'TUNNEL_HOST', 'relay-port': 'RELAY_PORT', 'data-dir': 'DATA_DIR', channel: 'RELEASE_CHANNEL', rpc: 'RPC', trust: 'TITLE_TRUST', upnp: 'UPNP' };
+    const map = { operator: 'OPERATOR', seeds: 'SEEDS', roles: 'ROLES', port: 'PORT', host: 'HOST', 'public-addr': 'PUBLIC_ADDR', rulesets: 'RULESETS', region: 'REGION', tunnel: 'TUNNEL', 'tunnel-name': 'TUNNEL_NAME', 'tunnel-host': 'TUNNEL_HOST', 'relay-port': 'RELAY_PORT', 'data-dir': 'DATA_DIR', channel: 'RELEASE_CHANNEL', rpc: 'RPC', trust: 'TITLE_TRUST', upnp: 'UPNP', gauntlets: 'GAUNTLETS', 'gauntlet-gateway-port': 'GAUNTLET_GATEWAY_PORT', 'gauntlet-upstream': 'GAUNTLET_UPSTREAM', courts: 'COURTS', 'relay-keys': 'RELAY_KEYS', services: 'SERVICES' };
     for (const [f, k] of Object.entries(map)) if (f in flags) values[k] = flags[f] === true ? '1' : String(flags[f]);
     if (flags.offline) values.OFFLINE = '1';
     if (flags.witness) { values.ROLES = 'mesh,witness'; values.RULESETS = ''; }

@@ -14,7 +14,10 @@ what changes is that one message per finished match reaches a node.
 
 - **Never weaken a label.** A result is `players`, `relay`, `host` or
   `attested` because of what backs it; the bridge cannot upgrade it. Say
-  which one the publisher gets and why.
+  which one the publisher gets and why. OFFICIAL means finalized on
+  `MatchBook`: placed, players-signed, three witnesses under other
+  operators attested the same hash, nobody dissented (`/match/:id/chain`,
+  `bridge check`).
 - **The node, not the bridge, decides.** After every step, `npm run bridge
   -- check <matchId> --json` is the truth. Do not report "settled" from a
   bridge log line.
@@ -54,6 +57,27 @@ what changes is that one message per finished match reaches a node.
    `buildHash`; attested needs `report` and `teams`. Include `room` when
    the arcade launched the match (`?room=` on their URL) so it settles
    under the mesh placement.
+   - nothing should be hosted anywhere else: **gauntlet**. The node runs
+     their headless match server per placed match (`docs/BRING-YOUR-BACKEND.md`
+     section 6a). Write `gauntlets/<id>.json` (command, cwd, env with
+     `${port} ${secret} ${publicUrl} ${seats} ${nodeUrl}`, command `${node}`),
+     add `GAUNTLETS=` and `RELAY_PORT=` to the host's `node.env` (or
+     `GAUNTLET_GATEWAY_PORT=` when that node already fronts another title's
+     relay on `RELAY_PORT`; `npm run host -- doctor` checks it), have their server verify
+     the HMAC ticket at its gate and report to `LITNODE_URL` with the seated
+     player keys as participants, and their client fetch its ticket from
+     `<ws-as-https>/<room>/ticket?player=` on the arcade launch. Prove it
+     with a placement: `/health.gauntlet` shows the process, the delta says
+     `placed: true`.
+   - the studio's whole backend should live on the node (API, matchmaker,
+     court pool): **publisher services**, `docs/BRING-YOUR-BACKEND.md`
+     section 6c. Write `gauntlets/<prefix>.services.json`, give each service
+     a plain HTTP entry point (Vercel functions need a small server, as
+     Pickle Brawl's `services/api/src/server.ts`), set `SERVICES=` on the
+     node, and make the client find `/svc` through NodeDirectory at runtime
+     (Pickle Brawl's `web/litnodeBackend.ts`), never a baked hostname.
+     Static files, including an identity provider's key file, stay on the
+     frontend host. Prove it: `GET <relay>/svc` lists every service `up`.
    Where the node's hostname can rotate (quick tunnels), use `--node auto`
    / `LITNODE_URL=auto` or `bridge resolve` so nothing is pinned to it.
 5. **Test one match.** Submit a real finished match (`bridge submit

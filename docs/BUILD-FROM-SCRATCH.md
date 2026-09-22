@@ -43,22 +43,23 @@ four `uint16` core stats, read through `defineBalance`. Full rules:
 
 ```js
 import title from './my-game.v1.mjs';               // the SAME module the node runs (bundle it into your client)
-import { parseLaunch, connectShell, localSigner, createSim, createRecorder, matchSeed, externalAgents, settle } from '@litvm/sdk/client';
+import { parseLaunch, connectShell, localSigner, createSim, createRecorder, matchSeed, externalAgents, settle } from './litnode/sdk/client.js';  // the litnode checkout
 
 const launch = parseLaunch(location.search);        // { ws, room, player, matchId, buildHash, placed }
 const shell = await connectShell().catch(() => null);   // null when not inside the arcade
 const match = shell?.match ?? null;                 // the placement: matchId, host, hostAddr, wsAddr, beacon, participants, mode, buildHash
-const participants = match?.participants ?? [me, them];   // participant ORDER is the placement's; inputs are recorded in that order
-const seed = matchSeed(match ?? { matchId });       // H('seed', beacon, matchId) — what host and witness use
-const sim = createSim(title, { seed, participants, ctx: { agents: externalAgents(participants) } });
-const rec = createRecorder({ matchId, participants, rulesetId: 'my-game.v1', buildHash, mode: match?.mode ?? 'casual' });
+if (!match) throw new Error('not launched from a placed match: use the standalone path below');
+const me = shell.player.id;                         // this player's key; the shell holds the private half
+const them = match.participants.find((p) => p !== me);
+const sim = createSim(title, { seed: matchSeed(match), participants: match.participants, ctx: { agents: externalAgents(match.participants) } });
+const rec = createRecorder({ matchId: match.matchId, participants: match.participants, rulesetId: 'my-game.v1', buildHash: match.buildHash, mode: match.mode ?? 'casual' });
 
-// each tick, once BOTH inputs for the tick are known (your transport's job):
+// each tick, once BOTH inputs for the tick are known (your transport's job), in participant order:
 sim.step(inputs); rec.record(inputs); render(sim.view());
 
-// at the end: the player's signature comes from the shell (the key never leaves the cabinet)
-const signer = shell ?? await localSigner(myKeypairForStandaloneRuns);
-const delta = await settle({ nodeUrl: match?.hostAddr ?? shell.node.url, recorder: rec, signers: { [me]: signer, [them]: theirSignatureFromYourTransport } });  // the HOST settles a placed match
+// at the end: the shell signs for this player (the key never leaves the cabinet); the other
+// player's signature arrives over your transport as a hex string. The HOST settles a placed match.
+const delta = await settle({ nodeUrl: match.hostAddr, recorder: rec, signers: { [me]: shell, [them]: theirSignature } });
 ```
 
 `settle` needs both signatures. One client holds its own shell; the other
@@ -79,9 +80,10 @@ transport. `connectShell()` then delivers the full placement descriptor in
 | direction | message |
 |---|---|
 | game → shell | `{ type: 'cabinet:hello' }` — ask for init |
-| shell → game | `{ type: 'cabinet:init', version: 1, player: { id, guest, name }, node: { url, online }, game: { id, title }, match?: { matchId, host, hostAddr, witness, wsAddr, beacon, beaconSource, participants, mode, buildHash, rulesetId } }` |
+| shell → game | `{ type: 'cabinet:init', version: 1, player: { id, guest, name }, node: { url, online }, game: { id, title }, chain, air, match?: { matchId, host, hostAddr, witness, wsAddr, beacon, beaconSource, participants, mode, buildHash, rulesetId } }` |
 | game → shell | `{ type: 'cabinet:sign', body: { matchId, ticks, head, buildHash } }` |
 | shell → game | `{ type: 'cabinet:signed', matchId, player, sig }` or `{ …, error }` — signed only for the match and build the shell launched |
+| game → shell | `{ type: 'cabinet:played', matchId }`: the placed match was played; the arcade closes the title |
 | game → shell | `{ type: 'cabinet:exit' }` |
 
 ### Standalone

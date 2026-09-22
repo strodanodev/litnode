@@ -48,6 +48,11 @@ export function placement({ nodes, manifest, rulesetId, matchId, beacon, regions
   // the desktop had one). Stable, so the seeded order still decides among
   // relay hosts, and the open fallback remains when nobody has one.
   if (order.some((n) => n.wsAddr)) order = [...order.filter((n) => n.wsAddr), ...order.filter((n) => !n.wsAddr)];
+  // Outermost of all: for a title whose match server runs ON the node (a gauntlet, node/gauntlet.js),
+  // the nodes that advertise running it come first. Only those can seat the players; a match drawn
+  // onto any other host has no court. Stable, and a no-op for titles nobody runs as a gauntlet.
+  const runs = (n) => Array.isArray(n.gauntlets) && n.gauntlets.includes(rulesetId);
+  if (order.some(runs)) order = [...order.filter(runs), ...order.filter((n) => !runs(n))];
 
   const host = order[0] ?? null;
   // The witness PANEL (BUILD-SPEC v0.3 §5): k = 3, drawn from the same seed,

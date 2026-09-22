@@ -219,6 +219,33 @@ export async function check(nodeUrl, matchId, { fetchImpl = fetch } = {}) {
   };
 }
 
+// ------------------------------------------------------------------ follow
+
+/** A node address that can move. `resolve` (optional) finds it again: the
+ *  CLI passes NodeDirectory discovery for `--node auto`. The address is
+ *  re-resolved every `everyMs` and at once when a request cannot reach the
+ *  node at all (a rotated quick-tunnel hostname), never on an HTTP answer. */
+export function followNode(nodeUrl, { resolve = null, everyMs = 10 * 60_000, log = () => {} } = {}) {
+  let base = trim(nodeUrl), at = Date.now();
+  const refresh = async (why) => {
+    if (!resolve) return false;
+    try { const next = trim(await resolve()); at = Date.now(); if (next !== base) { log(`node moved (${why}): ${base} -> ${next}`); base = next; return true; } }
+    catch (e) { log(`node re-resolve failed (${why}): ${e.message}`); }
+    return false;
+  };
+  /** Run fn(base); on a network failure re-resolve once and run it again. */
+  const run = async (fn) => {
+    if (resolve && Date.now() - at > everyMs) await refresh('periodic');
+    try { return await fn(base); }
+    catch (e) {
+      const unreachable = e?.name === 'TimeoutError' || e?.name === 'AbortError' || /fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ECONNRESET/.test(String(e?.cause?.code ?? e?.message));
+      if (unreachable && (await refresh('unreachable'))) return fn(base);
+      throw e;
+    }
+  };
+  return { run, get url() { return base; }, refresh };
+}
+
 // ----------------------------------------------------------------- watcher
 
 /** An adapter is the publisher's side of the bridge — the only code they
@@ -242,8 +269,8 @@ export async function loadAdapter(spec) {
 
 /** Cursor-based watcher: poll → toSubmission → sign → submit, skipping
  *  what the node already holds, persisting the cursor and every outcome. */
-export function createBridge({ nodeUrl, key, adapter, stateFile, pollMs = 5000, fetchImpl = fetch, log = () => {}, adapterOptions = {} }) {
-  const base = trim(nodeUrl);
+export function createBridge({ nodeUrl, key, adapter, stateFile, pollMs = 5000, fetchImpl = fetch, log = () => {}, adapterOptions = {}, resolve = null }) {
+  const node = followNode(nodeUrl, { resolve, log });
   const state = stateFile && existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, 'utf8')) : { cursor: null, seen: {} };
   const save = () => { if (stateFile) { mkdirSync(dirname(stateFile), { recursive: true }); writeFileSync(stateFile, JSON.stringify(state, null, 2) + '\n'); } };
   let running = false, timer = null;
@@ -251,6 +278,8 @@ export function createBridge({ nodeUrl, key, adapter, stateFile, pollMs = 5000, 
 
   /** One pass over the source. Returns what it did. */
   const once = async () => {
+    await node.run((b) => fetchImpl(`${b}/health`, { signal: AbortSignal.timeout(8000) })).catch(() => {}); // follow a moved node before the pass
+    const base = node.url;
     const rooms = await placements(base, fetchImpl);
     const ctx = { nodeUrl: base, rooms, log, options: adapterOptions };
     const { rows = [], cursor } = await adapter.poll(state.cursor, ctx);
@@ -263,7 +292,7 @@ export function createBridge({ nodeUrl, key, adapter, stateFile, pollMs = 5000, 
         if (!sub) { state.seen[id] = { status: 'skipped', at: Date.now() }; did.push({ id, status: 'skipped' }); continue; }
         if (row.room) sub = bindToPlacement(sub, row.room, rooms);
         const signed = await prepare(sub, key);
-        const r = await submit(base, signed, { fetchImpl });
+        const r = await node.run((b) => submit(b, signed, { fetchImpl }));
         state.seen[id] = { status: r.status, matchId: r.matchId, at: Date.now(), ...(r.error ? { error: r.error } : {}) };
         did.push({ id, ...r, delta: undefined, attestation: r.delta?.attestation, official: r.delta?.official });
         log(`${id} → ${r.matchId}: ${r.status}${r.delta ? ` · ${r.delta.attestation}${r.delta.official ? ' · OFFICIAL' : ''}` : ''}${r.error ? ` · ${r.error}` : ''}`);
@@ -300,24 +329,24 @@ export function createBridge({ nodeUrl, key, adapter, stateFile, pollMs = 5000, 
  *    GET  /health            this bridge's key and node
  *
  *  Runs beside the node (loopback) or anywhere that can reach it. */
-export function createIntake({ nodeUrl, key, token, host = '127.0.0.1', port = 8480, fetchImpl = fetch, log = () => {}, rulesetId = null, kind = null }) {
+export function createIntake({ nodeUrl, key, token, host = '127.0.0.1', port = 8480, fetchImpl = fetch, log = () => {}, rulesetId = null, kind = null, resolve = null }) {
   if (!token || token.length < 16) throw new Error('intake needs a BRIDGE_TOKEN of at least 16 characters');
-  const base = trim(nodeUrl);
+  const node = followNode(nodeUrl, { resolve, log });
   const json = (res, code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://x');
-      if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { ok: true, bridge: key.publicKey, node: base, rulesetId, kind });
-      if (req.method === 'GET' && url.pathname.startsWith('/check/')) return json(res, 200, await check(base, decodeURIComponent(url.pathname.slice(7)), { fetchImpl }));
+      if (req.method === 'GET' && url.pathname === '/health') return json(res, 200, { ok: true, bridge: key.publicKey, node: node.url, rulesetId, kind });
+      if (req.method === 'GET' && url.pathname.startsWith('/check/')) return json(res, 200, await node.run((b) => check(b, decodeURIComponent(url.pathname.slice(7)), { fetchImpl })));
       if (req.method === 'POST' && url.pathname === '/submit') {
         if (req.headers.authorization !== `Bearer ${token}`) return json(res, 401, { error: 'bad token' });
         let text = ''; for await (const c of req) { text += c; if (text.length > 8e6) return json(res, 413, { error: 'too large' }); }
         let sub; try { sub = JSON.parse(text); } catch { return json(res, 400, { error: 'body must be JSON' }); }
         if (rulesetId && sub.rulesetId !== rulesetId) return json(res, 400, { error: `this bridge signs for ${rulesetId} only` });
         if (kind === 'attested') sub.kind = 'attested';
-        if (sub.room) sub = bindToPlacement(sub, sub.room, await placements(base, fetchImpl));
+        if (sub.room) sub = bindToPlacement(sub, sub.room, await placements(node.url, fetchImpl));
         const signed = await prepare(sub, key);
-        const r = await submit(base, signed, { fetchImpl });
+        const r = await node.run((b) => submit(b, signed, { fetchImpl }));
         log(`intake ${sub.matchId}: ${r.status}${r.error ? ` · ${r.error}` : r.delta ? ` · ${r.delta.attestation}` : ''}`);
         return json(res, r.status === 'refused' ? 400 : 200, r);
       }

@@ -150,3 +150,50 @@ test('gauntlet: a crashing court and one that never listens are reported as fail
   assert.equal(g.start({ matchId: 'x', rulesetId: 'unknown.v1', participants: [] }) instanceof Promise, true);
   assert.equal(await g.start({ matchId: 'x', rulesetId: 'unknown.v1', participants: [] }), null, 'no config: nothing to run');
 });
+
+test('gauntlet: with no upstream relay the gateway answers the node\'s root WebSocket probe itself, so a node hosting only gauntlet titles still gets a verified wsAddr', async (t) => {
+  const g = createGauntlets({ configs: {}, port: 0, nodeUrl: 'http://127.0.0.1:1' });
+  await g.listen();
+  t.after(() => g.stopAll());
+  const opened = await new Promise((res) => { const ws = new WebSocket(`ws://127.0.0.1:${g.port}`); const to = setTimeout(() => res(false), 5000); ws.onopen = () => { clearTimeout(to); res(true); }; ws.onerror = () => { clearTimeout(to); res(false); }; });
+  assert.equal(opened, true, 'the relay verification (a WebSocket at the root) succeeds');
+  const room = await new Promise((res) => { const ws = new WebSocket(`ws://127.0.0.1:${g.port}/LIT-${'0'.repeat(32)}`); ws.onopen = () => res('open'); ws.onerror = () => res('refused'); });
+  assert.equal(room, 'refused', 'an unknown room is still refused');
+});
+
+test('placement: for a gauntlet title the nodes that run its court come first, outranking relay and seed order; other titles are untouched', async () => {
+  const { placement } = await import('../protocol/placement.js');
+  const manifest = { buildHash: 'b'.repeat(64), standingFloor: 0 };
+  const node = (id, extra = {}) => ({ nodeId: id.repeat(64), operator: `op-${id}`, roles: ['mesh', 'host', 'witness'], region: 'x', standing: 1, buildHashes: { 'pickle-brawl.v1': manifest.buildHash, 'tug.v1': manifest.buildHash }, ...extra });
+  const nodes = [node('a', { wsAddr: 'wss://a' }), node('b', { wsAddr: 'wss://b' }), node('c', { wsAddr: 'wss://c', gauntlets: ['pickle-brawl.v1'] }), node('d')];
+  for (let i = 0; i < 40; i++) {
+    const p = placement({ nodes, manifest, rulesetId: 'pickle-brawl.v1', matchId: `m${i}`, beacon: `beacon${i}` });
+    assert.equal(p.host.nodeId, 'c'.repeat(64), 'the only node that runs the court hosts every draw');
+  }
+  const hostsTug = new Set(Array.from({ length: 40 }, (_, i) => placement({ nodes, manifest, rulesetId: 'tug.v1', matchId: `m${i}`, beacon: `beacon${i}` }).host.nodeId[0]));
+  assert.ok(hostsTug.size > 1 && !hostsTug.has('d'), `a title nobody runs as a gauntlet keeps the seeded, relay-first draw: ${[...hostsTug]}`);
+});
+
+test('gauntlet: GAUNTLET_GATEWAY_PORT puts the gateway on its own port, sends unknown rooms to the title relay on RELAY_PORT, and the heartbeat advertises the titles this node runs', { timeout: 60_000 }, async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'litg-'));
+  const relaySockets = new Set();
+  const relay = createServer((req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ relay: true, path: req.url, method: req.method })); });
+  relay.on('upgrade', (req, socket) => { relaySockets.add(socket); const accept = createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64'); socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`); });
+  await new Promise((r) => relay.listen(0, '127.0.0.1', r));
+  const relayPort = relay.address().port;
+  const cfg = { command: process.execPath, args: [FAKE], cwd: ROOT, env: { PORT: '${port}' }, portRange: [7890, 7899] };
+  const host = await createNode({ dataDir: join(tmp, 'n'), offline: true, heartbeatMs: 200, operator: 'g', roles: ['mesh', 'host'], rulesets: [PB], gauntlets: { 'pickle-brawl.v1': cfg }, gauntletPort: 0, relayPort });
+  t.after(async () => { await host.stop(); for (const s of relaySockets) s.destroy(); await new Promise((r) => relay.close(r)); rmSync(tmp, { recursive: true, force: true }); });
+  assert.notEqual(host.gauntlet.port, relayPort, 'the gateway has its own port');
+  assert.equal(host.gauntlet.status().upstream, `ws://127.0.0.1:${relayPort}`, 'unknown rooms default to the title relay on RELAY_PORT');
+  const opened = await new Promise((res) => { const ws = new WebSocket(`ws://127.0.0.1:${host.gauntlet.port}/`); const to = setTimeout(() => res(false), 5000); ws.onopen = () => { clearTimeout(to); ws.close(); res(true); }; ws.onerror = () => { clearTimeout(to); res(false); }; });
+  assert.ok(opened); assert.equal(relaySockets.size, 1, 'the root WebSocket reached the title relay through the gateway');
+  const gw = `http://127.0.0.1:${host.gauntlet.port}`;
+  assert.deepEqual(await (await fetch(`${gw}/leaderboard?limit=5`)).json(), { relay: true, path: '/leaderboard?limit=5', method: 'GET' }, "the relay's own HTTP API passes through");
+  assert.equal((await (await fetch(`${gw}/health`)).json()).relay, true, "with a relay behind it, /health is the relay's");
+  assert.equal((await (await fetch(`${gw}/.well-known/jwks.json`)).json()).path, '/.well-known/jwks.json');
+  assert.equal((await (await fetch(`${gw}/gateway`)).json()).upstream, `ws://127.0.0.1:${relayPort}`, 'the gateway answers at /gateway');
+  const snap = await (await fetch(`${host.addr}/snapshot?envelopes=1`)).json();
+  const mine = snap.envelopes.find((e) => e.body.nodeId === host.nodeId).body;
+  assert.deepEqual(mine.gauntlets, ['pickle-brawl.v1'], 'the heartbeat says which titles this node runs');
+});

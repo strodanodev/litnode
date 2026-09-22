@@ -16,6 +16,7 @@ import { createNode } from './litnode.js';
 import { createTui, formatEvent } from './tui.js';
 import { lanAddress } from './upnp.js';
 import { loadGauntletConfigs } from './gauntlet.js';
+import { loadServiceBundles } from './publisher-services.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const deployedPath = join(root, 'contracts', 'deployed.testnet.json');
@@ -100,7 +101,9 @@ const node = await createNode({
   // GAUNTLETS=<rulesetId>=<config.json>,… — per-match headless servers this node runs for
   // those titles, behind the relay port (node/gauntlet.js). GAUNTLET_UPSTREAM=ws://127.0.0.1:8477
   // sends rooms the gateway does not know to a title's own relay on this machine.
-  gauntlets: loadGauntletConfigs(env.GAUNTLETS, { root }), gauntletUpstream: env.GAUNTLET_UPSTREAM || null,
+  gauntlets: loadGauntletConfigs(env.GAUNTLETS, { root }), gauntletUpstream: env.GAUNTLET_UPSTREAM || null, gauntletPort: env.GAUNTLET_GATEWAY_PORT ? Number(env.GAUNTLET_GATEWAY_PORT) : null,
+  // SERVICES=<bundle.json>,… — a publisher's long-lived backend run on this node (node/publisher-services.js).
+  services: loadServiceBundles(env.SERVICES, { root }),
   // Universal login (docs/UNIVERSAL-LOGIN.md): on whenever PlayerProfile is set; AIR=0 turns it off.
   // AIR_PARTNER_ID pins tokens to one partner app (recommended); AIR_JWKS_URL overrides the key set.
   air: env.AIR === '0' ? null : { partnerId: env.AIR_PARTNER_ID ?? null, jwksUrl: env.AIR_JWKS_URL || undefined },

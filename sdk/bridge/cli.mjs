@@ -51,6 +51,9 @@ const fail = (code, message, extra = {}) => { out({ ok: false, error: message, .
 // NodeDirectory on chain, so nothing is pinned to a tunnel hostname that rotates.
 let resolved = null;
 const nodeUrl = () => resolved ?? String(flags.node ?? process.env.LITNODE_URL ?? 'http://127.0.0.1:7801').replace(/\/+$/, '');
+const isAuto = () => (flags.node ?? process.env.LITNODE_URL) === 'auto';
+// Long-running commands keep following the node: re-resolved on an unreachable node and every 10 min.
+const follow = () => (isAuto() ? { resolve: async () => (await resolveNode({ rulesetId: flags.ruleset ?? null, log })).url } : {});
 const resolveIfAuto = async () => { if ((flags.node ?? process.env.LITNODE_URL) === 'auto') { const r = await resolveNode({ rulesetId: flags.ruleset ?? null, log }); resolved = r.url; return r; } return null; };
 const keyFile = () => resolve(String(flags.file ?? process.env.BRIDGE_KEY_FILE ?? DEFAULT_KEY_FILE));
 const log = (m) => { if (!JSON_OUT) console.log(`[${new Date().toISOString().slice(11, 19)}] ${m}`); };
@@ -108,7 +111,7 @@ const commands = {
     const token = process.env.BRIDGE_TOKEN;
     if (!token) fail(2, 'set BRIDGE_TOKEN (≥16 chars) in the environment; your backend sends it as `authorization: Bearer <token>`', { needs: ['BRIDGE_TOKEN'] });
     const kp = await loadOrCreateKey(keyFile());
-    const intake = createIntake({ nodeUrl: nodeUrl(), key: kp, token, host: flags.host ?? '127.0.0.1', port: Number(flags.port ?? 8480), rulesetId: flags.ruleset ?? null, kind: flags.kind ?? null, log });
+    const intake = createIntake({ ...follow(), nodeUrl: nodeUrl(), key: kp, token, host: flags.host ?? '127.0.0.1', port: Number(flags.port ?? 8480), rulesetId: flags.ruleset ?? null, kind: flags.kind ?? null, log });
     const addr = await intake.listen();
     out({ ok: true, listening: `http://${addr.address}:${addr.port}`, node: nodeUrl(), publicKey: kp.publicKey }, [`bridge intake on http://${addr.address}:${addr.port}/submit → ${nodeUrl()}`, `POST a submission with 'authorization: Bearer $BRIDGE_TOKEN'; GET /check/<matchId>; GET /health`, `bridge key ${kp.publicKey} — the node needs ${nodeEnvLine(flags.kind ?? 'replayable', flags.ruleset ?? '<rulesetId>', kp.publicKey)}`]);
     await new Promise(() => {});
@@ -129,7 +132,7 @@ async function runWatch(backfill) {
   const name = String(flags.adapter).replace(/[^a-z0-9]+/gi, '-');
   const stateFile = resolve(String(flags.state ?? join(homedir(), '.litnode', `bridge-${name}.json`)));
   if (backfill && existsSync(stateFile) && !flags.keep) { mkdirSync(dirname(stateFile), { recursive: true }); writeFileSync(stateFile, JSON.stringify({ cursor: flags.cursor ?? null, seen: {} }) + '\n'); }
-  const bridge = createBridge({ nodeUrl: nodeUrl(), key: kp, adapter, stateFile, pollMs: Number(flags.poll ?? 5000), log, adapterOptions: adapterOptions() });
+  const bridge = createBridge({ ...follow(), nodeUrl: nodeUrl(), key: kp, adapter, stateFile, pollMs: Number(flags.poll ?? 5000), log, adapterOptions: adapterOptions() });
   log(`bridge ${kp.publicKey.slice(0, 12)}… ${adapter.kind} ${flags.ruleset ?? adapter.rulesetId} via ${flags.adapter} → ${nodeUrl()} (state ${stateFile})`);
   if (backfill || flags.once) {
     let total = [];

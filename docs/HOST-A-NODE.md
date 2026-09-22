@@ -142,6 +142,32 @@ ends cleanly on SIGTERM or a `supervisor.stop` file. PIDs:
 `DATA_DIR/supervisor.pid` and `DATA_DIR/node.pid`. It is the cross-platform
 `run-node.cmd`.
 
+## Gauntlets: running a title's match server on this node
+
+`GAUNTLETS=<rulesetId>=<config.json>,...` in `node.env` makes this node spawn
+that title's headless server for every match it hosts, seat the placed
+players and front the room through the relay tunnel
+(`docs/BRING-YOUR-BACKEND.md` section 6a). On a node that already runs
+Agent Fighter's relay on `RELAY_PORT`, add `GAUNTLET_GATEWAY_PORT=8478`:
+the tunnel fronts the gateway and every room the gateway does not know
+goes on to the relay. Without it the gateway would try to take the relay's
+port and the node would not start; `npm run host -- doctor` says so.
+`npm run host -- init --gauntlets <id>=<json> --gauntlet-gateway-port 8478
+--courts <id>:<key>` writes all three. `/health.gauntlet` shows titles and
+live processes. The example config is
+`gauntlets/pickle-brawl.json`.
+
+## Services: running a studio's backend on this node
+
+`SERVICES=<bundle.json>,...` runs a studio's long-lived backend (API,
+matchmaker, court pool) under this node and publishes it at
+`<wsAddr>/svc/<prefix>.<name>` (`docs/BRING-YOUR-BACKEND.md` section 6c).
+It shares the gauntlet gateway, so a node that also runs Agent Fighter's
+relay sets `GAUNTLET_GATEWAY_PORT=8478`; the relay's HTTP API and
+WebSockets pass through untouched, and the gateway's own status moves to
+`/gateway`. `/health.gauntlet.services` shows each service's state,
+restarts and last error.
+
 ## Library
 
 ```js
@@ -167,9 +193,9 @@ inspection. Nothing in the library takes a key.
 npm run host -- init --operator my-laptop --witness --seeds https://<a seed>
 npm run host -- doctor
 npm run host -- start --detach
-set OPERATOR_KEY=0x…        # your wallet, this shell only
+export OPERATOR_KEY=0x…     # your wallet, this shell only (PowerShell: $env:OPERATOR_KEY="0x…")
 npm run host -- bond
-set OPERATOR_KEY=
+unset OPERATOR_KEY
 npm run host -- verify
 ```
 

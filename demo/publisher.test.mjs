@@ -217,3 +217,15 @@ test('bridge: resolveNode picks the freshest bonded seed that proves its key, ho
   assert.deepEqual(r.tried.map((t) => t.url), ['http://norule.test'], 'the newer seed that does not host the title is skipped, with the reason');
   await assert.rejects(resolveNode({ rulesetId: 'tug.v1', ...args }), /no live node hosting tug.v1/);
 });
+
+test('bridge: a long-running bridge follows a node that moved — re-resolved when unreachable, not on an HTTP answer', async () => {
+  const { followNode } = await import('../sdk/bridge/index.mjs');
+  let where = 'http://new.test';
+  const node = followNode('http://old.test/', { resolve: async () => where });
+  const seen = [];
+  const r = await node.run(async (b) => { seen.push(b); if (b === 'http://old.test') throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND' } }); return 'ok'; });
+  assert.equal(r, 'ok'); assert.deepEqual(seen, ['http://old.test', 'http://new.test']); assert.equal(node.url, 'http://new.test');
+  await assert.rejects(node.run(async () => { throw new Error('node answered 400: win by two'); }), /win by two/, 'a refusal is an answer, not a moved node');
+  const pinned = followNode('http://fixed.test');
+  await assert.rejects(pinned.run(async () => { throw new TypeError('fetch failed'); }), /fetch failed/, 'without a resolver nothing is guessed');
+});

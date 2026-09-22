@@ -150,7 +150,9 @@ export const headMatches = (rec) => chainHead(rec.entries()) === rec.head;
 export async function settle({ nodeUrl, recorder, signers, fetchImpl = globalThis.fetch, hydration = null }) {
   const body = recorder.body();
   const signatures = {};
-  for (const [playerId, s] of Object.entries(signers)) { const r = await s.sign(body); signatures[playerId] = r.sig ?? r; }
+  // Each entry is a signer ({ sign(body) } — the shell, localSigner) or the signature itself, e.g. the
+  // other player's, carried over your transport as a hex string or { sig }.
+  for (const [playerId, s] of Object.entries(signers)) { const r = typeof s === 'string' ? s : typeof s?.sign === 'function' ? await s.sign(body) : s; signatures[playerId] = r?.sig ?? r; }
   const sub = recorder.submission({ signatures, hydration });
   const r = await fetchImpl(`${String(nodeUrl).replace(/\/+$/, '')}/ledger`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(sub) });
   const j = await r.json();

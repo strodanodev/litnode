@@ -24,6 +24,7 @@ import { matchIdBytes32 } from '../protocol/matchbook.js';
 import { createUpdater, RESTART_EXIT } from './update.js';
 import { createTunnel } from './tunnel.js';
 import { createGauntlets } from './gauntlet.js';
+import { createServices as createPublisherServices } from './publisher-services.js';
 import { keepMapped } from './upnp.js';
 import { createAnnouncer } from './announce.js';
 import { createAirVerifier } from './air.js';
@@ -139,10 +140,16 @@ export async function createNode({
   // chain. { partnerId, jwksUrl } — partnerId pins tokens to one partner app.
   air = null,
   // Gauntlet loops (node/gauntlet.js): per-match headless servers this node
-  // runs for titles whose sim is a process. {rulesetId: config}; the gateway
-  // listens on relayPort (fronted by the relay tunnel) and forwards unknown
-  // rooms to gauntletUpstream (a title's own relay on this machine).
-  gauntlets = {}, gauntletUpstream = null,
+  // runs for titles whose sim is a process. {rulesetId: config}. The gateway
+  // listens on gauntletPort (or relayPort when that is unset) and the relay
+  // tunnel fronts the gateway; rooms it does not know go to gauntletUpstream,
+  // which defaults to the title relay on relayPort when both ports are set —
+  // so a node that already fronts a relay (Agent Fighter's, whose wrapper
+  // listens on RELAY_PORT) adds gauntlets with GAUNTLET_GATEWAY_PORT alone.
+  gauntlets = {}, gauntletUpstream = null, gauntletPort = null,
+  // Publisher services (node/publisher-services.js): a title's long-lived backend — matchmaker,
+  // accounts API, a court pool — supervised here and published on the gateway at /svc/<prefix>.<name>.
+  services: serviceBundles = [],
   heartbeatMs = EPOCH_MS / 2, log = () => {}, onEvent = () => {},
 }) {
   // Every observable thing the node does goes through emit(): the TUI draws
@@ -400,6 +407,10 @@ export async function createNode({
   const trafficNow = () => { const cut = Date.now() - 60_000; const o = { outPerMin: 0, outBytesPerMin: 0, inPerMin: 0, inBytesPerMin: 0 }; for (const x of traffic) { if (x.t < cut) continue; if (x.dir === 'out') { o.outPerMin++; o.outBytesPerMin += x.bytes; } else { o.inPerMin++; o.inBytesPerMin += x.bytes; } } return o; };
   let stakes = null;            // nodeId → standing, when nodeStake configured
   let wsAddr = wsAddrIn;        // the relay this node fronts; a relay tunnel sets it live
+  // The port the relay tunnel fronts: the gauntlet gateway when this node runs one on its own port
+  // (it forwards everything else to the title relay on relayPort), else the title relay itself.
+  const runsGateway = Object.keys(gauntlets).length > 0 || serviceBundles.length > 0;
+  const relayFront = runsGateway && gauntletPort != null ? gauntletPort : relayPort;
   let lanAddr = null;           // what we listen on, kept for /health when a tunnel replaces addr
   const tunnels = { node: null, relay: null };
   let upnpCtl = null;
@@ -472,7 +483,7 @@ export async function createNode({
     relayTimer = setInterval(() => { void relayCheck().then(() => { if (relay.state === 'up' && relayTimer) { clearInterval(relayTimer); relayTimer = setInterval(() => void relayCheck(), RELAY_WATCH_MS); } }); }, RELAY_VERIFY_MS);
     void relayCheck();
   };
-  const relayStatus = () => ({ url: relay.url, port: relayPort, state: relay.state, checkedAt: relay.checkedAt ? new Date(relay.checkedAt).toISOString() : null, ms: relay.ms, lastError: relay.lastError });
+  const relayStatus = () => ({ url: relay.url, port: relayFront, state: relay.state, checkedAt: relay.checkedAt ? new Date(relay.checkedAt).toISOString() : null, ms: relay.ms, lastError: relay.lastError });
   const announceSend = () => {
     if (!announcer || !announce) return;
     // Only a node with a public https address is worth announcing (a seed
@@ -504,6 +515,11 @@ export async function createNode({
 
   const myHeartbeat = () => seal(HEARTBEAT_TAG, {
     nodeId, operator, roles, region, addr, wsAddr, standing: 0, version, protocol: PROTOCOL_VERSION, relayKeys,
+    // Titles whose match server THIS node runs (node/gauntlet.js). Placement puts these nodes first
+    // for those titles: a gauntlet title drawn onto a node without its court is a match nobody can join.
+    ...(Object.keys(gauntlets).length ? { gauntlets: Object.keys(gauntlets).sort() } : {}),
+    // Publisher services this node runs (reachable at <wsAddr>/svc/<name>): how a game client finds its backend.
+    ...(serviceBundles.length ? { services: serviceBundles.flatMap((b) => Object.keys(b.services).map((n) => `${b.prefix}.${n}`)).sort() } : {}),
     buildHashes: buildHashes(), manifests: manifests(), epoch: epochOf(Date.now()),
     // who we reached in the last ten seconds and how fast (16 hex of the key, ms) — the mesh's edges, for /fleet.graph on any node; not part of the snapshot root
     links: [...heartbeats.values()].filter((b) => b.nodeId !== nodeId && b.addr && Date.now() - (links.get(b.addr)?.okAt ?? 0) < 10_000).map((b) => ({ id: b.nodeId.slice(0, 16), ms: links.get(b.addr).emaMs })),
@@ -915,7 +931,7 @@ export async function createNode({
       at: new Date(now).toISOString(), nodeId, version, protocol: PROTOCOL_VERSION, cabinet: CABINET_VERSION,
       self: { nodeId, operator, roles, region, version, addr, lanAddr, wsAddr, startedAt: new Date(startedAt).toISOString(), uptimeMs: now - startedAt,
         bonded: stakes?.[nodeId]?.active ?? null, wallet: stakes?.[nodeId]?.operator ?? null, eligible: eligible.has(nodeId), bond: myBond ? { eligible: myBond.eligible, delegate: myBond.delegate, amount: myBond.amount.toString() } : null,
-        tunnel: tunnels.node?.status() ?? null, relay: relayPort ? relayStatus() : null, upnp: upnpCtl?.status() ?? null, update: (({ available, latest, checkedAt, lastError, registry, channel, canRollback, applying, date }) => ({ available, latest, checkedAt: checkedAt ?? null, lastError: lastError ?? null, registry, channel, canRollback, applying: !!applying, date: date ?? null }))(updater.status()),
+        tunnel: tunnels.node?.status() ?? null, relay: relayFront ? relayStatus() : null, upnp: upnpCtl?.status() ?? null, update: (({ available, latest, checkedAt, lastError, registry, channel, canRollback, applying, date }) => ({ available, latest, checkedAt: checkedAt ?? null, lastError: lastError ?? null, registry, channel, canRollback, applying: !!applying, date: date ?? null }))(updater.status()),
         inbound: { peers: [...inbound.values()].filter((t) => now - t < 30_000).length, reachable: peersKnown.size ? [...inbound.values()].some((t) => now - t < 30_000) : null }, sandbox: sandbox.status() },
       chain: { ...(({ rpc, head, headTs, lagS, rpcMs, rpcLastMs, rpcCalls, rpcFailures, rpcAt, lastError, offline }) => ({ rpc, head, headTs, lagS, rpcMs, rpcLastMs, rpcCalls, rpcFailures, rpcAt, lastError, offline }))(chain.status()),
         matchBook: mbs ? { contract: mbs.contract, delegate: mbs.delegate, delegated: mbs.delegated, funded: mbs.funded, enrolled: mbs.enrolled, purse: mbs.purse, cursor: mbs.cursor, scanRange: mbs.scanRange, events: mbs.events, sends: mbs.sends, lastTx: mbs.lastTx, lastError: mbs.lastError, hosting: mbs.hosting, seated: mbs.seated, windows: mbs.windows, sent: mbook.sent(50) } : null,
@@ -953,7 +969,7 @@ export async function createNode({
           admin: stakeAdmin === null ? null : stakeAdmin ? 'contract' : 'eoa', matchBook: mbook ? mbook.status() : matchBookAddr ? { contract: matchBookAddr, offline: true } : null, chain: chain.status(), profiles: profileState(), version, repair: sdkMissing, update: updater.status(),
           sandbox: sandbox.status(), trust: { policy: titleTrust, publishers: trustedPublishers, titleRegistry: titleRegistry ?? null, relayKeys, courts: Object.keys(courts) }, registry: registry ? 'chain' : erc6699 ? 'offline' : 'unset',
           cabinet: { version: CABINET_VERSION }, // the copy this node serves at /; a cabinet loaded from elsewhere compares its own
-          relay: relayPort ? relayStatus() : null, // the relay tunnel as a WebSocket client sees it: verified before it is advertised
+          relay: relayFront ? relayStatus() : null, // the relay tunnel as a WebSocket client sees it: verified before it is advertised
           wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, upnp: upnpCtl?.status() ?? null, gauntlet: gauntlet?.status() ?? null,
           directory: nodeDirectory ? { contract: nodeDirectory, seeds: chainSeeds.length, announcer: announcer?.status() ?? null } : null, startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt,
           // reachable: a peer has pushed gossip to us in the last 30 s. null = no peers known, so nothing to conclude.
@@ -1190,14 +1206,18 @@ export async function createNode({
   const actualPort = server.address().port;
   addr ??= `http://${host}:${actualPort}`;
   lanAddr = addr;
-  if (Object.keys(gauntlets).length) {
-    gauntlet = createGauntlets({ configs: gauntlets, port: relayPort ?? 0, upstream: gauntletUpstream, nodeUrl: `http://127.0.0.1:${actualPort}`, wsAddr: () => wsAddr, nodeId, log, emit });
+  let publisherServices = null;
+  if (runsGateway) {
+    if (serviceBundles.length) publisherServices = createPublisherServices({ bundles: serviceBundles, nodeUrl: `http://127.0.0.1:${actualPort}`, publicBase: () => wsAddr, log, emit });
+    const upstream = gauntletUpstream ?? (gauntletPort != null && relayPort && gauntletPort !== relayPort ? `ws://127.0.0.1:${relayPort}` : null);
+    gauntlet = createGauntlets({ configs: gauntlets, port: gauntletPort ?? relayPort ?? 0, upstream, nodeUrl: `http://127.0.0.1:${actualPort}`, wsAddr: () => wsAddr, nodeId, log, emit, services: publisherServices });
     await gauntlet.listen();
-    if (!relayPort) log('gauntlet gateway has no RELAY_PORT: reachable on this machine only');
+    if (publisherServices) await publisherServices.start({ gatewayPort: gauntlet.port });
+    if (!relayPort && gauntletPort == null) log('gauntlet gateway has no RELAY_PORT or GAUNTLET_GATEWAY_PORT: reachable on this machine only');
   }
   if (upnp) {
     const ports = [{ external: actualPort, internal: actualPort, label: 'node' }];
-    if (relayPort) ports.push({ external: relayPort, internal: relayPort, label: 'relay' });
+    if (relayFront) ports.push({ external: relayFront, internal: relayFront, label: 'relay' });
     upnpCtl = keepMapped(ports, { log, gateway: upnpGateway });
     upnpCtl.ready.then(() => { const s = upnpCtl.status(); emit('upnp', s); if (s.mapped.length && !tunnel && s.publicIp && !s.cgnat) { addr = `http://${s.publicIp}:${actualPort}`; log(`advertising ${addr} (UPnP)`); } });
   }
@@ -1238,8 +1258,8 @@ export async function createNode({
       };
       tunnels.node = createTunnel({ port: actualPort, name: tunnel === 'named' ? tunnelName : null, hostname: tunnel === 'named' ? tunnelHost : null, log, bin: tunnelBin, onUrl: verifyTunnel });
     }
-    if (relayPort && !wsAddrIn) {
-      tunnels.relay = createTunnel({ port: relayPort, name: relayTunnelName, hostname: relayTunnelHost, log, bin: tunnelBin,
+    if (relayFront && !wsAddrIn) {
+      tunnels.relay = createTunnel({ port: relayFront, name: relayTunnelName, hostname: relayTunnelHost, log, bin: tunnelBin,
         onUrl: relayUrl });
     }
   } catch (e) {
@@ -1278,6 +1298,6 @@ export async function createNode({
     rulesets: () => buildHashes(), peers: () => heartbeats, inbound, operator, roles, region, startedAt,
     version, updater, restart, tunnels, upnp: upnpCtl, get wsAddr() { return wsAddr; }, get announcer() { return announcer; }, seeds: () => chainSeeds, seedChecks, admitSeed, sandbox, refused, incompatible, protocol: PROTOCOL_VERSION, peersKnown,
     get gauntlet() { return gauntlet; },
-    async stop() { clearInterval(timer); clearInterval(updateTimer); clearInterval(directoryTimer); clearTimeout(announceRetry); clearInterval(relayTimer); await gauntlet?.stopAll(); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); server.closeAllConnections?.(); await new Promise((r) => server.close(r)); },
+    async stop() { clearInterval(timer); clearInterval(updateTimer); clearInterval(directoryTimer); clearTimeout(announceRetry); clearInterval(relayTimer); await publisherServices?.stop(); await gauntlet?.stopAll(); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); server.closeAllConnections?.(); await new Promise((r) => server.close(r)); },
   };
 }

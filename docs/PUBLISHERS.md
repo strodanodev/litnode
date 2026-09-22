@@ -1,5 +1,8 @@
 # Publishers: two paths onto the mesh
 
+The one-page form of everything below, with the "for dummies" pictures, is
+[SDK.md](SDK.md), served by the arcade at arcade.litvm.games/#/build.
+
 This is the front door for a studio or a solo developer. Everything the
 whitepaper and litvm.games promise a developer maps to something in this
 repository that runs today, or to an honest "not yet". Two paths:
@@ -7,6 +10,7 @@ repository that runs today, or to an honest "not yet". Two paths:
 | you have | path | what you keep | what changes |
 |---|---|---|---|
 | A game already running on your own backend (a relay, a match server, a database of results) | **Bring your backend** — [BRING-YOUR-BACKEND.md](BRING-YOUR-BACKEND.md), skill `migrate-a-title` | your engine, your database, your art direction, your soft currency, your servers | one message per finished match reaches a node; a ruleset the node can check; a bridge key the node trusts |
+| A game whose match server should run **on the node**, nothing hosted elsewhere | **Gauntlet loop**: [BRING-YOUR-BACKEND.md section 6a](BRING-YOUR-BACKEND.md), config in `gauntlets/`, skill `migrate-a-title` | your engine, your art, your database for everything outside the match | the node spawns your headless server per placed match, mints the seats, fronts it on its tunnel, ends it when the match settles |
 | A game you are starting now | **Build from scratch** — [BUILD-FROM-SCRATCH.md](BUILD-FROM-SCRATCH.md), skill `build-a-title` | the same; you write no backend for settlement | the simulation is one deterministic file both the client and the node run |
 
 Both end at the same place: a *title* (one file, [HOST-YOUR-TITLE.md](HOST-YOUR-TITLE.md))
@@ -21,14 +25,14 @@ They are the same things.
 
 | site / litepaper | in this repository | status |
 |---|---|---|
-| **Gauntlet Loop** — "spins up on a node when a match is requested, runs the fixed tick simulation, collects signed inputs, produces a match delta, has it co-signed, and relays it to settlement. Then it dies." | A *replayable title* (`defineTitle`) run by `node/sandbox.js`: placement freezes the match, the node replays the signed input log in a separate permission-restricted process, produces a delta, a witness on another operator's node co-signs it, the hour's deltas go to `EpochAnchor`. The process dies after the replay. | built, tested (`demo/settle.test.mjs`, `demo/audit.test.mjs`) |
+| **Gauntlet Loop** — "spins up on a node when a match is requested, runs the fixed tick simulation, collects signed inputs, produces a match delta, has it co-signed, and relays it to settlement. Then it dies." | Two shapes. (a) A *replayable title* (`defineTitle`) run by `node/sandbox.js`: placement freezes the match, the node replays the signed input log in a separate permission-restricted process, produces a delta, a witness on another operator's node co-signs it, the hour's deltas go to `EpochAnchor`. The process dies after the replay. (b) A *gauntlet* (`node/gauntlet.js`): the node spawns the title's own headless server per placed match, seats the players, fronts it on its relay tunnel, and ends it when the match settles. | (a) built, tested (`demo/settle.test.mjs`, `demo/audit.test.mjs`); (b) built, tested (`demo/gauntlet.test.mjs`); Pickle Brawl's court runs on it |
 | **Harness** — "one interface for humans and agents" | The title's `inputSchema`: one input vector per participant per tick, whoever produced it. `sdk/client.js` records it; a human's keyboard and an agent's policy fill the same field. | built; AI AGENT mode (an agent daemon on the node) is roadmap |
 | **Infrastructure** — "attest characters, equipment and matches to the global database" | Matches: settlement + `EpochAnchor` (live on Liteforge). Characters: `ERC6699Registry` v2 (deployed, no minter yet). Players: `PlayerProfile` (deployed). | matches live; characters deployed but empty |
 | **Attested node / operator** | A node whose key is bonded on `NodeStake`; placement draws only from the bonded set | live |
 | **Settle everything. Trust nothing that is not signed.** | Every queue entry, heartbeat, ledger head, delta, co-signature, dispute and directory entry is an ed25519 signature or an EVM transaction | live |
 | **Verified wins** (Agent Fighter's line) | `attestation: 'players'` + independent witness = OFFICIAL. Today AF's live results are `relay`-attested (authenticated, not yet player-signed live); 0.9.0 has the signing path | protocol built; live demonstration pending |
 | **Attested** (Pickle Brawl) | `defineAttestedTitle`: a court signs a report the node validates but cannot replay; labelled, never OFFICIAL | built; no live court configured yet |
-| **One account, universal sign-in through AirKit** | A player is an ed25519 key, bindable to a wallet through `PlayerProfile` ([WALLET-IDENTITY.md](WALLET-IDENTITY.md)). AirKit is not integrated in litnode; the cabinet's identity is the key + optional wallet | key identity live; AirKit not here |
+| **One account, universal sign-in through AirKit** | A player is an ed25519 key, bindable to a wallet through `PlayerProfile` ([WALLET-IDENTITY.md](WALLET-IDENTITY.md)). AirKit sign-in is in litnode since 0.10.0: `POST /air/session` verifies an AIR Kit session and keeps a litVM proxy wallet for the account ([UNIVERSAL-LOGIN.md](UNIVERSAL-LOGIN.md)); the cabinet's identity is the key, optionally bound to a wallet | live |
 | **Every title keeps its own Supabase** | Yes — the *studio plane* (BUILD-SPEC §10). Nothing in it may sit on the match critical path; the bridge reads from it, the node never does | by design |
 | **Every credit … reconciles to litVM, 1:1 backing** | Credits are derived per title from deltas (`protocol/derive.js`); they reconcile against nothing on chain yet | not yet ([SPEC §4](../SPEC.md#4-known-gaps-and-honest-zeroes)) |
 | **ERC-6699** | This project's *proposed* interface (`contracts/ERC6699Registry.sol`); no such ERC number is assigned. Titles read four `uint16` core stats through `defineBalance` | deployed v2, empty |
@@ -56,7 +60,7 @@ against the code.
    it over by transferring it. Signed in with AIR on your node: the
    cabinet's Publisher panel claims it and bonds the node from the same
    wallet, no prompts (docs/UNIVERSAL-LOGIN.md). From a wallet you hold:
-   `npm run publish:title -- register rulesets/<id>.js` and `npm run bond`.
+   `npm run publish:title -- register rulesets/<id>.js` and `npm run host -- bond` with `OPERATOR_KEY` set to that same wallet.
    Either way `display` in the manifest lists you in the arcade once the
    holder's bonded host carries the title. Real. "Characters
    forged anywhere can enter" waits on the registry's minter.
@@ -64,6 +68,7 @@ against the code.
 ## Where things are
 
 ```
+docs/SDK.md                 the one-page SDK instructions + for-dummies pictures (= arcade #/build)
 docs/PUBLISHERS.md          this page
 docs/PUBLISHER-BONDS.md     title ownership as an ERC-721 (BUILT: TitleRegistry, npm run publish:title); host grants, escalation, revenue share (spec)
 docs/BRING-YOUR-BACKEND.md  existing backend → bridge → settlement          sdk/bridge/   npm run bridge
