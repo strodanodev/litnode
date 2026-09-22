@@ -110,7 +110,7 @@
       "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378"
     ],
     "settleWindowS": 1800,
-    "attestWindowS": 120,
+    "attestWindowS": 300,
     "escalationWindowS": 300,
     "drawDelayBlocks": 2,
     "hostSlashBps": 1000,
