@@ -5,6 +5,19 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **Top up the hot key from the Node page.** The Hot key panel has one-click
+  buttons (+0.01 / +0.05 / +0.1 zkLTC, each labelled with the matches it buys at the
+  current price) that send zkLTC from any connected wallet to the node's hot key —
+  a plain transfer, simulated first and refused when the wallet cannot cover it —
+  then read the new balance and link the transaction. Without a browser wallet the
+  panel gives the free route: copy the hot-key address, paste it into the Caldera
+  faucet, and the gas lands on the node directly. While the balance is low the node
+  re-reads it every 30 s, so a top-up shows within half a minute.
+- **The purse estimate is role-aware:** a host pays ~445k gas per match (commit,
+  settle, finalize), a witness ~75k (one attest). The 670k all-transactions figure
+  made every host's "matches left" 1.5× too pessimistic.
+
 ### Fixed
 - The announcer's reported directory entry reflects a sent announce at once, not
   after the next ten-minute cycle: the Node page read "the next announce is due"

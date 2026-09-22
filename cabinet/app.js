@@ -688,6 +688,29 @@ async function updateNode() {
     alert('the node did not come back in 2 minutes — check its window or litnode.log');
   } catch (e) { alert(`update: ${e.message}`); render(); }
 }
+// ---- hot-key top-up: any connected wallet sends zkLTC to the node's hot key (the gas it spends settling matches).
+const Tu = { busy: '', error: '', tx: null, amount: null, walletGas: null, hotGas: null };
+const TOPUP_AMOUNTS = ['0.01', '0.05', '0.1'];
+const toWei = (z) => BigInt(Math.round(Number(z) * 1e6)) * 10n ** 12n;
+async function topUpRun(amount) {
+  const f = S.fleet, hot = f?.chain?.matchBook?.purse?.address ?? f?.chain?.announcer?.address;
+  if (!hot) return;
+  Tu.error = ''; Tu.tx = null; Tu.amount = amount;
+  try {
+    if (!Op.account) { Tu.busy = 'connecting wallet…'; render(); Op.account = await nodeops.connectOperator(); }
+    Tu.busy = `sending ${amount} zkLTC to the hot key — confirm in your wallet`; render();
+    Tu.tx = await nodeops.topUp(Op.account, hot, toWei(amount));
+    Tu.busy = 'mined — reading the balance…'; render();
+    [Tu.hotGas, Tu.walletGas] = await Promise.all([nodeops.gasBalance(hot), nodeops.gasBalance(Op.account)]);
+  } catch (e) { Tu.error = e?.code === 4001 ? 'cancelled in the wallet — nothing was sent' : (e?.message ?? String(e)); }
+  Tu.busy = ''; render();
+}
+async function topUpConnect() {
+  Tu.error = '';
+  try { Tu.busy = 'connecting wallet…'; render(); Op.account = await nodeops.connectOperator(); Tu.walletGas = await nodeops.gasBalance(Op.account); }
+  catch (e) { Tu.error = e?.message ?? String(e); }
+  Tu.busy = ''; render();
+}
 // ---- operator actions (cabinet/nodeops.js): the operator's wallet signs bond / delegate / transfer.
 const Op = { account: null, info: null, busy: '', error: '', lastTx: null };
 const tok = (wei) => fmtTok(Number(wei / 10n ** 14n) / 10_000);
@@ -819,13 +842,30 @@ function renderNode() {
     const steps = fleetChecklist(f, { cabinetContracts: CONTRACTS.contracts });
     checklistHtml = `<ol class="checklist">${steps.map((st) => `<li class="${st.state}"><span class="st">${stateTag(st.state)}</span><span><b>${esc(st.label)}</b><small>${esc(st.detail)}</small></span></li>`).join('')}</ol>
       <div class="source">Every step is read from the node and the chain, not remembered. Wallet steps are in the Operator panel; the rest the node does by itself once the step before it is done.</div>`;
-    if (purse) purseHtml = `<div class="purse ${purse.low ? 'low' : ''}">
-        <div class="big-tok"><span class="chrome">${esc(purse.balance ?? '—')}</span><span class="tok">zkLTC on the hot key</span></div>
-        <dl class="kv"><dt>covers</dt><dd>~${purse.matchesLeft ?? '?'} matches as host <span class="dim">(670k gas each at ${purse.gasPriceWei ? (Number(purse.gasPriceWei) / 1e9).toFixed(2) : '?'} gwei, ${esc(purse.priceSource ?? 'default')} price)</span></dd>
-        <dt>address</dt><dd>${ex('address', purse.address, 42)}</dd>
+    if (purse) {
+      const price = purse.gasPriceWei ? Number(purse.gasPriceWei) : null;
+      const perMatch = purse.perMatchGas ?? 445_000;
+      const covers = (z) => (price ? Math.floor((Number(z) * 1e18) / (perMatch * price)) : null);
+      const walletOk = nodeops.available();
+      const buttons = TOPUP_AMOUNTS.map((z) => `<button class="btn sm${purse.low && z === '0.05' ? ' primary' : ''}" data-topup="${z}" ${Tu.busy ? 'disabled' : ''}>+ ${z} zkLTC<small>${covers(z) != null ? ` ≈ ${covers(z)} matches` : ''}</small></button>`).join(' ');
+      purseHtml = `<div class="purse ${purse.low ? 'low' : ''}">
+        <div class="big-tok"><span class="chrome">${esc(Tu.hotGas != null ? (Number(Tu.hotGas) / 1e18).toFixed(6) : purse.balance ?? '—')}</span><span class="tok">zkLTC on the hot key${Tu.hotGas != null ? ' <span class="dim">(just read)</span>' : ''}</span></div>
+        <dl class="kv"><dt>covers</dt><dd>~${purse.matchesLeft ?? '?'} matches as ${esc(purse.perMatchRole ?? 'host')} <span class="dim">(${Math.round(perMatch / 1000)}k gas each at ${price ? (price / 1e9).toFixed(2) : '?'} gwei)</span></dd>
+        <dt>hot key</dt><dd>${ex('address', purse.address, 42)} <button class="link" data-copy-now="${esc(purse.address)}">copy</button></dd>
         <dt>transactions</dt><dd>${mb.sends} sent since start · type-${purse.txType ?? '?'}${mb.lastError ? ` · <span style="color:var(--red)">${esc(mb.lastError)}</span>` : ''}</dd></dl>
-        ${purse.low ? `<div class="sub" style="color:var(--red)">LOW — a host that runs dry mid-match voids it. Send zkLTC to the address above: <a class="link" target="_blank" rel="noopener" href="${GAS_FAUCET}">${GAS_FAUCET}</a></div>` : `<div class="sub dim">Top up from <a class="link" target="_blank" rel="noopener" href="${GAS_FAUCET}">the Caldera faucet</a> when it drops; the bond token (tLITVM) is a different thing and lives in the operator wallet.</div>`}
+        ${purse.low ? '<div class="sub" style="color:var(--red)">LOW — a host that runs dry mid-match voids it. Top up below.</div>' : ''}
+        <div class="topup">
+          <div class="k">Top up</div>
+          ${walletOk ? `<div class="row">${buttons}</div>
+            <div class="sub dim">${Op.account ? `from ${esc(Op.account.slice(0, 6))}…${esc(Op.account.slice(-4))}${Tu.walletGas != null ? ` · ${(Number(Tu.walletGas) / 1e18).toFixed(4)} zkLTC in this wallet` : ''}` : `<button class="link" id="topup-connect">connect a wallet</button> — any wallet on ${esc(CHAIN.name)} can pay; the hot key spends it on this node's transactions and can never touch the bond`}</div>`
+          : '<div class="sub dim">No browser wallet here. Use the faucet route below — it needs none.</div>'}
+          ${Tu.busy ? `<div class="sub">${esc(Tu.busy)}</div>` : ''}
+          ${Tu.tx ? `<div class="sub">sent ${esc(Tu.amount)} zkLTC · ${ex('tx', Tu.tx, 14)} — the node sees it within 30 s</div>` : ''}
+          ${Tu.error ? `<div class="sub" style="color:var(--red)">${esc(Tu.error)}</div>` : ''}
+          <div class="sub dim">No zkLTC yet? Testnet gas is free: <button class="link" data-copy-now="${esc(purse.address)}">copy the hot-key address</button>, open <a class="link" target="_blank" rel="noopener" href="${GAS_FAUCET}">the Caldera faucet</a>, paste it there and claim — it lands on the node directly. (The tLITVM bond token is a different faucet, in the Operator panel.)</div>
+        </div>
       </div>`;
+    }
     reachHtml = `<dl class="kv">
       <dt>advertised</dt><dd>${esc(sf.addr)}${sf.lanAddr && sf.lanAddr !== sf.addr ? ` <span class="dim">· LAN ${esc(sf.lanAddr)}</span>` : ''}</dd>
       <dt>tunnel</dt><dd>${sf.tunnel ? `${esc(sf.tunnel.mode)} · <b>${esc(sf.tunnel.state)}</b>${sf.tunnel.restarts ? ` · rotated ${sf.tunnel.restarts}×` : ''}${sf.tunnel.lastError && sf.tunnel.state !== 'up' ? ` · ${esc(sf.tunnel.lastError.slice(0, 160))}` : ''}` : '<span class="dim">none (LAN only)</span>'}</dd>
@@ -888,6 +928,9 @@ function renderNode() {
   for (const b of view('node').querySelectorAll('[data-pub]')) b.addEventListener('click', () => pubRun(b.dataset.pub, b.dataset.rid ?? null));
   $('seeds-refresh')?.addEventListener('click', () => { S.seedsAt = 0; findSeed().then(render); });
   for (const c of view('node').querySelectorAll('[data-copy]')) c.addEventListener('click', () => { navigator.clipboard?.writeText(c.dataset.copy).then(() => { c.classList.add('copied'); setTimeout(() => c.classList.remove('copied'), 900); }).catch(() => {}); });
+  for (const c of view('node').querySelectorAll('[data-copy-now]')) c.addEventListener('click', () => { navigator.clipboard?.writeText(c.dataset.copyNow).then(() => { const t = c.textContent; c.textContent = 'copied ✓'; setTimeout(() => { c.textContent = t; }, 1200); }).catch(() => {}); });
+  for (const b of view('node').querySelectorAll('[data-topup]')) b.addEventListener('click', () => topUpRun(b.dataset.topup));
+  $('topup-connect')?.addEventListener('click', topUpConnect);
 }
 
 // ═══════════════════════════════════════════════ router ══

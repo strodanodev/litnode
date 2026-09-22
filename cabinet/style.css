@@ -403,3 +403,7 @@ ol.steps { margin: 0; padding-left: 20px; color: var(--fg2); line-height: 1.75; 
 .copy.copied { color: var(--green); border-bottom-color: var(--green); }
 a.link.mono { word-break: break-all; }
 .kv dd { word-break: break-word; }
+.topup { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--edge); display: grid; gap: 8px; }
+.topup .k { font-size: 9px; color: var(--dim); letter-spacing: .12em; text-transform: uppercase; }
+.topup .row { display: flex; flex-wrap: wrap; gap: 6px; }
+.topup .btn small { display: block; font-size: 9px; color: var(--dim); font-weight: 400; letter-spacing: 0; }

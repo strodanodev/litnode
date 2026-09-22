@@ -8,7 +8,8 @@
  *  bond:     TestLITVM.approve(NodeStake, minStake) then NodeStake.stake(nodeKey, minStake)
  *  faucet:   TestLITVM.faucet() (testnet only)
  *  transfer: NodeStake.transferOperator(nodeKey, to)
- *  delegate: NodeDirectory.setAnnouncer(nodeKey, announcer) + a little gas to the announcer */
+ *  delegate: NodeDirectory.setAnnouncer(nodeKey, announcer) + a little gas to the announcer
+ *  top up:   a plain zkLTC transfer to the node's hot key (the gas it spends on commits, attests, announces) */
 import { CHAIN } from './config.js';
 import { connect } from './wallet.js';
 import { setDelegateCalldata, delegateOfCall } from './protocol/staking.js';
@@ -110,4 +111,17 @@ export async function delegateAnnouncer(from, nodeId, announcer, { fundWei = 20_
     if (bal < fundWei / 2n) { onStep('fund the announcer with gas — confirm in your wallet'); await send(from, announcer, '0x', fundWei); }
   }
   return tx;
+}
+
+/** zkLTC (native gas) balance of any address, in wei — the Node page reads the hot key and the paying wallet. */
+export async function gasBalance(address) { return BigInt(await rpc('eth_getBalance', [address, 'latest'])); }
+
+/** Top up a node's hot key with zkLTC from whatever wallet is connected (the operator's, or anyone's: gas is
+ *  just a transfer; the hot key can spend it but never the bond). Refuses an amount the wallet cannot cover
+ *  plus the transfer's own fee, before the wallet is asked. */
+export async function topUp(from, hotKey, wei) {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(hotKey ?? '')) throw new Error('no hot key address');
+  const have = await gasBalance(from);
+  if (have < wei + 50_000_000_000_000n) throw new Error(`this wallet holds ${(Number(have) / 1e18).toFixed(5)} zkLTC — not enough for ${(Number(wei) / 1e18).toFixed(3)} plus the fee. Get zkLTC from the Caldera faucet first.`);
+  return send(from, hotKey, '0x', wei);
 }

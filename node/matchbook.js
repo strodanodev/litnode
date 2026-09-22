@@ -99,11 +99,15 @@ export function createMatchBook({
   // the price the last send paid, and from those how many clean matches (~670k gas as host) the key still covers.
   // `low` flips at LOW_GAS_MATCHES matches left and is logged once — a host that runs dry mid-match voids it.
   let balanceWei = null, balanceAt = 0, gasPriceWei = null, txType = null, lowLogged = false;
-  const BALANCE_TTL = 5 * 60_000, GAS_PER_MATCH = 670_000n, LOW_GAS_MATCHES = 25;
+  // Gas per match by role, from Liteforge receipts (22 Sep 2026): a host sends commit 279k + settle 127k + finalize 39k;
+  // a witness one attest ~75k. The 670k all-six-transactions figure made a host's estimate 1.5× too pessimistic.
+  // While low the balance is re-read every 30 s, so a top-up from the Node page shows within half a minute.
+  const BALANCE_TTL = 5 * 60_000, BALANCE_TTL_LOW = 30_000, LOW_GAS_MATCHES = 25;
+  const GAS_PER_MATCH = hasRole('host') ? 445_000n : 75_000n;
   const purse = () => {
     const price = gasPriceWei ?? baseFee() ?? 68_000_000n; // the last send's price, else the head's base fee, else Liteforge on 22 Sep 2026
     const matchesLeft = balanceWei == null ? null : Number(balanceWei / (GAS_PER_MATCH * price));
-    return { address, balanceWei: balanceWei == null ? null : balanceWei.toString(), balance: balanceWei == null ? null : (Number(balanceWei) / 1e18).toFixed(6), gasPriceWei: price.toString(), priceSource: gasPriceWei != null ? 'send' : baseFee() != null ? 'head' : 'default', txType, matchesLeft, low: matchesLeft != null && matchesLeft < LOW_GAS_MATCHES, readAt: balanceAt ? new Date(balanceAt).toISOString() : null };
+    return { address, perMatchGas: Number(GAS_PER_MATCH), perMatchRole: hasRole('host') ? 'host' : 'witness', balanceWei: balanceWei == null ? null : balanceWei.toString(), balance: balanceWei == null ? null : (Number(balanceWei) / 1e18).toFixed(6), gasPriceWei: price.toString(), priceSource: gasPriceWei != null ? 'send' : baseFee() != null ? 'head' : 'default', txType, matchesLeft, low: matchesLeft != null && matchesLeft < LOW_GAS_MATCHES, readAt: balanceAt ? new Date(balanceAt).toISOString() : null };
   };
   const readBalance = async () => {
     try { balanceWei = BigInt(await call('eth_getBalance', [address, 'latest'])); balanceAt = Date.now(); funded = balanceWei > 0n; } catch { /* unknown; keep the last */ }
@@ -435,7 +439,7 @@ export function createMatchBook({
     polling = true; lastPoll = Date.now();
     try {
       if (delegated === null || !funded) await checkDelegate();
-      else if (Date.now() - balanceAt > BALANCE_TTL) await readBalance();
+      else if (Date.now() - balanceAt > (lowLogged ? BALANCE_TTL_LOW : BALANCE_TTL)) await readBalance();
       await readParams();
       await autoEnrol();
       await readReceipts();
