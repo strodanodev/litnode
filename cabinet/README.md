@@ -16,15 +16,17 @@ editable in the footer (localStorage). Installable as a PWA.
 
 ## Views
 
-    #/              Home — profile card, rating chart, game library, leaderboard,
-                    characters, inventory
-    #/games         all titles
+    #/, #/games     Arcade (landing page) — the arcade window loads the featured
+                    title (first playable in config.js) and plays it in the page;
+                    the strip below it switches titles; then the library
+    #/home          Home — profile card, rating chart, game library, leaderboard,
+                    characters, inventory (characters/inventory: coming soon)
     #/game/<id>     one title — hero, about, controls, mesh info, leaderboard,
                     your record + match history
     #/leaderboards  top-3 rank cards (bracket badge, tier, rating / win rate /
                     streak) + full table per title, player search
-    #/characters    fighter roster with style filter
-    #/inventory     consumables, pets, tickets
+    #/characters    fighter roster with style filter (coming soon, greyed)
+    #/inventory     consumables, pets, tickets (coming soon, greyed)
     #/node          this node, run-a-node steps, peers
 
 ## Find match

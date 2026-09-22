@@ -16,7 +16,12 @@ export const NODE_URL = 'http://127.0.0.1:7801';
 export const AIR = { partnerId: '62e01755-138f-4e58-9cdc-fab71e037afd', buildEnv: new URLSearchParams(location.search).get('airenv') || 'sandbox' };
 
 /** The first three titles. Each opens in the cabinet's iframe on PLAY (all
- *  three allow framing). `cover` is a capture of the game's own title screen
+ *  three allow framing). `login: 'arcade'` = universal login: inside this
+ *  page the title signs in with THIS page's AIR session (it asks over
+ *  postMessage, cabinet:air) and never shows its own login; on its own domain
+ *  it logs in itself. Only first-party titles get it: the token it is handed
+ *  is the arcade's, which also speaks for the player's proxy wallet on a node.
+ *  The token goes only to the origin of `url` (plus `origins`, if listed). `cover` is a capture of the game's own title screen
  *  (covers/, 960×540); `logo` is an optional overlay for covers whose logo is
  *  an HTML layer rather than part of the canvas. `rulesetId` links the title
  *  to the mesh (leaderboard, record); AFC has no ruleset on the node yet. */
@@ -38,6 +43,7 @@ export const GAMES = [
     tags: ['PWA', 'CREDITS / TICKETS'],
     badge: 'agentfighter.wtf',
     playable: true,
+    login: 'arcade',
   },
   {
     id: 'pickle-brawl',
@@ -57,6 +63,7 @@ export const GAMES = [
     tags: ['THREE.JS', 'PWA', 'PICKLES / BRINE'],
     badge: 'picklebrawl.live',
     playable: true,
+    login: 'arcade',
   },
   {
     id: 'afc',

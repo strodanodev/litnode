@@ -440,3 +440,44 @@ a.link.mono { word-break: break-all; }
 .rcpt-kv [data-copy].copied { color: var(--green); }
 a.rcpt-link { font-size: 11px; margin-left: 4px; white-space: nowrap; }
 .tablewrap { overflow-x: auto; }
+
+/* ---- coming soon: characters + inventory are greyed and inert; hover says why */
+.panel.soon, .soon-page, body.dash-locked .content .panel.soon { position: relative; cursor: not-allowed; pointer-events: auto; }
+.panel.soon > *, .soon-page > * { filter: grayscale(1); opacity: .35; pointer-events: none; user-select: none; transition: opacity .2s ease, filter .2s ease; }
+.panel.soon::after, .soon-page::after { content: 'COMING SOON'; position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; pointer-events: none;
+  font-family: var(--mono); font-size: 13px; letter-spacing: .42em; color: var(--peach); text-shadow: 0 0 14px rgba(247,177,122,.55);
+  background: repeating-linear-gradient(135deg, rgba(6,9,15,.62) 0 14px, rgba(6,9,15,.5) 14px 28px); opacity: 0; transition: opacity .2s ease; }
+.soon-page::after { align-items: start; padding-top: min(30vh, 220px); font-size: 16px; }
+.panel.soon:hover::after, .soon-page:hover::after { opacity: 1; }
+body.dash-locked .content .panel.soon:hover { opacity: 1; filter: none; }
+.panel.soon:hover > *, .soon-page:hover > * { opacity: .22; }
+.tag.soon-tag { color: var(--peach); border-color: rgba(247,177,122,.45); border-style: dashed; }
+.nav a.soon { position: relative; color: var(--faint); }
+.nav a.soon:hover { color: var(--dim); }
+.nav a.soon.active { color: var(--dim); border-bottom-color: var(--edge2); }
+.nav a.soon::after { content: attr(data-soon); position: absolute; left: 50%; top: calc(100% - 6px); transform: translateX(-50%); white-space: nowrap; padding: 3px 7px; font-size: 9px; letter-spacing: .16em;
+  color: var(--peach); background: rgba(6,9,15,.95); border: 1px solid rgba(247,177,122,.45); opacity: 0; pointer-events: none; transition: opacity .15s ease; z-index: 6; }
+.nav a.soon:hover::after { opacity: 1; }
+/* touch screens have no hover: show the label outright */
+@media (hover: none) { .panel.soon::after, .soon-page::after { opacity: 1; } .nav a.soon::after { display: none; } }
+
+/* ---- arcade window: the Arcade tab plays the picked title in the page */
+.aw { --ga: var(--cyan); position: relative; margin-bottom: 8px; scroll-margin-top: 76px; border: 1px solid var(--edge2); background: rgba(6,9,15,.72); backdrop-filter: blur(8px);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ga) 18%, transparent), 0 18px 48px rgba(0,0,0,.5), 0 0 40px color-mix(in srgb, var(--ga) 12%, transparent);
+  clip-path: polygon(var(--cut) 0, 100% 0, 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, 0 100%, 0 var(--cut)); }
+.aw-bar { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 7px 14px; border-bottom: 1px solid var(--edge); background: linear-gradient(to bottom, rgba(255,255,255,.05), rgba(255,255,255,0)); flex-wrap: wrap; }
+.aw-led { width: 8px; height: 8px; background: var(--faint); flex: none; }
+.aw.live .aw-led { background: var(--green); box-shadow: 0 0 10px var(--green); animation: aw-blink 1.6s steps(2) infinite; }
+@keyframes aw-blink { 50% { opacity: .35; } }
+.aw-title { font-family: var(--mono); font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--ga); }
+.aw-status { font-family: var(--mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.aw-screen { position: relative; aspect-ratio: 16 / 9; max-height: calc(100vh - 230px); min-height: 280px; width: 100%; background: #000; overflow: hidden; }
+.aw-screen iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
+.aw-screen:fullscreen { max-height: none; aspect-ratio: auto; }
+.aw-sel { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--edge); overflow-x: auto; }
+.aw-pick { --ga: var(--cyan); flex: none; padding: 8px 14px; border: 1px solid var(--edge); background: rgba(6,9,15,.45); color: var(--fg2); cursor: pointer; font-family: var(--mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; white-space: nowrap; }
+.aw-pick.playing::before { content: '● '; color: var(--green); }
+.aw-pick:hover { border-color: var(--edge2); color: var(--fg); }
+.aw-pick.on { border-color: var(--ga); color: var(--fg); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ga) 40%, transparent); }
+.aw-lib { margin-top: 22px; }
+@media (max-width: 760px) { .aw-screen { min-height: 200px; max-height: none; } .aw-bar .btn.sm { padding: 5px 8px; } }

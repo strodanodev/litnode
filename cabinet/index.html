@@ -18,23 +18,23 @@
   <header class="topbar">
     <a class="logo" href="#/"><span class="chrome">LIT GAMES</span><span class="logo-sub">Arcade</span></a>
     <nav class="nav" id="nav">
-      <a href="#/" data-view="home">Home</a>
+      <a href="#/home" data-view="home">Home</a>
       <a href="#/games" data-view="games">Arcade</a>
       <a href="#/leaderboards" data-view="leaderboards">Ranks</a>
-      <a href="#/characters" data-view="characters">Agents</a>
-      <a href="#/inventory" data-view="inventory">Inventory</a>
+      <a href="#/characters" data-view="characters" class="soon" data-soon="coming soon">Agents</a>
+      <a href="#/inventory" data-view="inventory" class="soon" data-soon="coming soon">Inventory</a>
       <a href="#/node" data-view="node">Nodes</a>
       <a href="#/build" data-view="build">Build</a>
     </nav>
     <div class="spacer"></div>
     <a href="#/node" id="node-pill" class="node-pill off" title="litnode status"><span class="dot"></span><span id="node-text">NODE OFFLINE</span></a>
-    <a href="#/" class="me-chip" id="me-chip"><img id="me-avatar" alt="" /><span class="me-name" id="me-name">…</span><span class="me-level" id="me-level">LV 1</span></a>
+    <a href="#/home" class="me-chip" id="me-chip"><img id="me-avatar" alt="" /><span class="me-name" id="me-name">…</span><span class="me-level" id="me-level">LV 1</span></a>
   </header>
 
   <main class="content">
     <div id="dash-lock" class="dash-lock" hidden></div>
-    <section data-view="home" class="view home"></section>
-    <section data-view="games" class="view" hidden></section>
+    <section data-view="home" class="view home" hidden></section>
+    <section data-view="games" class="view"></section>
     <section data-view="game" class="view" hidden></section>
     <section data-view="leaderboards" class="view" hidden></section>
     <section data-view="characters" class="view" hidden></section>

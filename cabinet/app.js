@@ -351,6 +351,7 @@ async function signInWithAir() {
     Ai.busy = 'opening AIR…'; render();
     if (!Ai.me.loggedIn) await air.login();
     Ai.me = air.current();
+    pushAir();   // a title waiting on this sign-in can go on now; the litVM profile below can take a while
     if (!S.online) throw new Error('no node to ask — the profile is minted by your node (or the seed)');
     Ai.busy = 'your node is setting up your litVM profile (first time: three transactions)…'; render();
     Ai.me.session = await air.nodeSession(nodeUrl(), { playerKey: player.id, name: player.name.replace(/[^A-Za-z0-9 _.-]/g, '').slice(0, 32) || null });
@@ -359,7 +360,7 @@ async function signInWithAir() {
   } catch (e) { Ai.error = e?.message ?? String(e); }
   Ai.busy = ''; render();
 }
-async function signOutAir() { Ai.busy = 'signing out…'; render(); await air.logout(); Ai.me = air.current(); Ai.busy = ''; render(); }
+async function signOutAir() { Ai.busy = 'signing out…'; render(); await air.logout(); Ai.me = air.current(); Ai.busy = ''; render(); pushAir(); }
 
 /** The wallet row under the key: bound → who owns it; unbound → sign in. */
 function walletLine() {
@@ -504,15 +505,18 @@ const charCard = (c, { big = false } = {}) => {
 };
 function charactersPanel() {
   const mine = CHARACTERS.filter((c) => INVENTORY_SAMPLE.unlocked.includes(c.id)).slice(0, 6);
-  return panel('Characters', `<div class="cgrid">${mine.map((c) => charCard(c)).join('')}</div><div class="source">${mine.length} of ${CHARACTERS.length} fighters unlocked · <span class="tag sample">sample</span></div>`, moreLink('#/characters', 'roster'), 's4');
+  return panel('Characters', `<div class="cgrid">${mine.map((c) => charCard(c)).join('')}</div><div class="source">${mine.length} of ${CHARACTERS.length} fighters unlocked · <span class="tag sample">sample</span></div>`, moreLink('#/characters', 'roster'), 's4 soon');
 }
+
+// Characters and inventory are not live yet: greyed (.soon), inert, "coming soon" on hover.
+const SOON_TAG = '<span class="tag soon-tag">coming soon</span>';
 
 const itemCard = (it, qty) => { const L = ITEM_LINES[it.line]; return `<div class="item ${qty ? 'owned' : 'none'}" style="--ic:${L.color}"><div class="ico">T${it.tier}</div><div><div class="n">${esc(it.name)}</div><div class="s">${esc(L.label)} · ${esc(L.effect)}</div></div><div class="q">${qty ? `×${qty}` : ''}</div></div>`; };
 const petCard = (p) => { const def = PETS.find((x) => x.id === p.id); const R = RARITY[p.rarity]; return `<div class="pet ${p.id === INVENTORY_SAMPLE.equippedPet ? 'eq' : ''}" style="--rc:${R.color}"><div class="g">${def.glyph}</div><div><div class="n">${esc(def.name)}${p.id === INVENTORY_SAMPLE.equippedPet ? ' · equipped' : ''}</div><div class="r">${R.label}</div><div class="aura">ATK +${p.aura.atk} · DEF +${p.aura.def} · CRIT +${p.aura.crit}</div></div></div>`; };
 function inventoryPanel() {
   const items = INVENTORY_SAMPLE.items.map((o) => itemCard(ITEMS.find((i) => i.id === o.id), o.qty)).join('');
   const pet = INVENTORY_SAMPLE.pets.find((p) => p.id === INVENTORY_SAMPLE.equippedPet);
-  return panel('Inventory', `<div class="igrid" style="grid-template-columns:1fr">${items}</div><div class="section-h"><h4>Pet</h4></div>${pet ? petCard(pet) : '<div class="empty">No pet equipped.</div>'}<div class="source"><span class="tag sample">sample</span> loadout until account sync</div>`, moreLink('#/inventory'), 's3');
+  return panel('Inventory', `<div class="igrid" style="grid-template-columns:1fr">${items}</div><div class="section-h"><h4>Pet</h4></div>${pet ? petCard(pet) : '<div class="empty">No pet equipped.</div>'}<div class="source"><span class="tag sample">sample</span> loadout until account sync</div>`, moreLink('#/inventory'), 's3 soon');
 }
 
 // ═══════════════════════════════════════════════ views ══
@@ -522,8 +526,43 @@ function renderHome() {
 const coverArt = (g) => g.cover
   ? `<img class="bgimg" src="${esc(g.cover)}" alt="${esc(g.title)} title screen" />${g.logo ? `<img class="logo" src="${esc(g.logo)}" alt="" />` : ''}`
   : `<div class="mark"><span class="chrome">${esc(g.title.split(' ').map((w) => w[0]).join(''))}</span></div>`;
+// The Arcade tab's window: pick a title, play it in the page. Its <iframe> is
+// built once — render() runs on every node poll, and rewriting the frame's
+// HTML would reload the game — so only the parts around it re-render.
+const playableGames = () => GAMES.filter((g) => g.playable && g.url);
+let arcadePick = null;   // picked this session; otherwise the featured title (config.js order) loads
+const arcadeGame = () => { const list = playableGames(); return list.find((g) => g.id === arcadePick) ?? list[0] ?? null; };
+const inWindow = () => current && frame !== overlayFrame;
+// The Arcade tab is the landing page: entering it with nothing running loads
+// the featured title. A remembered AIR session is restored first (capped), so
+// the title opens signed in rather than as a guest.
+let airBoot = Promise.resolve();
+async function autoloadArcade() {
+  await Promise.race([airBoot, new Promise((r) => setTimeout(r, 4000))]);
+  if (route.name === 'games' && !current) { const g = arcadeGame(); if (g) play(g, null, 'window'); }
+}
+function renderArcadeWindow() {
+  const g = arcadeGame(), list = playableGames(), live = inWindow();
+  const win = $('aw');
+  win.style.setProperty('--ga', (live ? current : g)?.accent ?? 'var(--cyan)');
+  win.classList.toggle('live', !!live);
+  $('aw-bar').innerHTML = `<span class="aw-led"></span><span class="aw-title">${live ? esc(current.title) : g ? esc(g.title) : 'No title'}</span><span class="aw-status">${live ? `now playing · ${esc(current.badge ?? '')}` : g ? 'stopped' : 'no playable titles yet'}</span><span class="spacer"></span>
+    ${live ? '<button class="btn sm" data-aw-fs>⛶ fullscreen</button><button class="btn sm" data-aw-tab>↗ open in tab</button>' : g ? `<button class="btn sm primary" data-aw-start="${g.id}">▶ play</button>` : ''}`;
+  $('aw-sel').innerHTML = list.map((x) => `<button class="aw-pick ${x.id === g?.id ? 'on' : ''} ${live && x.id === current.id ? 'playing' : ''}" data-aw-pick="${x.id}" style="--ga:${x.accent}">${esc(x.title)}</button>`).join('');
+}
 function renderGames() {
-  view('games').innerHTML = `<div class="page-h"><h1 class="chrome">Arcade</h1><span class="dim">${GAMES.length} titles · settled on litVM</span></div><div class="cards">${GAMES.map((g, i) => `
+  const v = view('games');
+  if (!$('aw')) v.innerHTML = `<div class="page-h" id="games-h"></div>
+    <section class="aw" id="aw" aria-label="arcade window">
+      <div class="aw-bar" id="aw-bar"></div>
+      <div class="aw-screen" id="aw-screen"><iframe id="aw-frame" title="arcade window" allow="fullscreen *; gamepad *; autoplay *; pointer-lock *; xr-spatial-tracking *; clipboard-write *"></iframe></div>
+      <div class="aw-sel" id="aw-sel"></div>
+    </section>
+    <div class="section-h aw-lib"><h4>Library</h4></div>
+    <div class="cards" id="games-cards"></div>`;
+  $('games-h').innerHTML = `<h1 class="chrome">Arcade</h1><span class="dim">${GAMES.length} titles · settled on litVM</span>`;
+  renderArcadeWindow();
+  $('games-cards').innerHTML = GAMES.map((g, i) => `
     <article class="card" style="--ga:${g.accent}">
       <a class="cover" href="#/game/${g.id}">${coverArt(g)}<span class="tag live live">Live</span><span class="no">0${i + 1}</span></a>
       <div class="body">
@@ -531,9 +570,9 @@ function renderGames() {
         <div class="tagline">${esc(g.tagline)}</div>
         ${tagRow(g)}
         <ul class="mini">${!g.rulesetId ? '<li class="dim">not on the mesh yet</li>' : S.online ? ((S.boards[g.rulesetId] ?? []).slice(0, 3).map((r) => `<li><span>${r.rank}. ${short(r.player, 12)}</span><span>${r.rating}</span></li>`).join('') || '<li class="dim">no settled matches yet</li>') : `<li class="dim">${S.checked ? 'node offline' : 'connecting…'}</li>`}</ul>
-        <div class="row">${g.playable ? `<button class="btn primary" data-play="${g.id}">Play now</button>` : '<button class="btn" disabled>Off-cabinet</button>'}<a class="btn" href="#/game/${g.id}">Details</a></div>
+        <div class="row">${g.playable ? `<button class="btn primary" data-aw-start="${g.id}">Play now</button>` : '<button class="btn" disabled>Off-cabinet</button>'}<a class="btn" href="#/game/${g.id}">Details</a></div>
       </div>
-    </article>`).join('')}</div>`;
+    </article>`).join('');
 }
 let viewing = null;
 function renderGame(g) {
@@ -660,15 +699,15 @@ function renderLeaderboards() {
 let styleFilter = 'all';
 function renderCharacters() {
   const list = styleFilter === 'all' ? CHARACTERS : CHARACTERS.filter((c) => c.style === styleFilter);
-  view('characters').innerHTML = `<div class="page-h"><h1 class="chrome">Agents</h1><span class="dim">${CHARACTERS.length} fighters · ${INVENTORY_SAMPLE.unlocked.length} unlocked <span class="tag sample">sample</span></span></div>
-    <div class="chips" style="margin-bottom:14px"><button class="chip ${styleFilter === 'all' ? 'active' : ''}" data-style="all">All</button>${Object.entries(STYLES).map(([k, v]) => `<button class="chip ${styleFilter === k ? 'active' : ''}" data-style="${k}" style="${styleFilter === k ? `border-color:${v.color};color:${v.color}` : ''}">${v.label}</button>`).join('')}</div>
+  view('characters').innerHTML = `<div class="page-h"><h1 class="chrome">Agents</h1><span class="dim">${CHARACTERS.length} fighters · ${INVENTORY_SAMPLE.unlocked.length} unlocked</span>${SOON_TAG}</div>
+    <div class="soon soon-page"><div class="chips" style="margin-bottom:14px"><button class="chip ${styleFilter === 'all' ? 'active' : ''}" data-style="all">All</button>${Object.entries(STYLES).map(([k, v]) => `<button class="chip ${styleFilter === k ? 'active' : ''}" data-style="${k}" style="${styleFilter === k ? `border-color:${v.color};color:${v.color}` : ''}">${v.label}</button>`).join('')}</div>
     <div class="cgrid big">${list.map((c) => charCard(c, { big: true })).join('')}</div>
-    <div class="source">Portraits are served by the hosted Agent Fighter build. Which fighters you own, and your main, come from your account at sync time.</div>`;
+    <div class="source">Portraits are served by the hosted Agent Fighter build. Which fighters you own, and your main, come from your account at sync time.</div></div>`;
 }
 function renderInventory() {
   const byLine = Object.keys(ITEM_LINES).map((line) => `<div class="section-h"><h4>${ITEM_LINES[line].label} · ${ITEM_LINES[line].effect}</h4></div><div class="igrid">${ITEMS.filter((i) => i.line === line).map((it) => itemCard(it, INVENTORY_SAMPLE.items.find((o) => o.id === it.id)?.qty ?? 0)).join('')}</div>`).join('');
-  view('inventory').innerHTML = `<div class="page-h"><h1 class="chrome">Inventory</h1><span class="dim"><span class="tag sample">sample</span> loadout until account sync</span></div>
-    <div class="home">
+  view('inventory').innerHTML = `<div class="page-h"><h1 class="chrome">Inventory</h1><span class="dim">loadout until account sync</span>${SOON_TAG}</div>
+    <div class="home soon soon-page">
       ${panel('Consumables', byLine, '', 's6')}
       <div class="s6" style="display:flex;flex-direction:column;gap:16px">
         ${panel('Pets', `<div style="display:grid;gap:8px">${INVENTORY_SAMPLE.pets.map(petCard).join('')}</div><div class="source">Rarity odds: ${Object.values(RARITY).map((r) => `${r.label} ${r.pct}%`).join(' · ')}</div>`)}
@@ -964,15 +1003,15 @@ function renderMatch(matchId, { refresh = false } = {}) {
 }
 
 // ═══════════════════════════════════════════════ router ══
-let route = { name: 'home' };
+let route = { name: 'games' };
 function parseRoute() {
   const h = location.hash;
   const m = h.match(/^#\/game\/([\w-]+)/);
   if (m) { const g = GAMES.find((x) => x.id === m[1]); return g ? { name: 'game', game: g } : { name: 'games' }; }
   const mr = h.match(/^#\/match\/([\w:.-]{1,128})/);
   if (mr) return { name: 'match', matchId: mr[1] };
-  const name = (h.match(/^#\/(\w+)/)?.[1]) ?? 'home';
-  return ['games', 'leaderboards', 'characters', 'inventory', 'node', 'build'].includes(name) ? { name } : { name: 'home' };
+  const name = (h.match(/^#\/(\w+)/)?.[1]) ?? 'games';
+  return ['home', 'games', 'leaderboards', 'characters', 'inventory', 'node', 'build'].includes(name) ? { name } : { name: 'games' };
 }
 function render() {
   renderWorking();
@@ -990,20 +1029,26 @@ function render() {
 }
 function navigate() {
   route = parseRoute();
+  if (route.name !== 'games' && inWindow()) exit();
   for (const s of document.querySelectorAll('.view')) s.hidden = s.dataset.view !== route.name;
   for (const a of document.querySelectorAll('#nav a')) a.classList.toggle('active', a.dataset.view === route.name || (route.name === 'game' && a.dataset.view === 'games'));
   if (route.name !== 'game') viewing = null;
   render();
+  if (route.name === 'games' && !current) autoloadArcade();
   window.scrollTo(0, 0);
 }
 window.addEventListener('hashchange', navigate);
 
 // One delegated click handler for everything rendered from templates.
 document.addEventListener('click', (e) => {
-  const t = e.target.closest('[data-play],[data-queue],[data-mm-stop],[data-mm-reset],[data-mm-launch],[data-lb],[data-style],#name-btn,#avatar-btn,#wallet-btn,#air-btn,#air-link,#air-out,#me-chip,#dash-lock-btn');
+  const t = e.target.closest('[data-aw-start],[data-aw-pick],[data-aw-fs],[data-aw-tab],[data-play],[data-queue],[data-mm-stop],[data-mm-reset],[data-mm-launch],[data-lb],[data-style],#name-btn,#avatar-btn,#wallet-btn,#air-btn,#air-link,#air-out,#me-chip,#dash-lock-btn');
   if (!t) return;
   if (t.id === 'wallet-btn') { signInWithWallet(); return; }
-  if (t.dataset.play) { e.preventDefault(); const g = GAMES.find((x) => x.id === t.dataset.play); if (g) play(g); }
+  if (t.dataset.awStart) { e.preventDefault(); const g = GAMES.find((x) => x.id === t.dataset.awStart); if (g) { pickArcade(g.id); play(g, null, 'window'); $('aw')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }
+  else if (t.dataset.awPick) { const g = GAMES.find((x) => x.id === t.dataset.awPick); if (g && !(inWindow() && current.id === g.id)) { pickArcade(g.id); play(g, null, 'window'); } }
+  else if ('awFs' in t.dataset) $('aw-screen')?.requestFullscreen?.().catch(() => {});
+  else if ('awTab' in t.dataset) openInTab();
+  else if (t.dataset.play) { e.preventDefault(); const g = GAMES.find((x) => x.id === t.dataset.play); if (g) play(g); }
   else if (t.dataset.queue) { e.preventDefault(); const g = GAMES.find((x) => x.id === t.dataset.queue); if (g) findMatch(g); }
   else if ('mmStop' in t.dataset || 'mmReset' in t.dataset) stopMatchmaking();
   // Everything a title needs to run and settle the placed match (sdk/client.js):
@@ -1023,14 +1068,60 @@ document.addEventListener('click', (e) => {
 // Shell → game: { type:'cabinet:init', version:1, player:{id,guest,name}, air:{id,email,address,tokenId,name}|null, node:{url,online}, game:{id,title},
 //                 chain:{chainId, rpc, generation, contracts:{NodeDirectory:{address},NodeStake:{address},…}}   ← the CURRENT contract set: a title that discovers the mesh on its own takes these, never its own constants
 //                 match?:{matchId, host, hostAddr, witness, wsAddr, beacon, beaconSource, participants, mode, buildHash, rulesetId} }   ← present when launched from a verified placement
+//                 login:'arcade'|null   ← 'arcade': this title signs in through this page (below), never with its own dialog
 // Game → shell: { type:'cabinet:hello' } (ask for init) · { type:'cabinet:exit' }
+//
+// Universal login (docs/UNIVERSAL-LOGIN.md), for titles config.js marks `login: 'arcade'`:
+// Game → shell: { type:'cabinet:air', id, token?:true }   the session (and a fresh AIR token when asked)
+//               { type:'cabinet:air-login', id }          open THIS page's AIR sign-in (the click in the title lends the gesture)
+//               { type:'cabinet:air-logout', id }         sign the arcade out (one session, so the title is out too)
+// Shell → game: { type:'cabinet:air', version:1, re?:id, signedIn, user:{id,email,address,name}|null, token?, error? }
+//               re = the request it answers; without re it was pushed because the session changed.
+// Answered only when the message comes from the running title's own origin, and posted only to that
+// origin: the token is the arcade partner's, which the node also accepts for the player's proxy wallet.
 let current = null, currentMatch = null;
-const frame = $('game');
-const sendInit = () => { if (current && frame.contentWindow) frame.contentWindow.postMessage({ type: 'cabinet:init', version: 1, player: { id: player.id, guest: player.guest, name: player.name }, air: Ai.me.session?.address ? { id: Ai.me.id ?? null, email: Ai.me.email ?? null, address: Ai.me.session.address, tokenId: Ai.me.session.tokenId ?? null, name: Ai.me.session.name ?? null } : null, node: { url: nodeUrl(), online: S.online }, game: { id: current.id, title: current.title }, chain: { chainId: CHAIN.chainId, rpc: CHAIN.rpc, generation: CHAIN.generation, contracts: CONTRACTS.contracts }, ...(currentMatch ? { match: currentMatch } : {}) }, '*'); };
+let titleOrigin = null;   // the running title's origin, once it asked for the session and passed the check
+// The frame the running title lives in: the fullscreen overlay, or the Arcade tab's window. One title at a time.
+const overlayFrame = $('game');
+let frame = overlayFrame;
+const pickArcade = (id) => { arcadePick = id; };
+const airOriginsOf = (g) => { const out = []; for (const u of [g?.url, ...(g?.origins ?? [])]) { try { out.push(new URL(u).origin); } catch { /* not a url */ } } return out; };
+const airTitle = (origin) => current?.login === 'arcade' && air.configured() && airOriginsOf(current).includes(origin);
+/** What the title is told about the session. AIR tokens rotate: a fresh one per ask, never a cached one. */
+async function airState({ token = false } = {}) {
+  await Promise.race([airBoot, new Promise((r) => setTimeout(r, 4000))]);
+  const me = Ai.me, msg = { type: 'cabinet:air', version: 1, signedIn: !!me.loggedIn, user: me.loggedIn ? { id: me.id ?? null, email: me.email ?? null, address: me.address ?? null, name: me.session?.name ?? null } : null };
+  if (me.loggedIn && token) { try { msg.token = (await air.token()) ?? null; } catch (e) { msg.token = null; msg.error = e?.message ?? String(e); } }
+  return msg;
+}
+/** The session changed here (sign-in, sign-out, a restored session): tell the running title, if it asked before. */
+async function pushAir() {
+  if (!titleOrigin || !current || !frame.contentWindow) return;
+  const target = frame.contentWindow, origin = titleOrigin, msg = await airState();
+  if (frame.contentWindow === target && titleOrigin === origin) target.postMessage(msg, origin);
+}
+const sendInit = () => { if (current && frame.contentWindow) frame.contentWindow.postMessage({ type: 'cabinet:init', version: 1, login: current.login === 'arcade' && air.configured() ? 'arcade' : null, player: { id: player.id, guest: player.guest, name: player.name }, air: Ai.me.session?.address ? { id: Ai.me.id ?? null, email: Ai.me.email ?? null, address: Ai.me.session.address, tokenId: Ai.me.session.tokenId ?? null, name: Ai.me.session.name ?? null } : null, node: { url: nodeUrl(), online: S.online }, game: { id: current.id, title: current.title }, chain: { chainId: CHAIN.chainId, rpc: CHAIN.rpc, generation: CHAIN.generation, contracts: CONTRACTS.contracts }, ...(currentMatch ? { match: currentMatch } : {}) }, '*'); };
 window.addEventListener('message', async (e) => {
   if (e.source !== frame.contentWindow || !e.data?.type) return;
   if (e.data.type === 'cabinet:hello') sendInit();
   if (e.data.type === 'cabinet:exit') exit();
+  if (e.data.type === 'cabinet:air' || e.data.type === 'cabinet:air-login' || e.data.type === 'cabinet:air-logout') {
+    if (!airTitle(e.origin)) return;   // not a first-party title at its own origin: no answer, and never a token
+    titleOrigin = e.origin;
+    const target = e.source, origin = e.origin, kind = e.data.type;
+    let error = null;
+    if (kind === 'cabinet:air-login' && !Ai.me.loggedIn) {
+      // AIR's dialog lives in this page: out of fullscreen first, or it opens behind the game.
+      if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+      await signInWithAir();
+      if (!Ai.me.loggedIn) error = Ai.error || 'sign-in did not complete';
+    }
+    if (kind === 'cabinet:air-logout' && Ai.me.loggedIn) await signOutAir();
+    const reply = await airState({ token: kind === 'cabinet:air-login' || e.data.token === true });
+    if (error) reply.error = error;
+    if (target === frame.contentWindow) target.postMessage({ ...reply, re: e.data.id ?? null }, origin);
+    return;
+  }
   // The title played the placed match and handed back (agent-fighter after 21 Sep 2026): close the frame so the
   // next ranked match is placed here — a rematch inside the title would be a room no node placed.
   if (e.data.type === 'cabinet:played' && currentMatch && e.data.matchId === currentMatch.matchId) exit();
@@ -1048,13 +1139,15 @@ window.addEventListener('message', async (e) => {
     frame.contentWindow.postMessage({ type: 'cabinet:signed', matchId: b.matchId, player: player.id, sig }, '*');
   }
 });
-frame.addEventListener('load', sendInit);
+document.addEventListener('load', (e) => { if (e.target === frame) sendInit(); }, true);
 /** Open a title. With `match` (from a verified placement) the title is told
  *  which relay to join: Agent Fighter's client takes the relay as ?ws=, and
  *  every title gets the full descriptor in cabinet:init. */
-async function play(g, match = null) {
+async function play(g, match = null, where = 'overlay') {
   if (!g.playable || !g.url) return;
-  current = g; currentMatch = match;
+  if (current) exit();
+  frame = where === 'window' && $('aw-frame') ? $('aw-frame') : overlayFrame;
+  current = g; currentMatch = match; titleOrigin = null;
   $('play').style.setProperty('--ga', g.accent);
   $('play-title').textContent = g.title;
   $('play-status').textContent = match ? `${g.badge} · match ${short(match.matchId, 10)} · host ${short(match.host, 10)}` : g.badge;
@@ -1074,15 +1167,25 @@ async function play(g, match = null) {
   }
   // Signed in with AIR → the title gets a one-time token in its URL and
   // opens already signed in (cabinet/air.js ssoUrl); otherwise the plain URL.
-  frame.src = await air.ssoUrl(u.href);
-  $('play').hidden = false;
+  const target = frame;
+  const src = await air.ssoUrl(u.href);
+  if (frame !== target || current !== g) return;   // stopped or switched while the SSO token was fetched
+  frame.src = src;
+  if (frame === overlayFrame) $('play').hidden = false; else renderArcadeWindow();
 }
-function exit() { current = null; currentMatch = null; frame.src = 'about:blank'; $('play').hidden = true; }
+function exit() {
+  const wasWindow = frame !== overlayFrame;
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  current = null; currentMatch = null; titleOrigin = null; frame.src = 'about:blank'; frame = overlayFrame; $('play').hidden = true;
+  if (wasWindow && $('aw')) renderArcadeWindow();
+}
+const openInTab = () => { if (current) window.open(frame.src && frame.src !== 'about:blank' ? frame.src : current.url, '_blank', 'noopener'); };
 $('play-exit').addEventListener('click', exit);
 // Open the SAME url the frame has — with ?ws= ?room= ?player= when this is a
 // placed match — never the bare title url, or the tab loses its relay.
-$('play-tab').addEventListener('click', () => { if (current) window.open(frame.src && frame.src !== 'about:blank' ? frame.src : current.url, '_blank', 'noopener'); });
-window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && current) exit(); });
+$('play-tab').addEventListener('click', openInTab);
+// Esc closes the fullscreen overlay only — in the window, a title may use Esc itself (and the browser's own fullscreen takes it first).
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && current && frame === overlayFrame) exit(); });
 
 // ═══════════════════════════════════════════════ boot ══
 const editNode = async () => { const v = await ask({ title: 'node', label: 'litnode URL', value: nodeUrl(), placeholder: 'https://…', hint: 'the node this cabinet talks to · blank = the directory picks one' }); if (v != null) { store('cabinet.nodeUrl', v.trim().replace(/\/$/, '') || undefined); pollNode(); } };
@@ -1091,13 +1194,13 @@ $('node-edit').addEventListener('click', editNode);
 paintBackdrop($('bg'));
 player = await loadPlayer();
 renderChrome();
+if (air.configured() && air.remembered()) airBoot = air.rehydrate().then(() => { Ai.me = air.current(); render(); pushAir(); }).catch(() => {});
 navigate();
 refreshBinding().then(render);
 // Read the directory now AND, when no local node answers, fall through to a
 // proven seed at once. (Stamping seedsAt here used to make findSeed() wait
 // a full minute: a visitor with no node saw NODE OFFLINE for 60 s.)
 if (seeds.configured()) findSeed().then(render);
-if (air.configured() && air.remembered()) air.rehydrate().then(() => { Ai.me = air.current(); render(); }).catch(() => {});
 setInterval(() => refreshBinding().then(render), 60_000);
 pollNode();
 setInterval(pollNode, 5000);

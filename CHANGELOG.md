@@ -15,6 +15,19 @@ follows [Keep a Changelog](https://keepachangelog.com/).
   domain a title logs in itself, as before. The Pickle Brawl services bundle sets
   `AIR_PARTNER_IDS` so its API and matchmaker take the arcade's tokens.
   docs/UNIVERSAL-LOGIN.md "Titles inside the arcade".
+- **The arcade opens on the Arcade tab, already playing.** `#/` (and the logo)
+  land on Arcade; Home moved to `#/home`. The arcade window at the top of the tab
+  loads the featured title (the first playable one in `cabinet/config.js`) and
+  plays it in the page, with fullscreen and open-in-tab; a strip of text tabs
+  below it switches titles. The frame is built once, so the 5-second node poll
+  never reloads a game. Leaving the tab stops it; Esc only closes the fullscreen
+  overlay. The window gets the same `cabinet:init`, ledger signing and universal
+  login as the overlay.
+
+### Changed
+- **Characters and inventory are coming soon.** The Home panels and the Agents
+  and Inventory tabs are greyed and inert, with a COMING SOON label on hover
+  (always shown on touch screens).
 
 ## [0.11.16] — 2026-09-23 — studios host their whole backend on a node; match receipts
 
