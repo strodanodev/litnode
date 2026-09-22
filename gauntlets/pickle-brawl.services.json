@@ -1,5 +1,5 @@
 {
-  "$comment": "Pickle Brawl's whole backend, run by a node (node/publisher-services.js): the accounts API, the Open Play / lobby matchmaker, and two courts the matchmaker leases. Published at <wsAddr>/svc/pickle-brawl.<name>; the game finds them through NodeDirectory. In node.env: SERVICES=<absolute path to this file> and GAUNTLET_GATEWAY_PORT=8478 (the gateway; the relay tunnel fronts it). cwd is a RUNTIME checkout pinned to the commit the live web build came from (git worktree add ../pb-runtime <commit>; pnpm install in the root, services/api and services/matchmaker; the .dist/game.js that build shipped), so the courts run the same engine as the players' browsers; move it forward only together with the web build. envFiles are the development checkout's own .env files (secrets read in place, never copied). COURT_IDENTITY is the court key (npm run bridge -- key --kind attested --ruleset pickle-brawl.v1); the node lists it in COURTS so court results settle on the ladder. Machine-specific: copy and edit.",
+  "$comment": "Pickle Brawl's whole backend, run by a node (node/publisher-services.js): the accounts API, the Open Play / lobby matchmaker, and two courts the matchmaker leases. Published at <wsAddr>/svc/pickle-brawl.<name>; the game finds them through NodeDirectory. In node.env: SERVICES=<absolute path to this file> and GAUNTLET_GATEWAY_PORT=8478 (the gateway; the relay tunnel fronts it). cwd is a RUNTIME checkout pinned to the commit the live web build came from (git worktree add ../pb-runtime <commit>; pnpm install in the root, services/api and services/matchmaker; the .dist/game.js that build shipped), so the courts run the same engine as the players' browsers; move it forward only together with the web build. envFiles are the development checkout's own .env files (secrets read in place, never copied). COURT_IDENTITY is the court key (npm run bridge -- key --kind attested --ruleset pickle-brawl.v1); the node lists it in COURTS so court results settle on the ladder. Machine-specific: copy and edit. AIR_PARTNER_IDS: the API and matchmaker also take the litVM arcade's AIR tokens (universal login: inside arcade.litvm.games the game signs in with the arcade's session); their own AIR_PARTNER_ID stays in their .env.",
   "prefix": "pickle-brawl",
   "cwd": "E:/NPC/PICKLEBRAWLv2/pb-runtime",
   "envFiles": [
@@ -19,7 +19,8 @@
       ],
       "env": {
         "PORT": "${port}",
-        "AIR_BUILD_ENV": "sandbox"
+        "AIR_BUILD_ENV": "sandbox",
+        "AIR_PARTNER_IDS": "62e01755-138f-4e58-9cdc-fab71e037afd"
       }
     },
     "matchmaker": {
@@ -31,7 +32,8 @@
       "env": {
         "PORT": "${port}",
         "AIR_BUILD_ENV": "sandbox",
-        "COURT_URLS": "${public:court-1},${public:court-2}"
+        "COURT_URLS": "${public:court-1},${public:court-2}",
+        "AIR_PARTNER_IDS": "62e01755-138f-4e58-9cdc-fab71e037afd"
       }
     },
     "court-1": {

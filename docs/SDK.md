@@ -206,6 +206,8 @@ your game. Transport between players is yours. [BUILD-FROM-SCRATCH.md](BUILD-FRO
 | shell → game | `cabinet:signed { matchId, player, sig }` | or `{ error }` |
 | game → shell | `cabinet:played { matchId }` | the placed match was played; the arcade closes the title |
 | game → shell | `cabinet:exit` | back to the launcher |
+| game → shell | `cabinet:air { id, token? }` · `cabinet:air-login { id }` · `cabinet:air-logout { id }` | universal login: the arcade's AIR session, a fresh token, the arcade's sign-in dialog, sign-out. Answered only for titles the arcade lists with `login: 'arcade'`, at their own origin |
+| shell → game | `cabinet:air { re?, signedIn, user, token?, error? }` | the answer (`re` = request id), or a push when the session changes |
 
 Drop-in helper for init and exit only: `cabinet/sdk-client.js` (a no-op outside the arcade); to sign, use `connectShell` from `sdk/client.js`. Launch
 URL for a placed match: `?ws=<relay>&room=LIT-…&player=<key>&match=<id>&build=<hash>`.

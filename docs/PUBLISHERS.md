@@ -45,7 +45,10 @@ against the code.
 
 1. **Authenticate through AirKit.** In litnode since 0.10.0: `POST /air/session` (docs/UNIVERSAL-LOGIN.md). What exists: the cabinet
    holds the player key and hands the title a signature over the match it
-   launched (`cabinet:sign`). A title never signs anyone in.
+   launched (`cabinet:sign`). Inside the arcade a first-party title signs
+   in with the arcade's own AIR session and never shows its own login
+   (`cabinet:air`, docs/UNIVERSAL-LOGIN.md "Titles inside the arcade"); on
+   its own domain it logs in itself.
 2. **Declare balance mapping.** `defineBalance` in your title file, bounded
    ranges, versioned by hash. Real.
 3. **Hydrate agents.** The node reads `ctx.agents` from the registry at the

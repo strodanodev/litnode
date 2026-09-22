@@ -14,8 +14,8 @@ the node serves the backend, and the node must run a release that knows
 | node support | this repo: `node/publisher-services.js`, `node/gauntlet.js`, `SERVICES=`, `GAUNTLET_GATEWAY_PORT=` | tested (`demo/services.test.mjs`, `demo/gauntlet.test.mjs`), committed, **not released** |
 | service bundle | `gauntlets/pickle-brawl.services.json` (API, matchmaker, court-1, court-2) | ran against the production database under a scratch node: all up, no restarts |
 | per-match courts | `gauntlets/pickle-brawl.json` | ran the real court from a real placement |
-| runtime checkout | `E:/NPC/PICKLEBRAWLv2/pb-runtime` (worktree, engine 16.1.21, Pickle Brawl commit `3eb0624`) | dependencies installed; `.dist` from 10 Sep |
-| frontend build | `E:/NPC/PICKLEBRAWLv2/pb-runtime/dist-web` (mesh discovery on, linked to Vercel `picklebrawl`) | built and booted locally; **not deployed** |
+| runtime checkout | `E:/NPC/PICKLEBRAWLv2/pb-runtime` (worktree, engine 16.1.21, Pickle Brawl commit `cbbc0af` since 23 Sep; was `3eb0624`) | dependencies installed; `.dist` from 10 Sep |
+| frontend build | `E:/NPC/PICKLEBRAWLv2/pb-runtime/dist-web` (mesh discovery on, linked to Vercel `picklebrawl`) | live on www.picklebrawl.live; rebuilt from `cbbc0af` and deployed 23 Sep (arcade sign-in) |
 
 The development checkout (`E:/NPC/PICKLEBRAWLv2/PickleBrawl`) carries an
 uncommitted engine 17 upgrade. The runtime checkout and the frontend build
@@ -60,9 +60,22 @@ them forward together, never one alone.
    serves the same file).
 7. **Retire the old hosts**, once a day of play has gone through the node:
    suspend the Render matchmaker, delete the `picklebrawl-api` Vercel
-   project, delete the Railway project (all its secrets are in the local
-   `.env` files; `deploy/vultr/render-env.mjs` reads Railway and stops
-   working).
+   project (after step 6), delete the Railway project (all its secrets are
+   in the local `.env` files). The Pickle Brawl repo no longer carries their
+   deploy paths (commit `cbbc0af`: `deploy/render`, `deploy/vultr`,
+   `railway.json`, the API's `vercel.json` and `push-secrets` are gone), so
+   nothing redeploys them. Render also deploys from a `render` branch on
+   GitHub; delete it once the service is suspended.
+7b. **One sign-in in the arcade** (23 Sep). The runtime checkout is at
+   `cbbc0af`, whose API and matchmaker accept the arcade's AIR partner when
+   `AIR_PARTNER_IDS` says so; the services bundle sets it. The node reads
+   both at start, so run `restart-node.cmd` (administrator prompt) BEFORE the
+   arcade ships `login: 'arcade'` for Pickle Brawl: an arcade build that
+   lends its token to a backend that does not accept it leaves the game's
+   account features refusing every request inside the arcade. Order:
+   restart the node, then deploy the arcade (`cabinet/`), then the titles
+   (already safe in any order: a title the arcade does not answer falls back
+   to its own login after 8 s).
 8. **Multiplayer.** The development checkout now has
    `MULTIPLAYER_ENABLED = true`. It reaches players with the next Genesys
    build of `.dist/game.js`, which is also when the runtime checkout and the

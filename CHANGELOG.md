@@ -3,6 +3,19 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- **One sign-in in the arcade.** A first-party title the arcade frames (Agent
+  Fighter, Pickle Brawl: `login: 'arcade'` in `cabinet/config.js`) signs in with
+  the arcade's AIR session instead of its own: it asks over postMessage
+  (`cabinet:air`, `cabinet:air-login`, `cabinet:air-logout`), its own Sign in
+  button opens the arcade's dialog, and the arcade pushes sign-in and sign-out to
+  it. Answered only at the title's own origin and posted only there. On its own
+  domain a title logs in itself, as before. The Pickle Brawl services bundle sets
+  `AIR_PARTNER_IDS` so its API and matchmaker take the arcade's tokens.
+  docs/UNIVERSAL-LOGIN.md "Titles inside the arcade".
+
 ## [0.11.16] — 2026-09-23 — studios host their whole backend on a node; match receipts
 
 ### Added

@@ -47,6 +47,57 @@ AIR dialog → session JWT ──►    verify vs JWKS → sub
 ed25519 key signs play ──►      ownerOfKey(playerKey) → proxy  ──►  the fold, mayPlay(), ERC-6699 ownership
 ```
 
+## Titles inside the arcade: one sign-in
+
+Since 23 Sep 2026 a title the arcade frames does not log in by itself. The
+arcade page already holds the player's AIR session, so it lends it:
+
+| where the player is | who shows the login | whose token the title's backend sees |
+|---|---|---|
+| arcade.litvm.games, title in the window or the overlay | the arcade (its **Sign in with AIR**, or the title's own button, which asks the arcade) | the arcade partner's (`62e01755-…`) |
+| www.agentfighter.wtf, www.picklebrawl.live directly | the title, with its own AIR Kit partner | the title's own partner |
+
+All three partners live in the same AIR developer account, so the AIR `sub`
+is the same player either way and the title's rows are the same rows.
+
+The messages (`cabinet/app.js`, next to `cabinet:init`):
+
+```
+game → arcade   { type:'cabinet:air', id, token?:true }   the session; a fresh token when asked (AIR rotates them)
+                { type:'cabinet:air-login', id }          the arcade opens ITS dialog; the click in the title lends the gesture
+                { type:'cabinet:air-logout', id }         one session, so the arcade signs out too
+arcade → game   { type:'cabinet:air', version:1, re?, signedIn, user:{id,email,address,name}|null, token?, error? }
+                re = the request it answers; without re, a push because the session changed
+```
+
+Rules the arcade keeps:
+
+- It answers only a title that `cabinet/config.js` lists with
+  `login: 'arcade'`, and only when the message comes from that title's own
+  origin (its `url`, plus `origins` if listed). Everything is posted to that
+  origin, never `'*'`.
+- Only first-party titles are listed. The token is the arcade partner's, and
+  a node with `AIR_PARTNER_ID` set to the arcade partner takes that token for
+  the player's proxy wallet (`/air/publish`, `/air/bond`). A title that is
+  not ours never receives it.
+- Out of fullscreen before the dialog opens, or it would open behind the game.
+
+What a title does:
+
+- Decide at boot whether the arcade frames it: `location.ancestorOrigins[0]`
+  where the browser has it, else the frame's referrer, checked against the
+  arcade's origins. Framed by the arcade → ask `cabinet:air`; no answer in
+  8 s (an older arcade) → its own AIR Kit, as before. Not framed → its own
+  AIR Kit, unchanged.
+- Accept a reply only from `window.parent` at that origin.
+- Its backend accepts both partners, as an explicit list. Pickle Brawl:
+  `AIR_PARTNER_IDS=62e01755-…` next to `AIR_PARTNER_ID` (the services
+  bundle sets it). Agent Fighter's relay pins no partner.
+
+Implementations: Pickle Brawl `web/arcadeIdentity.ts` (the same facade the
+game already reads, so no game code changed); Agent Fighter
+`packages/client/src/auth.ts` (arcade mode inside the existing auth state).
+
 ## Why a proxy, and what it is not
 
 - **Any node can resolve, one node can sign.** `ownerOfKey(airKey(sub))` is a
