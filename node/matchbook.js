@@ -67,6 +67,8 @@ const PARAMS_TTL_MS = 3600_000;      // the windows are read from the contract, 
 
 export function createMatchBook({
   dataDir, nodeId, contract, stakeContract = null, epochAnchor = null, chainId, rpc, fromBlock = 0, log = () => {}, emit = () => {},
+  // the head's base fee, for the purse's "matches left" before this key has sent anything (Liteforge moved 68M → 357M wei in a day)
+  baseFee = () => null,
   // the node's own pieces
   settlement, hostAddr = () => null, rulesetIds = () => [], hasRole = () => true,
   windows: windowsIn = { attestWindow: 120, escalationWindow: 300 }, fetchImpl = globalThis.fetch,
@@ -96,9 +98,9 @@ export function createMatchBook({
   let balanceWei = null, balanceAt = 0, gasPriceWei = null, txType = null, lowLogged = false;
   const BALANCE_TTL = 5 * 60_000, GAS_PER_MATCH = 670_000n, LOW_GAS_MATCHES = 25;
   const purse = () => {
-    const price = gasPriceWei ?? 68_000_000n; // Liteforge, 22 Sep 2026, until a send tells us better
+    const price = gasPriceWei ?? baseFee() ?? 68_000_000n; // the last send's price, else the head's base fee, else Liteforge on 22 Sep 2026
     const matchesLeft = balanceWei == null ? null : Number(balanceWei / (GAS_PER_MATCH * price));
-    return { address, balanceWei: balanceWei == null ? null : balanceWei.toString(), balance: balanceWei == null ? null : (Number(balanceWei) / 1e18).toFixed(6), gasPriceWei: gasPriceWei == null ? null : gasPriceWei.toString(), txType, matchesLeft, low: matchesLeft != null && matchesLeft < LOW_GAS_MATCHES, readAt: balanceAt ? new Date(balanceAt).toISOString() : null };
+    return { address, balanceWei: balanceWei == null ? null : balanceWei.toString(), balance: balanceWei == null ? null : (Number(balanceWei) / 1e18).toFixed(6), gasPriceWei: price.toString(), priceSource: gasPriceWei != null ? 'send' : baseFee() != null ? 'head' : 'default', txType, matchesLeft, low: matchesLeft != null && matchesLeft < LOW_GAS_MATCHES, readAt: balanceAt ? new Date(balanceAt).toISOString() : null };
   };
   const readBalance = async () => {
     try { balanceWei = BigInt(await call('eth_getBalance', [address, 'latest'])); balanceAt = Date.now(); funded = balanceWei > 0n; } catch { /* unknown; keep the last */ }

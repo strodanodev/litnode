@@ -39,4 +39,5 @@ export const blockOf = (rpcBlock) => ({
   number: parseInt(rpcBlock.number, 16),
   timestamp: parseInt(rpcBlock.timestamp, 16),
   hash: rpcBlock.hash,
+  ...(rpcBlock.baseFeePerGas != null ? { baseFeePerGas: rpcBlock.baseFeePerGas } : {}), // hex; what the chain charges per gas right now (the purse's estimate)
 });

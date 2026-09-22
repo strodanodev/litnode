@@ -191,6 +191,8 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
     pollBlock, beaconFor, standings, nodeInfo, stakeAdminIsContract, releaseStatus, titleBuild, titleOwner, getLogs, blockNumber, profiles, profileName, directory, agentAt, rpc: call,
     // The last n blocks this node sampled (number, hash, timestamp) — for a dashboard's block strip; real hashes, not a fixture.
     recentBlocks: (n = 12) => blocks.slice(-n).map((b) => ({ number: b.number, hash: b.hash, timestamp: b.timestamp })),
+    /** The head's base fee in wei, or null (no base fee on this chain / nothing polled yet). */
+    baseFeeWei: () => { const b = blocks.at(-1); return b?.baseFeePerGas != null ? BigInt(b.baseFeePerGas) : null; },
     status: () => ({ rpc, offline, nodeStake, playerProfile, nodeDirectory, erc6699, releaseRegistry, titleRegistry, blocks: blocks.length, head: blocks.at(-1)?.number ?? null, headTs: blocks.at(-1)?.timestamp ?? null, lastError,
       // `lagS`: seconds between the head we hold and now — the RPC's freshness, or ours; Liteforge makes a block every 0.25 s.
       rpcMs, rpcLastMs, rpcCalls, rpcFailures, rpcAt: rpcLastAt ? new Date(rpcLastAt).toISOString() : null, lagS: blocks.at(-1)?.timestamp ? Math.max(0, Math.round(Date.now() / 1000 - blocks.at(-1).timestamp)) : null }),

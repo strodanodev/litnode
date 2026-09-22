@@ -3,9 +3,17 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.11.13] — 2026-09-22 — pilot cut: one-way links, the purse priced from the head, attestWindow 300 in the config
+
+The release behind the MVP pilot: 0.11.12 plus the three things the first live hours
+with `/fleet` showed. Type-2 transactions are proven on Liteforge (the desktop's
+announce after the 0.11.12 restart: type 0x2, effective price 357M wei — five times
+yesterday's base fee, well under the 5 gwei ceiling).
 
 ### Changed
+- **The purse prices "matches left" from the head's base fee** until this key has sent
+  something (`purse.priceSource`: send | head | default). It read ~211 matches at
+  yesterday's 68M wei while the chain charged 357M — the honest figure was ~40.
 - **`attestWindowS` 120 → 300** in `contracts/deploy.testnet.json` (the Ally answered the
   second final match at ~116 s, four seconds inside the window). Applied to the live
   MatchBook by `npm run params` (admin); nodes pick the new window up from `params()`
