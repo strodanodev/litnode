@@ -3,9 +3,21 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.11.16] — 2026-09-23 — studios host their whole backend on a node; match receipts
 
 ### Added
+- **Match receipt (`#/match/<matchId>`).** Every match in *Your record* and every
+  recent final on the Node page opens a receipt: the result (as posted on chain in
+  the `Settled` event, or the node's local settlement, labelled), the proof (match,
+  descriptor, result, ledger and build hashes, the witness panel, who signed, the
+  hour's root) and the on-chain timeline — Committed, Settled, each Attested with
+  its witness and verdict, Finalized — each step with its block and transaction
+  opening on the Liteforge block explorer. Every transaction the node names is
+  re-checked from the browser (`eth_getTransactionReceipt`: succeeded, sent to
+  MatchBook, carries that event for that match) and the hour's root against
+  `EpochAnchor.rootOf`; a step the chain does not back is shown and marked, never
+  upgraded. A match that never reached MatchBook says so and links nothing.
+  `cabinet/receipt.js`, `demo/receipt.test.mjs`.
 - **Top up the hot key from the Node page.** The Hot key panel has one-click
   buttons (+0.01 / +0.05 / +0.1 zkLTC, each labelled with the matches it buys at the
   current price) that send zkLTC from any connected wallet to the node's hot key —
@@ -17,6 +29,70 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 - **The purse estimate is role-aware:** a host pays ~445k gas per match (commit,
   settle, finalize), a witness ~75k (one attest). The 670k all-transactions figure
   made every host's "matches left" 1.5× too pessimistic.
+
+### Added
+- **Publisher services** (`node/publisher-services.js`, `SERVICES=` in
+  `node.env`): a studio's long-lived backend (accounts API, matchmaker, court
+  pool) supervised by the node and published through its relay tunnel at
+  `/svc/<prefix>.<name>` (HTTP and WebSocket, prefix stripped). Services find
+  each other (`${local:x}`) and their public address (`${public:x}`), take
+  secrets from the studio's own env files (operator keys never passed),
+  restart with backoff, and restart when the tunnel's hostname changes.
+  `GET /svc` on the gateway and `services` in the heartbeat say what a node
+  runs. `gauntlets/pickle-brawl.services.json` runs Pickle Brawl's API,
+  matchmaker and two courts. `demo/services.test.mjs`.
+
+### Fixed
+- **The gateway passes a relay's HTTP API through.** With an upstream relay
+  behind it, every path the gateway does not own (not `/svc`, not a
+  placed room, not `/gateway`) is proxied to the relay, HTTP as well as
+  WebSocket: Agent Fighter's relay serves its leaderboard, arcade runs,
+  items, pets, agents and its AIR key file on the same origin. The gateway's
+  own status is at `/gateway` when a relay sits behind it.
+- **A node running a title's gauntlet is the one placed to host it.** A node
+  with `GAUNTLETS` advertises those titles in its heartbeat (`gauntlets`), and
+  placement puts those nodes first for that title, ahead of relay and seed
+  order. Before, any bonded host carrying the build could be drawn and the
+  match had no court. A placement rule: every node and the arcade must run
+  the same release (`cabinet/protocol/placement.js` is regenerated).
+- **A gauntlet-only node gets a relay.** Since 0.11.14 the node advertises
+  its relay only after a WebSocket opens at the tunnel's root; the gauntlet
+  gateway sent root connections to its upstream, or answered 404 with none,
+  so a node hosting only gauntlet titles never advertised `wsAddr`. The
+  gateway now answers that probe itself when it has no upstream.
+- **`GAUNTLET_GATEWAY_PORT`**: the gateway on its own port, fronted by the
+  relay tunnel, with unknown rooms forwarded to the title relay on
+  `RELAY_PORT`. Before, the gateway bound `RELAY_PORT`, which on a node that
+  also runs Agent Fighter's relay (its wrapper listens on `RELAY_PORT`) would
+  have collided and stopped the node from starting.
+- **`${node}` in a gauntlet command** is the node's own runtime, for nodes
+  running as a scheduled task without `node` on the path.
+- **A long-running bridge follows a node that moved.** `bridge serve` and
+  `bridge watch` with `--node auto` looked the node up once; after a quick
+  tunnel rotated they kept posting to the dead hostname. They now re-resolve
+  from NodeDirectory when the node is unreachable and every ten minutes.
+- **`settle()` takes the other player's signature as a value** (a hex string
+  or `{ sig }`), not only a signer object; the documented call threw.
+- **SDK docs** (SDK.md, the arcade's #/build page, BUILD-FROM-SCRATCH,
+  BRING-YOUR-BACKEND, PUBLISHERS): the client import is the checkout's
+  `sdk/client.js` (there is no `@litvm/sdk` package); shell commands are bash
+  (`export`, not cmd's `set`); `npm run host -- bond` with the publisher's
+  own wallet; esbuild is needed for conformance and bundling; only host,
+  bridge and fleet take `--json`; a gauntlet report's `mode` is
+  `${placedMode}`, not `${mode}` (the seat layout); the from-scratch sample
+  declares what it uses and guards a missing placement; `cabinet:played`
+  and the `chain`/`air` init fields are in the shell table; the bridge path
+  is `/submit`; AirKit is integrated since 0.10.0.
+- **`npm run host`** knows gauntlets: `init --gauntlets --gauntlet-gateway-port
+  --gauntlet-upstream --courts --relay-keys`, and `doctor` checks every config
+  loads, its folder exists, and the gateway is not on the relay's port.
+
+### Added
+- **The arcade's developer docs: `#/build`** (`cabinet/build.js`): the SDK
+  instructions and a "for dummies" walk through the mesh drawn as diagrams
+  generated from step lists; the same words as `docs/SDK.md`, the one-page
+  form of the publisher docs (paths, keys, labels, what settles). Skills
+  updated for settlement v1.0 (delegate, enroll, what OFFICIAL means).
 
 ### Fixed
 - The announcer's reported directory entry reflects a sent announce at once, not

@@ -27,6 +27,8 @@ import { CHAIN } from './config.js';
 import { CABINET_VERSION } from './version.js';
 import { CONTRACTS } from './contracts.js';
 import { readFleet, describeEvent, checklist as fleetChecklist, ago } from './fleet.js';
+import { renderBuild } from './build.js';
+import { loadReceipt, renderReceipt } from './receipt.js';
 
 const $ = (id) => document.getElementById(id);
 const view = (name) => document.querySelector(`.view[data-view="${name}"]`);
@@ -558,7 +560,7 @@ function renderGame(g) {
         ${panel('Leaderboard', g.rulesetId ? boardTable(g.rulesetId, 10) : '<div class="empty">This title is not on the mesh yet — its ruleset lands with the node sync.</div>', g.rulesetId ? moreLink('#/leaderboards') : '')}
         <div style="height:16px"></div>
         ${panel('Your record', me || hist.length ? `<div class="stats4" style="margin:0 0 12px"><div class="stat"><div class="k">Rank</div><div class="v">${me ? `#${me.rank}` : '—'}</div></div><div class="stat"><div class="k">Rating</div><div class="v">${me?.rating ?? 1200}</div></div><div class="stat"><div class="k">Matches</div><div class="v">${S.stats[g.rulesetId]?.[player.id]?.matches ?? 0}</div></div><div class="stat"><div class="k">Wins</div><div class="v">${S.stats[g.rulesetId]?.[player.id]?.wins ?? 0}</div></div></div>
-          <table><thead><tr><th>Result</th><th>Opponent</th><th class="num">Length</th><th class="num">Rating</th><th>When</th></tr></thead><tbody>${hist.map((h) => `<tr><td class="res ${h.res[0]}">${h.res.toUpperCase()}</td><td>${h.opp.map((o) => short(o, 10)).join(', ') || '—'}</td><td class="num">${Math.floor(h.ticks / 3600)}:${String(Math.floor((h.ticks / 60) % 60)).padStart(2, '0')}</td><td class="num">${h.rating}</td><td class="dim">${h.when ? new Date(h.when).toLocaleDateString() : '—'} ${verifyTag(h)}</td></tr>`).join('') || '<tr><td colspan="5" class="dim">No matches yet.</td></tr>'}</tbody></table>` : `<div class="empty">${S.online ? 'No settled matches under your key yet. Play one — it shows up here once the mesh settles it.' : 'Start a node to load your record.'}</div>`)}
+          <table><thead><tr><th>Result</th><th>Opponent</th><th class="num">Length</th><th class="num">Rating</th><th>When</th></tr></thead><tbody>${hist.map((h) => `<tr><td class="res ${h.res[0]}">${h.res.toUpperCase()}</td><td>${h.opp.map((o) => short(o, 10)).join(', ') || '—'}</td><td class="num">${Math.floor(h.ticks / 3600)}:${String(Math.floor((h.ticks / 60) % 60)).padStart(2, '0')}</td><td class="num">${h.rating}</td><td class="dim">${h.when ? new Date(h.when).toLocaleDateString() : '—'} ${verifyTag(h)} <a class="link rcpt-link" href="#/match/${esc(h.matchId)}" title="the match's transactions on the Liteforge explorer">receipt ›</a></td></tr>`).join('') || '<tr><td colspan="5" class="dim">No matches yet.</td></tr>'}</tbody></table>` : `<div class="empty">${S.online ? 'No settled matches under your key yet. Play one — it shows up here once the mesh settles it.' : 'Start a node to load your record.'}</div>`)}
       </div>
     </div>`;
   if (g.rulesetId) renderMatchmaking(g);
@@ -892,7 +894,7 @@ function renderNode() {
     </dl>`;
     const sent = mb?.sent ?? [];
     workHtml = `${sent.length ? `<table><thead><tr><th>When</th><th>What</th><th>Match</th><th>Transaction</th><th class="num">Gas</th><th>Result</th></tr></thead><tbody>${[...sent].reverse().slice(0, 15).map((x) => `<tr><td class="dim">${new Date(x.at).toLocaleTimeString()}</td><td>${esc(x.what)}</td><td class="mono">${x.matchId ? esc(x.matchId.slice(0, 12)) + '…' : '—'}</td><td>${ex('tx', x.tx, 14)}</td><td class="num">${x.gasUsed?.toLocaleString() ?? '—'}</td><td>${x.ok === true ? '<span class="tag live">mined</span>' : x.ok === false ? '<span class="tag court">reverted</span>' : '<span class="tag">pending</span>'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No transactions from this key since the node started. Commits, settles and attests appear here as ranked matches are played.</div>'}
-      ${f.recent.length ? `<div class="source">Recent finals on chain: ${f.recent.slice(-5).reverse().map((r) => `<span class="mono">${esc(r.matchId.slice(0, 10))}…</span> ${esc(r.status)}${r.tx ? ' ' + ex('tx', r.tx, 8) : ''}`).join(' · ')}</div>` : ''}
+      ${f.recent.length ? `<div class="source">Recent finals on chain: ${f.recent.slice(-5).reverse().map((r) => `<a class="link mono" href="#/match/${esc(r.matchId)}" title="match receipt">${esc(r.matchId.slice(0, 10))}…</a> ${esc(r.status)}${r.tx ? ' ' + ex('tx', r.tx, 8) : ''}`).join(' · ')}</div>` : ''}
       ${f.rooms.length ? `<div class="source">Rooms held now: ${f.rooms.map((r) => `<span class="mono">${esc(r.room)}</span> ${esc(r.state)}${r.ours ? ' (host)' : r.seated ? ' (seat)' : ''}`).join(' · ')}</div>` : ''}`;
     eventsHtml = f.events.length ? `<div class="events">${[...f.events].reverse().slice(0, 12).map((e) => `<div><time>${new Date(e.t).toLocaleTimeString()}</time><span class="mono dim">${esc(e.type)}</span><span>${esc(describeEvent(e))}</span></div>`).join('')}</div>` : '<div class="empty">Nothing yet.</div>';
     peersHtml = f.peers.length ? `<table><thead><tr><th>Operator</th><th>Node</th><th>Version</th><th>Roles</th><th>Quality</th><th>Ping</th><th>Bonded</th><th>Address</th></tr></thead><tbody>${[...f.peers].sort((a, b) => b.quality.score - a.quality.score).map((p) => `<tr><td>${esc(p.operator)}</td><td class="mono" title="${esc(p.nodeId)}">${esc(p.nodeId.slice(0, 12))}…</td><td>${esc(p.version ?? '?')}${p.protocol !== f.protocol ? ' <span class="tag court">protocol</span>' : ''}</td><td class="dim">${esc(p.roles.join(', '))}</td><td><span class="tag ${p.quality.grade === 'A' || p.quality.grade === 'B' ? 'live' : p.quality.grade === 'C' ? 'hosted' : 'court'}">${p.quality.grade} ${p.quality.score}</span>${p.fresh ? '' : ` <span class="dim">silent ${Math.round(p.ageS)} s</span>`}</td><td>${p.link?.emaMs != null ? `${p.link.emaMs} ms${p.link.loss ? ` · ${Math.round(p.link.loss * 100)}% loss` : ''}` : p.link?.inboundMs != null ? `←${p.link.inboundMs} ms <span class="dim">(they reach us)</span>` : '<span class="dim">via mesh</span>'}</td><td>${p.bonded === null ? '?' : p.bonded ? 'yes' : 'no'}</td><td class="mono dim">${esc(p.addr ?? '—')}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No peers heard yet.</div>';
@@ -933,14 +935,44 @@ function renderNode() {
   $('topup-connect')?.addEventListener('click', topUpConnect);
 }
 
+// ═══════════════════════════════════════════════ match receipt ══
+/** #/match/<id>: what the chain recorded about one match — every step a
+ *  transaction that opens on the Liteforge explorer, each receipt re-checked
+ *  from this browser (cabinet/receipt.js). Loaded once per visit and on
+ *  "Refresh"; the poll's re-renders reuse it. */
+const Rcpt = { id: null, data: null, loading: false, error: null, at: 0 };
+function renderMatch(matchId, { refresh = false } = {}) {
+  const el = view('match');
+  const draw = () => {
+    const names = { [player.id]: player.name };
+    el.innerHTML = Rcpt.data
+      ? renderReceipt(Rcpt.data, { explorer: CHAIN.explorer, me: player.id, names, contracts: CHAIN })
+        + `<div class="source" style="margin-top:10px">Read from ${esc(nodeUrl())} ${ago(Date.now() - Rcpt.at)} ago · <button class="link" id="rcpt-refresh">refresh</button></div>`
+      : `<div class="page-h"><a class="dim" href="#/games">‹ arcade</a><h1 class="chrome" style="margin-left:12px">Match receipt</h1></div>${panel('Match', `<div class="empty">${Rcpt.error ? `Could not read this match: ${esc(Rcpt.error)}` : `Reading <span class="mono">${esc(short(matchId, 16))}</span> from the node and the chain…`}</div>`)}`;
+    $('rcpt-refresh')?.addEventListener('click', () => renderMatch(matchId, { refresh: true }));
+    for (const c of el.querySelectorAll('[data-copy]')) c.addEventListener('click', () => { navigator.clipboard?.writeText(c.dataset.copy).then(() => { c.classList.add('copied'); setTimeout(() => c.classList.remove('copied'), 900); }).catch(() => {}); });
+    for (const c of el.querySelectorAll('[data-copy-now]')) c.addEventListener('click', () => { navigator.clipboard?.writeText(c.dataset.copyNow).then(() => { const t = c.textContent; c.textContent = 'copied ✓'; setTimeout(() => { c.textContent = t; }, 1200); }).catch(() => {}); });
+  };
+  if (Rcpt.id !== matchId) Object.assign(Rcpt, { id: matchId, data: null, error: null, at: 0 });
+  draw();
+  if (Rcpt.loading || (Rcpt.data && !refresh) || (Rcpt.error && Date.now() - Rcpt.at < 10_000 && !refresh)) return;
+  Rcpt.loading = true;
+  loadReceipt(matchId, { api, rpc: seeds.rpc, contracts: CHAIN })
+    .then((d) => { if (Rcpt.id === matchId) Object.assign(Rcpt, { data: d, error: null, at: Date.now() }); })
+    .catch((e) => { if (Rcpt.id === matchId) Object.assign(Rcpt, { error: e.message, at: Date.now() }); })
+    .finally(() => { Rcpt.loading = false; if (route.name === 'match' && route.matchId === matchId) draw(); });
+}
+
 // ═══════════════════════════════════════════════ router ══
 let route = { name: 'home' };
 function parseRoute() {
   const h = location.hash;
   const m = h.match(/^#\/game\/([\w-]+)/);
   if (m) { const g = GAMES.find((x) => x.id === m[1]); return g ? { name: 'game', game: g } : { name: 'games' }; }
+  const mr = h.match(/^#\/match\/([\w:.-]{1,128})/);
+  if (mr) return { name: 'match', matchId: mr[1] };
   const name = (h.match(/^#\/(\w+)/)?.[1]) ?? 'home';
-  return ['games', 'leaderboards', 'characters', 'inventory', 'node'].includes(name) ? { name } : { name: 'home' };
+  return ['games', 'leaderboards', 'characters', 'inventory', 'node', 'build'].includes(name) ? { name } : { name: 'home' };
 }
 function render() {
   renderWorking();
@@ -952,6 +984,8 @@ function render() {
     case 'characters': renderCharacters(); break;
     case 'inventory': renderInventory(); break;
     case 'node': renderNode(); break;
+    case 'build': renderBuild(view('build')); break;
+    case 'match': renderMatch(route.matchId); break;
   }
 }
 function navigate() {

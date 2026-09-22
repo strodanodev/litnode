@@ -93,7 +93,7 @@ test('cabinet contract: fields by name, cabinet served at /, vendored protocol i
   for (const f of ['/app.js', '/client.js', '/wallet.js', '/seeds.js', '/protocol/directory.js', '/protocol/abi.js', '/config.js', '/style.css', '/sw.js', '/manifest.webmanifest', '/protocol/keys.js', '/protocol/derive.js', '/protocol/profile.js', '/cabinet/protocol/keys.js'])
     assert.equal((await fetch(`${node.addr}${f}`)).status, 200, f);
   // every script the page loads must PARSE: a stray quote in app.js shipped in 0.11.1 and blanked the cabinet on every node
-  for (const f of ['/app.js', '/client.js', '/wallet.js', '/seeds.js', '/nodeops.js', '/config.js', '/sdk-client.js', '/roster.js', '/avatar.js', '/bg.js', '/uptime.js', '/chain.js']) {
+  for (const f of ['/app.js', '/client.js', '/wallet.js', '/seeds.js', '/nodeops.js', '/config.js', '/sdk-client.js', '/roster.js', '/avatar.js', '/bg.js', '/uptime.js', '/chain.js', '/receipt.js']) {
     const src = await (await fetch(`${node.addr}${f}`)).text();
     const tmpFile = join(tmpdir(), `cabinet-parse-${process.pid}-${f.slice(1)}.mjs`);
     writeFileSync(tmpFile, src);

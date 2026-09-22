@@ -71,7 +71,9 @@ test('gauntlet: placement on this node spawns the court; players fetch tickets a
 
   // A real placement: two players queue on this (only) node; the pair closes, the host is this node.
   const [p1, p2] = await Promise.all([generateKeypair(), generateKeypair()]);
-  const enqueue = async (kp) => { const env = await seal(QUEUE_TAG, { playerId: kp.publicKey, rulesetId: 'pickle-brawl.v1', tokenId: '1', mode: 'casual', bucket: bucketOf(Date.now()), region: 'lan' }, kp); const r = await fetch(`${host.addr}/queue`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(env) }); assert.ok(r.status === 200 || r.status === 202, `queue: ${r.status}`); };
+  // One bucket for both: two entries that straddle a 2 s bucket boundary never pair.
+  const bucket = bucketOf(Date.now());
+  const enqueue = async (kp) => { const env = await seal(QUEUE_TAG, { playerId: kp.publicKey, rulesetId: 'pickle-brawl.v1', tokenId: '1', mode: 'casual', bucket, region: 'lan' }, kp); const r = await fetch(`${host.addr}/queue`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(env) }); assert.ok(r.status === 200 || r.status === 202, `queue: ${r.status}`); };
   await enqueue(p1); await enqueue(p2);
   let match = null;
   assert.ok(await until(async () => { const r = await (await fetch(`${host.addr}/match?playerId=${p1.publicKey}`)).json(); match = r.matches?.[0] ?? null; return !!match; }, 40_000), 'placed');

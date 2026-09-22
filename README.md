@@ -136,6 +136,7 @@ cabinet/    the arcade frontend — plain HTML/CSS/JS, no build step
 sdk/        what a game developer imports to put a title on the mesh, plus the node-hosting harness
 titles/     the game adapters (Agent Fighter, Pickle Brawl, …)
 rulesets/   bundled, hash-pinned game logic
+gauntlets/  per-title configs for match servers the node runs itself (GAUNTLETS=, node/gauntlet.js)
 contracts/  the on-chain pieces — staking, title ownership, settlement
 tools/      command-line scripts: create a title, bond a node, publish a release, and so on
 portable/   the zipped, double-click-and-go build for operators without a terminal
@@ -146,6 +147,7 @@ demo/       the test suite
 
 | I want to… | Start here |
 |---|---|
+| Understand the whole thing in one page, with pictures | [docs/SDK.md](docs/SDK.md) (the arcade serves it at arcade.litvm.games/#/build) |
 | Put my existing game (with its own backend) on the mesh | [docs/BRING-YOUR-BACKEND.md](docs/BRING-YOUR-BACKEND.md) |
 | Build a brand-new game against the SDK | [docs/BUILD-FROM-SCRATCH.md](docs/BUILD-FROM-SCRATCH.md) |
 | Understand the node's API and the cabinet's architecture | [SPEC.md](SPEC.md) |

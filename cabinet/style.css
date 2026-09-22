@@ -403,7 +403,40 @@ ol.steps { margin: 0; padding-left: 20px; color: var(--fg2); line-height: 1.75; 
 .copy.copied { color: var(--green); border-bottom-color: var(--green); }
 a.link.mono { word-break: break-all; }
 .kv dd { word-break: break-word; }
+
+/* ── #/build: developer docs ─────────────────────────────────── */
+.doc-tabs { margin: 12px 0; }
+.doc .doc-b { padding: 6px 18px 18px; }
+.doc-b p { max-width: 72ch; color: var(--fg2); margin: 10px 0; line-height: 1.6; }
+.doc-b h4 { font-family: var(--mono); text-transform: uppercase; letter-spacing: .14em; font-size: 11px; color: var(--peach); margin: 26px 0 8px; }
+.doc-b .diagram { display: block; max-width: 100%; height: auto; margin: 8px 0; }
+.doc-b .dg-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font: 10.5px/1 var(--mono); text-transform: uppercase; letter-spacing: .1em; color: var(--dim); margin: 4px 0 12px; }
+.doc-b .dg-legend i { display: inline-block; width: 9px; height: 9px; margin-right: 6px; vertical-align: -1px; }
+.doc-b .doc-list { padding-left: 18px; color: var(--fg2); max-width: 78ch; }
+.doc-b .doc-list li { margin: 6px 0; }
+.doc-b .tbl { overflow-x: auto; margin: 8px 0; }
+.doc-b table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.doc-b th { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--edge2); color: var(--dim); font-size: 10px; }
+.doc-b td { padding: 7px 10px; border-bottom: 1px solid var(--edge); vertical-align: top; color: var(--fg2); }
+.doc-b td:first-child { color: var(--fg); white-space: nowrap; }
+.doc-b .link { color: var(--cyan); text-decoration: underline; text-underline-offset: 2px; }
+.doc-b pre.cmd { white-space: pre; margin: 8px 0 12px; }
 .topup { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--edge); display: grid; gap: 8px; }
 .topup .k { font-size: 9px; color: var(--dim); letter-spacing: .12em; text-transform: uppercase; }
 .topup .row { display: flex; flex-wrap: wrap; gap: 6px; }
 .topup .btn small { display: block; font-size: 9px; color: var(--dim); font-weight: 400; letter-spacing: 0; }
+
+/* ── #/match/<id>: the match receipt ─────────────────────────── */
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 16px; }
+.rcpt-score { width: 100%; border-collapse: collapse; font-size: 14px; }
+.rcpt-score td { padding: 8px 6px; border-bottom: 1px solid var(--edge); }
+.rcpt-score tr.me td:first-child { color: var(--cyan); }
+.rcpt-steps { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.rcpt-steps th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--edge2); color: var(--dim); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
+.rcpt-steps td { padding: 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+.rcpt-steps .small, .rcpt-steps .dim.small { font-size: 11px; }
+.rcpt-kv dd { white-space: normal; }
+.rcpt-kv [data-copy] { cursor: copy; border-bottom: 1px dotted var(--dim); }
+.rcpt-kv [data-copy].copied { color: var(--green); }
+a.rcpt-link { font-size: 11px; margin-left: 4px; white-space: nowrap; }
+.tablewrap { overflow-x: auto; }

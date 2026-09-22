@@ -8,6 +8,8 @@ description: Put an open-source game on the litVM Games mesh — scaffold a titl
 You are helping a game developer ingest their game into litnode so bonded
 nodes host it and its matches settle on litVM. Read `docs/HOST-YOUR-TITLE.md`
 first; it is the rulebook, and every rule in it is enforced by code you can run.
+`docs/SDK.md` is the one-page form of every path (also the arcade's
+#/build page); read it when the developer wants the whole picture.
 
 ## Procedure
 
