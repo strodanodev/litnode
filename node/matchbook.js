@@ -88,6 +88,9 @@ export function createMatchBook({
   let cursor = (() => { try { return JSON.parse(readFileSync(cursorPath, 'utf8')).cursor ?? null; } catch { return null; } })(); // last block fully scanned; null = not started
   let scanError = null;
   const txlog = new Map();                  // matchId (chain key) → { txs: [{ what, tx, at }] } — what this node sent, for hints and receipts
+  const sentLog = [];                       // every transaction this key sent, newest last: { what, matchId, tx, at, ok, gasUsed } — the operator's ledger of work (/fleet)
+  const SENT_MAX = 200;
+  const noteSent = (what, matchId, tx) => { sentLog.push({ what, matchId: matchId ?? null, tx, at: Date.now(), ok: null, gasUsed: null }); if (sentLog.length > SENT_MAX) sentLog.shift(); };
   const seenTx = new Map();                 // matchId (chain key) → { txs: Set, at } — every transaction whose events this node holds, passed on as hints
   const ingested = new Set();               // tx hashes whose receipts are absorbed
   const pendingReceipts = new Map();        // tx → { since, tries } waiting for a receipt
@@ -148,6 +151,7 @@ export function createMatchBook({
   const trySend = async (data, what, matchId, to) => {
     try {
       const tx = await send(data, what, to); log(`matchbook: ${what} ${matchId?.slice(0, 12) ?? ''} (tx ${tx.slice(0, 12)}…)`);
+      noteSent(what, matchId, tx);
       if (matchId && /^[0-9a-f]{64}$/i.test(matchId) || (matchId && what !== 'propose' && what !== 'enroll')) {
         const key = /^[0-9a-f]{64}$/i.test(matchId) ? matchId.toLowerCase() : mb.matchIdBytes32(matchId);
         const rec = txlog.get(key) ?? { txs: [] }; rec.txs.push({ what, tx, at: Date.now() }); txlog.set(key, rec);
@@ -296,6 +300,7 @@ export function createMatchBook({
     const rc = await call('eth_getTransactionReceipt', [tx]);
     if (!rc) return false; // not mined yet
     ingested.add(tx); pendingReceipts.delete(tx);
+    const mine = sentLog.find((s) => s.tx === tx); if (mine) { mine.ok = rc.status === '0x1'; mine.gasUsed = rc.gasUsed ? parseInt(rc.gasUsed, 16) : null; mine.block = rc.blockNumber ? parseInt(rc.blockNumber, 16) : null; }
     if (rc.status !== '0x1') return true;
     for (const l of rc.logs ?? []) { if ((l.address ?? '').toLowerCase() !== contract.toLowerCase()) continue; const e = mb.decodeLog({ ...l, transactionHash: l.transactionHash ?? tx }); if (e) absorb(e); }
     return true;
@@ -464,6 +469,8 @@ export function createMatchBook({
 
   return {
     address, commit, settle, poll, ladder, statusOf, epoch, propose, hints, absorbHints, ingestReceipt,
+    // What this key sent, newest last (receipt outcome once read): the operator's ledger of settlement work.
+    sent: (n = 50) => sentLog.slice(-n),
     // The last n decided matches this node holds events for, newest last — the dashboard's "recent" strip.
     recent: (n = 20) => decoded.filter((e) => e.event === 'Finalized').slice(-n).map((e) => ({ matchId: e.matchId, status: e.status, block: e.block, tx: e.tx ?? null, at: blockTs.get(e.block) ? new Date(blockTs.get(e.block) * 1000).toISOString() : null })),
     proof: (matchId) => { const key = mb.matchIdBytes32(matchId); const fin = decoded.find((e) => e.event === 'Finalized' && e.matchId === key); if (!fin) return null; const ts = blockTs.get(fin.block); if (ts == null) return null; return mb.chainProof(epoch(hourOf(ts * 1000)), key); },

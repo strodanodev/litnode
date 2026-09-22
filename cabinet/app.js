@@ -26,6 +26,7 @@ import * as seeds from './seeds.js';
 import { CHAIN } from './config.js';
 import { CABINET_VERSION } from './version.js';
 import { CONTRACTS } from './contracts.js';
+import { readFleet, describeEvent, checklist as fleetChecklist, ago } from './fleet.js';
 
 const $ = (id) => document.getElementById(id);
 const view = (name) => document.querySelector(`.view[data-view="${name}"]`);
@@ -119,7 +120,7 @@ $('avatar-file').addEventListener('change', async (e) => {
 });
 
 // ═══════════════════════════════════════════════ node state ══
-const S = { online: false, checked: false, health: null, boards: {}, stats: {}, deltas: {}, peers: [], snapshot: null, uptime: {}, stake: null, seeds: [], seedsAt: 0, viaSeed: null, titles: [] };
+const S = { online: false, checked: false, health: null, boards: {}, stats: {}, deltas: {}, peers: [], snapshot: null, uptime: {}, stake: null, seeds: [], seedsAt: 0, viaSeed: null, titles: [], fleet: null, fleetError: null, fleetAt: 0 };
 /** No local node → read NodeDirectory and try the seeds. Runs at most once a
  *  minute while a node answers; every 15 s while none does (a seed behind a
  *  quick tunnel re-announces a new hostname within seconds of a restart). */
@@ -155,9 +156,14 @@ async function pollNode() {
     S.peers = (await api('/peers').catch(() => ({}))).peers ?? [];
     if (polls % 5 === 1) { const { titles } = await api('/titles').catch(() => ({})); S.titles = titles ?? S.titles; if (mergeMeshTitles(S.titles)) render(); }
     S.snapshot = await api('/snapshot').catch(() => S.snapshot);
+    // The Node page reads the node's signed telemetry (cabinet/fleet.js): verified against the /health key on every read.
+    if (route.name === 'node') {
+      try { S.fleet = await readFleet(nodeUrl(), { expectNodeId: S.health?.nodeId ?? null }); S.fleetError = null; S.fleetAt = Date.now(); }
+      catch (e) { S.fleetError = e?.message ?? String(e); if (/did not sign|digest/.test(S.fleetError)) S.fleet = null; }
+    }
   } catch {
     // One slow answer is not an outage: flip to offline on the second miss.
-    if (++misses >= 2) { S.online = false; S.health = null; findSeed().catch(() => {}); }
+    if (++misses >= 2) { S.online = false; S.health = null; S.fleet = null; findSeed().catch(() => {}); }
   }
   S.checked = true;
   S.uptime = sample(nodeUrl(), S.online);
@@ -258,7 +264,16 @@ function nodePanel({ compact = true } = {}) {
     </div>
     ${strip(slots(S.uptime, 24 * 6))}
     <div class="legend"><i class="up"></i>up <i class="partial"></i>partial <i class="down"></i>down <i class="none"></i>dashboard closed</div>`;
-  const workCol = `
+  const sent = S.fleet?.chain?.matchBook?.sent ?? null;
+  const count = (what) => (sent ? sent.filter((x) => x.what === what && x.ok !== false).length : null);
+  const workCol = sent ? `
+    <div class="work">
+      <div class="stat"><div class="k">Commits (host)</div><div class="v">${count('commit')}</div></div>
+      <div class="stat"><div class="k">Attests (witness)</div><div class="v">${count('attest')}</div></div>
+      <div class="stat"><div class="k">Settles · finals</div><div class="v">${count('settle')}<small>· ${count('finalize')}</small></div></div>
+      <div class="stat"><div class="k">Backstop · anchors</div><div class="v">${count('expire') + count('escalate') + count('resolve')}<small>· ${count('propose')}</small></div></div>
+    </div>
+    <div class="source">Transactions this node's hot key sent since it started (${sent.length} in the ledger below) · epoch ${h.epoch}</div>` : `
     <div class="work">
       <div class="stat"><div class="k">Settled as host</div><div class="v">${rw.settled}</div></div>
       <div class="stat"><div class="k">Witnessed</div><div class="v">${rw.cosigned}</div></div>
@@ -280,7 +295,7 @@ function nodePanel({ compact = true } = {}) {
         <div class="kv2"><span class="k">Wallet</span><span class="v">${S.stake?.balance != null ? `${fmtTok(S.stake.balance)} ${CHAIN.token}` : '—'}</span></div>
         <div class="kv2"><span class="k">Operator</span><span class="v mono" title="${esc(S.stake?.operator ?? '')}">${S.stake?.bonded && S.stake.operator ? `${S.stake.operator.slice(0, 6)}…${S.stake.operator.slice(-4)}` : '—'}</span></div>
       </div>
-      <span class="tag projected">no rewards contract yet — nothing accrues; the bond is a cost of misbehaviour, not a yield</span>
+      <span class="tag projected">no rewards contract yet — nothing accrues; the bond is a cost of misbehaviour, not a yield. Gas for every commit, settle and attest comes from the hot key below.</span>
     </div>`;
   return `<section class="panel hi s12"><div class="panel-h"><h3>Node uptime · mesh work</h3><span class="tag ${S.online ? 'live' : ''}">${S.online ? 'node online' : S.checked ? 'node offline' : 'connecting'}</span>${compact ? moreLink('#/node', 'node') : ''}</div>
     <div class="panel-b hi-grid"><div>${uptimeCol}</div><div>${workCol}</div><div>${rewardCol}</div></div></section>`;
@@ -768,40 +783,103 @@ async function pubRun(what, rid) {
   } catch (e) { Pub.error = e?.message ?? String(e); }
   Pub.busy = ''; render();
 }
+// ═══════════════════════════════════════════════ node page ══
+const ex = (kind, v, n = 10) => (v ? `<a class="link mono" target="_blank" rel="noopener" title="${esc(v)}" href="${esc(CHAIN.explorer)}/${kind}/${esc(v)}">${esc(v.slice(0, n))}…</a>` : '—');
+const copyable = (v, n = 12) => (v ? `<span class="mono copy" data-copy="${esc(v)}" title="${esc(v)} — click to copy">${esc(v.slice(0, n))}…</span>` : '—');
+const stateTag = (st) => ({ ok: '<span class="tag live">done</span>', warn: '<span class="tag hosted">pending</span>', todo: '<span class="tag court">to do</span>', na: '<span class="tag">n/a</span>' })[st] ?? '';
+const GAS_FAUCET = 'https://liteforge.hub.caldera.xyz';
+/** The operator's cockpit, from the node's signed /fleet; the older /health rows when a node predates it. */
 function renderNode() {
-  const h = S.health;
-  const status = h ? `<dl class="kv">
+  const h = S.health, f = S.fleet;
+  const verified = f ? `<span class="tag live" title="digest ${esc(f.digest.slice(0, 12))}… · signed by ${esc(f.nodeId.slice(0, 12))}… at ${esc(f.at)}">signed by the node · ${ago(Date.now() - S.fleetAt)} ago</span>` : S.fleetError ? `<span class="tag court" title="${esc(S.fleetError)}">unverified: ${esc(S.fleetError)}</span>` : '';
+  const legacy = h ? `<dl class="kv">
       <dt>node id</dt><dd title="${esc(h.nodeId)}">${esc(h.nodeId)}</dd><dt>operator</dt><dd>${esc(h.operator)}</dd><dt>roles</dt><dd>${esc(h.roles.join(', '))}</dd><dt>region</dt><dd>${esc(h.region)}</dd>
-      <dt>address</dt><dd>${esc(h.addr)}</dd><dt>bonded</dt><dd>${h.bonded === null ? 'unknown (offline / no stake contract)' : h.bonded ? 'yes' : 'no — run tools/bond-node.mjs'}</dd>
+      <dt>address</dt><dd>${esc(h.addr)}</dd><dt>bonded</dt><dd>${h.bonded === null ? 'unknown (offline / no stake contract)' : h.bonded ? 'yes' : 'no — Operator panel below'}</dd>
       <dt>tunnel</dt><dd>${h.tunnel?.node ? `${esc(h.tunnel.node.mode)} · ${esc(h.tunnel.node.state)}${h.tunnel.node.url ? ` · ${esc(h.tunnel.node.url)}` : ''}${h.tunnel.node.lastError ? ` · ${esc(h.tunnel.node.lastError)}` : ''}` : 'none — LAN address only'}</dd>
       <dt>relay</dt><dd>${h.wsAddr ? `${esc(h.wsAddr)}${h.tunnel?.relay ? ` (${esc(h.tunnel.relay.state)})` : ''}` : 'none advertised'}</dd>
       <dt>version</dt><dd>${esc(h.version ?? '?')}${h.update?.available ? ` — <b>${esc(h.update.latest)} available</b>` : h.update?.checkedAt ? ' — up to date' : ''}${h.update?.lastError ? ` <span class="dim">(check failed: ${esc(h.update.lastError)})</span>` : ''}</dd>
-      <dt>cabinet</dt><dd>${esc(CABINET_VERSION)}${h.version && h.version !== CABINET_VERSION ? ` — <b>this copy of the arcade is not the node's (node serves ${esc(h.cabinet?.version ?? h.version)})</b>; open http://localhost:${esc(String(new URL(h.addr ?? 'http://x:7801').port || '7801'))}/ for the matching one` : ' — matches the node'}</dd>
-      <dt>reachable</dt><dd>${h.inbound ? (h.inbound.reachable === null ? 'no peers known yet' : h.inbound.reachable ? `yes — ${h.inbound.peers} peer${h.inbound.peers === 1 ? '' : 's'} push gossip to this node` : `no peer has reached this node in 30 s — fine for a witness; a seed, LAN host or relay needs allow-firewall.cmd or a tunnel`) : '—'}</dd>
-      <dt>epoch</dt><dd>${h.epoch}</dd><dt>chain</dt><dd>${h.chain.offline ? 'offline beacon' : `${esc(h.chain.rpc)} · block ${h.chain.head ?? '?'}`}${h.chain.lastError ? ` · ${esc(h.chain.lastError)}` : ''}</dd>
+      <dt>cabinet</dt><dd>${esc(CABINET_VERSION)}${h.version && h.version !== CABINET_VERSION ? ` — <b>this copy of the arcade is not the node's (node serves ${esc(h.cabinet?.version ?? h.version)})</b>` : ' — matches the node'}</dd>
+      <dt>reachable</dt><dd>${h.inbound ? (h.inbound.reachable === null ? 'no peers known yet' : h.inbound.reachable ? `yes — ${h.inbound.peers} peer${h.inbound.peers === 1 ? '' : 's'} push gossip to this node` : 'no peer has reached this node in 30 s — fine for a witness; a seed, LAN host or relay needs allow-firewall.cmd or a tunnel') : '—'}</dd>
+      <dt>chain</dt><dd>${h.chain.offline ? 'offline beacon' : `${esc(h.chain.rpc)} · block ${h.chain.head ?? '?'}`}${h.chain.lastError ? ` · ${esc(h.chain.lastError)}` : ''}</dd>
       <dt>rulesets</dt><dd>${Object.entries(h.rulesets).map(([k, v]) => `${esc(k)} @ ${v.slice(0, 10)}`).join(', ')}</dd><dt>builds held</dt><dd>${h.buildsHeld}</dd>
     </dl>` : `<div class="empty">No node at <span class="mono">${esc(nodeUrl())}</span>. Start one below, or <button class="link" id="node-edit2">point the cabinet at another node</button>.</div>`;
-  const peers = S.peers.length ? `<table><thead><tr><th>Node</th><th>Operator</th><th>Region</th><th>Roles</th><th>Fresh</th><th>Bonded</th><th>Rulesets</th></tr></thead><tbody>${S.peers.map((p) => `<tr><td class="mono" title="${esc(p.nodeId)}">${short(p.nodeId, 12)}</td><td>${esc(p.operator)}</td><td>${esc(p.region)}</td><td class="dim">${esc(p.roles.join(','))}</td><td>${p.fresh ? '<span class="res w">●</span>' : '<span class="res l">●</span>'}</td><td>${p.bonded === null ? '—' : p.bonded ? 'yes' : 'no'}</td><td class="dim">${esc(p.rulesets.join(', '))}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No peers known.</div>';
+
+  // ---- from /fleet
+  let identity = legacy, checklistHtml = '', purseHtml = '', reachHtml = '', releaseHtml = '', chainHtml = '', workHtml = '', eventsHtml = '', peersHtml = '';
+  if (f) {
+    const sf = f.self, mb = f.chain.matchBook, purse = mb?.purse ?? null, ann = f.chain.announcer;
+    identity = `<dl class="kv">
+      <dt>node id</dt><dd>${copyable(sf.nodeId, 24)} <span class="dim">ed25519 · the key the operator bonds</span></dd>
+      <dt>operator</dt><dd>${esc(sf.operator)} · ${esc(sf.roles.join(', '))} · ${esc(sf.region)}</dd>
+      <dt>operator wallet</dt><dd>${sf.wallet ? ex('address', sf.wallet) : '<span class="dim">not bonded</span>'}${sf.bond?.amount ? ` <span class="dim">· ${fmtTok(Number(BigInt(sf.bond.amount) / 10n ** 14n) / 10_000)} ${CHAIN.token} bonded</span>` : ''}</dd>
+      <dt>hot key</dt><dd>${ann ? ex('address', ann.address) : '—'} <span class="dim">signs commits, attests, announces · never holds the bond</span></dd>
+      <dt>version</dt><dd>node ${esc(sf.version)} · cabinet ${esc(CABINET_VERSION)}${sf.version !== CABINET_VERSION ? ` — <b>this copy of the arcade is not the node's (it serves ${esc(f.cabinet)})</b>` : ''} · protocol ${f.protocol}</dd>
+      <dt>up</dt><dd>${fmtDuration(sf.uptimeMs)} since ${new Date(sf.startedAt).toLocaleString()}</dd>
+    </dl>`;
+    const steps = fleetChecklist(f, { cabinetContracts: CONTRACTS.contracts });
+    checklistHtml = `<ol class="checklist">${steps.map((st) => `<li class="${st.state}"><span class="st">${stateTag(st.state)}</span><span><b>${esc(st.label)}</b><small>${esc(st.detail)}</small></span></li>`).join('')}</ol>
+      <div class="source">Every step is read from the node and the chain, not remembered. Wallet steps are in the Operator panel; the rest the node does by itself once the step before it is done.</div>`;
+    if (purse) purseHtml = `<div class="purse ${purse.low ? 'low' : ''}">
+        <div class="big-tok"><span class="chrome">${esc(purse.balance ?? '—')}</span><span class="tok">zkLTC on the hot key</span></div>
+        <dl class="kv"><dt>covers</dt><dd>~${purse.matchesLeft ?? '?'} matches as host <span class="dim">(670k gas each at ${purse.gasPriceWei ? (Number(purse.gasPriceWei) / 1e9).toFixed(2) : '?'} gwei, ${esc(purse.priceSource ?? 'default')} price)</span></dd>
+        <dt>address</dt><dd>${ex('address', purse.address, 42)}</dd>
+        <dt>transactions</dt><dd>${mb.sends} sent since start · type-${purse.txType ?? '?'}${mb.lastError ? ` · <span style="color:var(--red)">${esc(mb.lastError)}</span>` : ''}</dd></dl>
+        ${purse.low ? `<div class="sub" style="color:var(--red)">LOW — a host that runs dry mid-match voids it. Send zkLTC to the address above: <a class="link" target="_blank" rel="noopener" href="${GAS_FAUCET}">${GAS_FAUCET}</a></div>` : `<div class="sub dim">Top up from <a class="link" target="_blank" rel="noopener" href="${GAS_FAUCET}">the Caldera faucet</a> when it drops; the bond token (tLITVM) is a different thing and lives in the operator wallet.</div>`}
+      </div>`;
+    reachHtml = `<dl class="kv">
+      <dt>advertised</dt><dd>${esc(sf.addr)}${sf.lanAddr && sf.lanAddr !== sf.addr ? ` <span class="dim">· LAN ${esc(sf.lanAddr)}</span>` : ''}</dd>
+      <dt>tunnel</dt><dd>${sf.tunnel ? `${esc(sf.tunnel.mode)} · <b>${esc(sf.tunnel.state)}</b>${sf.tunnel.restarts ? ` · rotated ${sf.tunnel.restarts}×` : ''}${sf.tunnel.lastError && sf.tunnel.state !== 'up' ? ` · ${esc(sf.tunnel.lastError.slice(0, 160))}` : ''}` : '<span class="dim">none (LAN only)</span>'}</dd>
+      <dt>inbound</dt><dd>${sf.inbound.reachable === null ? 'no peers known yet' : sf.inbound.reachable ? `${sf.inbound.peers} peer${sf.inbound.peers === 1 ? '' : 's'} push gossip here` : 'nobody has reached this node in 30 s'}</dd>
+      ${sf.relay ? `<dt>relay</dt><dd><b>${esc(sf.relay.state)}</b>${sf.relay.ms != null ? ` · ${sf.relay.ms} ms` : ''}${sf.relay.url ? ` · ${esc(sf.relay.url)}` : ''} <span class="dim">· port ${sf.relay.port} · checked ${sf.relay.checkedAt ? ago(Date.now() - new Date(sf.relay.checkedAt).getTime()) + ' ago' : 'never'}</span>${sf.relay.lastError ? ` · <span style="color:var(--red)">${esc(sf.relay.lastError)}</span>` : ''}</dd>` : ''}
+      <dt>directory</dt><dd>${ann?.entry ? `${esc(ann.entry.url)}${ann.entry.wsAddr ? ` · relay ${esc(ann.entry.wsAddr)}` : ''} <span class="dim">· announced ${ann.entry.updatedAt ? new Date(ann.entry.updatedAt).toLocaleString() : '?'}</span>` : ann && !('entry' in ann) ? '<span class="dim">entry not reported by this node version</span>' : '<span class="dim">no entry on NodeDirectory</span>'}${ann?.lastTx ? ` · tx ${ex('tx', ann.lastTx)}` : ''}${ann?.lastError ? ` · <span style="color:var(--red)">${esc(ann.lastError)}</span>` : ''}</dd>
+      <dt>mesh</dt><dd>${f.mesh.active} active · ${f.mesh.known} known · ${f.mesh.bonded} bonded · ${f.mesh.eligible} eligible${f.mesh.incompatible ? ` · ${f.mesh.incompatible} incompatible` : ''} · versions ${Object.entries(f.mesh.versions).map(([v, n]) => `${esc(v)}×${n}`).join(' ')}</dd>
+      <dt>gossip</dt><dd>${f.mesh.gossip.outPerMin}↑ ${f.mesh.gossip.inPerMin}↓ per min · ${(f.mesh.gossip.outBytesPerMin / 1024 / 60).toFixed(1)} KB/s out · ${(f.mesh.gossip.inBytesPerMin / 1024 / 60).toFixed(1)} KB/s in</dd>
+    </dl>`;
+    const u = sf.update;
+    releaseHtml = `<dl class="kv">
+      <dt>running</dt><dd>${esc(sf.version)}${u.applying ? ' · applying…' : ''}</dd>
+      <dt>latest</dt><dd>${u.latest ? `${esc(u.latest)}${u.available ? ' — <b>available</b>' : ' — this is it'}${u.date ? ` <span class="dim">· ${new Date(u.date).toLocaleString()}</span>` : ''}` : '<span class="dim">no release manifest read yet</span>'}</dd>
+      <dt>registry gate</dt><dd>${esc(u.registry ?? 'not reported by this node version')} <span class="dim">· ${{ active: 'the zip hash is registered and active on ReleaseRegistry — a node may apply it', pending: 'registered, activation delay not over', revoked: 'REVOKED — will not be applied', unset: 'no registry configured', unchecked: 'not looked at yet', unreadable: 'the chain did not answer' }[u.registry] ?? ''}</span></dd>
+      <dt>channel</dt><dd>${esc(u.channel ?? 'stable')} · checked ${u.checkedAt ? ago(Date.now() - new Date(u.checkedAt).getTime()) + ' ago' : 'never'}${u.lastError ? ` · <span style="color:var(--red)">${esc(u.lastError)}</span>` : ''}${u.canRollback ? ' · previous build kept (rollback possible)' : ''}</dd>
+    </dl>`;
+    const c = f.chain, cs = c.contracts ?? {};
+    chainHtml = `<dl class="kv">
+      <dt>rpc</dt><dd>${esc(c.rpc)} · <b>${c.rpcMs ?? '?'} ms</b> avg (last ${c.rpcLastMs ?? '?'}) · ${c.rpcFailures}/${c.rpcCalls} failed${c.lastError ? ` · <span style="color:var(--red)">${esc(c.lastError)}</span>` : ''}</dd>
+      <dt>head</dt><dd>${c.head ?? '—'} · lag ${c.lagS ?? '?'} s${c.recentBlocks?.length ? ` · ${ex('block', String(c.recentBlocks.at(-1).number), 12)}` : ''}</dd>
+      <dt>generation</dt><dd>${cs.generation ?? (c.contracts ? '?' : 'not reported by this node version')} on the node · ${CONTRACTS.generation ?? '?'} in this cabinet</dd>
+      ${['NodeStake', 'NodeDirectory', 'MatchBook', 'EpochAnchor', 'ReleaseRegistry', 'TitleRegistry', 'PlayerProfile'].map((k) => cs[k] ? `<dt>${k}</dt><dd>${ex('address', cs[k], 42)}${CONTRACTS.contracts[k]?.address && CONTRACTS.contracts[k].address.toLowerCase() !== cs[k].toLowerCase() ? ` <span style="color:var(--red)">≠ this cabinet's ${esc(CONTRACTS.contracts[k].address.slice(0, 10))}…</span>` : ''}</dd>` : '').join('')}
+      ${mb ? `<dt>settlement</dt><dd>cursor ${mb.cursor} · ${mb.events} events held · hosting ${mb.hosting} · seated ${mb.seated} · windows settle ${mb.windows?.settleWindow ?? '?'} s / attest ${mb.windows?.attestWindow ?? '?'} s / escalation ${mb.windows?.escalationWindow ?? '?'} s</dd>` : ''}
+    </dl>`;
+    const sent = mb?.sent ?? [];
+    workHtml = `${sent.length ? `<table><thead><tr><th>When</th><th>What</th><th>Match</th><th>Transaction</th><th class="num">Gas</th><th>Result</th></tr></thead><tbody>${[...sent].reverse().slice(0, 15).map((x) => `<tr><td class="dim">${new Date(x.at).toLocaleTimeString()}</td><td>${esc(x.what)}</td><td class="mono">${x.matchId ? esc(x.matchId.slice(0, 12)) + '…' : '—'}</td><td>${ex('tx', x.tx, 14)}</td><td class="num">${x.gasUsed?.toLocaleString() ?? '—'}</td><td>${x.ok === true ? '<span class="tag live">mined</span>' : x.ok === false ? '<span class="tag court">reverted</span>' : '<span class="tag">pending</span>'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No transactions from this key since the node started. Commits, settles and attests appear here as ranked matches are played.</div>'}
+      ${f.recent.length ? `<div class="source">Recent finals on chain: ${f.recent.slice(-5).reverse().map((r) => `<span class="mono">${esc(r.matchId.slice(0, 10))}…</span> ${esc(r.status)}${r.tx ? ' ' + ex('tx', r.tx, 8) : ''}`).join(' · ')}</div>` : ''}
+      ${f.rooms.length ? `<div class="source">Rooms held now: ${f.rooms.map((r) => `<span class="mono">${esc(r.room)}</span> ${esc(r.state)}${r.ours ? ' (host)' : r.seated ? ' (seat)' : ''}`).join(' · ')}</div>` : ''}`;
+    eventsHtml = f.events.length ? `<div class="events">${[...f.events].reverse().slice(0, 12).map((e) => `<div><time>${new Date(e.t).toLocaleTimeString()}</time><span class="mono dim">${esc(e.type)}</span><span>${esc(describeEvent(e))}</span></div>`).join('')}</div>` : '<div class="empty">Nothing yet.</div>';
+    peersHtml = f.peers.length ? `<table><thead><tr><th>Operator</th><th>Node</th><th>Version</th><th>Roles</th><th>Quality</th><th>Ping</th><th>Bonded</th><th>Address</th></tr></thead><tbody>${[...f.peers].sort((a, b) => b.quality.score - a.quality.score).map((p) => `<tr><td>${esc(p.operator)}</td><td class="mono" title="${esc(p.nodeId)}">${esc(p.nodeId.slice(0, 12))}…</td><td>${esc(p.version ?? '?')}${p.protocol !== f.protocol ? ' <span class="tag court">protocol</span>' : ''}</td><td class="dim">${esc(p.roles.join(', '))}</td><td><span class="tag ${p.quality.grade === 'A' || p.quality.grade === 'B' ? 'live' : p.quality.grade === 'C' ? 'hosted' : 'court'}">${p.quality.grade} ${p.quality.score}</span>${p.fresh ? '' : ` <span class="dim">silent ${Math.round(p.ageS)} s</span>`}</td><td>${p.link?.emaMs != null ? `${p.link.emaMs} ms${p.link.loss ? ` · ${Math.round(p.link.loss * 100)}% loss` : ''}` : p.link?.inboundMs != null ? `←${p.link.inboundMs} ms <span class="dim">(they reach us)</span>` : '<span class="dim">via mesh</span>'}</td><td>${p.bonded === null ? '?' : p.bonded ? 'yes' : 'no'}</td><td class="mono dim">${esc(p.addr ?? '—')}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No peers heard yet.</div>';
+  }
+  const peersLegacy = S.peers.length ? `<table><thead><tr><th>Node</th><th>Operator</th><th>Region</th><th>Roles</th><th>Fresh</th><th>Bonded</th><th>Rulesets</th></tr></thead><tbody>${S.peers.map((p) => `<tr><td class="mono" title="${esc(p.nodeId)}">${esc(p.nodeId.slice(0, 12))}…</td><td>${esc(p.operator)}</td><td>${esc(p.region ?? '')}</td><td class="dim">${esc((p.roles ?? []).join(', '))}</td><td>${p.fresh ? 'yes' : 'no'}</td><td>${p.bonded === null ? '?' : p.bonded ? 'yes' : 'no'}</td><td class="dim">${esc((p.rulesets ?? []).join(', '))}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No peers heard yet.</div>';
+  const updateMore = h?.update?.available ? (isLoopbackNode() ? '<button class="btn sm primary" id="update-btn">Update node</button>' : '<span class="dim">update from the node\'s own machine</span>') : '';
   view('node').innerHTML = `<div class="page-h"><h1 class="chrome">Nodes</h1><span class="dim">run a node while you play — it verifies and witnesses matches for the mesh</span></div>
     <div class="home">
       ${nodePanel({ compact: false })}
-      ${panel('7-day uptime', `${heatmap(S.uptime)}<div class="legend"><i class="up"></i>up <i class="partial"></i>partial <i class="down"></i>down <i class="none"></i>dashboard closed</div><div class="source">Observed by this dashboard while it is open, 10-minute resolution, stored locally per node URL. The node's own process uptime is the "process up" figure above.</div>`, '', 's6')}
-      ${panel('Mesh work', `<table><thead><tr><th>Source</th><th class="num">Yours</th><th>Counted from</th></tr></thead><tbody>
-          <tr><td>Match settled as host</td><td class="num">${nodeWork().settled}</td><td class="dim">deltas with hostId = this node</td></tr>
-          <tr><td>Witness co-signature</td><td class="num">${nodeWork().cosigned}</td><td class="dim">deltas listing this node in cosigners</td></tr>
-          <tr><td>Hours observed up</td><td class="num">${fmtTok(hoursOnline(S.uptime, 7 * 24 * 6))} h</td><td class="dim">this dashboard, while open — not a mesh figure</td></tr>
-        </tbody></table><div class="source">There is no rewards contract on litVM; nothing accrues. Bond and wallet figures are read live from ${esc(CHAIN.name)} (chain ${CHAIN.chainId}); NodeStake ${CHAIN.NodeStake.slice(0, 10)}…</div>`, '', 's6')}
-      ${panel('This node', status, h?.update?.available ? (isLoopbackNode() ? '<button class="btn sm primary" id="update-btn">Update node</button>' : '<span class="dim">update from the node\'s own machine</span>') : '', 's6')}
+      ${panel('This node', identity, verified, 's6')}
+      ${f ? panel('Setup', checklistHtml, '', 's6') : panel('7-day uptime', `${heatmap(S.uptime)}<div class="legend"><i class="up"></i>up <i class="partial"></i>partial <i class="down"></i>down <i class="none"></i>dashboard closed</div><div class="source">Observed by this dashboard while it is open, 10-minute slots.</div>`, '', 's6')}
+      ${f && purseHtml ? panel('Hot key · gas', purseHtml, '', 's6') : ''}
+      ${f ? panel('Reach · directory', reachHtml, '', 's6') : ''}
       ${h ? panel('Operator', operatorPanel(h), '', 's6') : ''}
       ${h ? panel('Publisher', publisherPanel(h), '', 's6') : ''}
+      ${f ? panel('Release', releaseHtml, updateMore, 's6') : ''}
+      ${f ? panel('Chain · contracts', chainHtml, `<span class="dim">${esc(CHAIN.name)} · <a class="link" target="_blank" rel="noopener" href="${esc(CHAIN.explorer)}">explorer</a></span>`, 's6') : ''}
+      ${f ? panel('Settlement work · this key', workHtml, '', 's12') : ''}
+      ${f ? panel('Events', eventsHtml, '', 's6') : ''}
+      ${f ? panel('7-day uptime', `${heatmap(S.uptime)}<div class="legend"><i class="up"></i>up <i class="partial"></i>partial <i class="down"></i>down <i class="none"></i>dashboard closed</div><div class="source">Observed by this dashboard while it is open, 10-minute slots.</div>`, '', 's6') : ''}
       ${panel('Run a node', `<p>The arcade is a peer network: this page talks to the mesh through a node on <b>your</b> machine, the way a torrent client is the peer. Every node verifies and witnesses matches for everyone.</p><ol class="steps">
-          <li><a class="link" href="${RELEASES}" target="_blank" rel="noopener">Download the latest release</a> — the <span class="mono">-win-x64</span> zip carries its own runtime; nothing to install. Releases are signed; the node checks the signature on every update.</li>
-          <li>Unzip anywhere. Double-click <span class="mono">start-node.cmd</span>. Give it a name and the seed URL of a node that is already running.</li>
-          <li>Reload this page: the header turns green and your key appears on the ladders once you play. Keep the window open — it is your peer.</li>
-          <li>Only if others must reach you (a seed, a LAN host): <span class="mono">allow-firewall.cmd</span> once. A node that only reaches outward needs nothing.</li>
-          <li>To host and witness ranked matches, bond the node's key from the operator wallet: <span class="mono">npm run bond -- &lt;nodeId&gt;</span>. Until then it plays and verifies as a guest peer.</li></ol>`, '', 's6')}
+          <li><a class="link" href="${RELEASES}" target="_blank" rel="noopener">Download the latest release</a> (the <span class="mono">-win-x64</span> zip carries its own runtime) or the LITNODE Control Plane app — releases are signed and registered on chain; the node refuses anything else.</li>
+          <li>Unzip anywhere, double-click <span class="mono">start-node.cmd</span>, give it a name. Reload this page: the header turns green and the <b>Setup</b> panel above shows what is left.</li>
+          <li>Bond from the operator wallet and set the hot key (Operator panel), send the hot key a little zkLTC (Hot key panel). Enrolment, the tunnel, the announce and updates are the node's own job.</li>
+          <li>Only if others must reach you (a seed, a LAN host): <span class="mono">allow-firewall.cmd</span> once, or <span class="mono">TUNNEL=quick</span> in <span class="mono">node.env</span>.</li></ol>`, '', 's6')}
       ${panel('Seeds on chain', seeds.configured() ? (S.seeds.length ? `<table><thead><tr><th>Operator</th><th>Node</th><th>Address</th><th>Relay</th><th>Announced</th></tr></thead><tbody>${S.seeds.map((s) => `<tr><td class="mono">${s.operator.slice(0, 6)}…${s.operator.slice(-4)}</td><td class="mono" title="${esc(s.nodeId)}">${short(s.nodeId, 12)}</td><td class="mono">${esc(s.url)}</td><td class="mono dim">${esc(s.wsAddr ?? '—')}</td><td class="dim">${new Date(s.updatedAt * 1000).toLocaleString()}</td></tr>`).join('')}</tbody></table><div class="source">Read from NodeDirectory on ${esc(CHAIN.name)}: bonded nodes that announced an address in the last 7 days. ${S.viaSeed ? `This page is reading the mesh through ${esc(S.viaSeed.url)}.` : 'Your own node comes first; these are the fallback.'}</div>` : '<div class="empty">No seed has announced yet, or the chain is unreachable. <button class="link" id="seeds-refresh">Read again</button></div>') : '<div class="empty">NodeDirectory is not configured in this build (config.js CHAIN.NodeDirectory).</div>', '', 's12')}
-      ${panel('Peers', peers, '', 's12')}
+      ${panel('Peers', f ? peersHtml : peersLegacy, f ? `<span class="dim">measured on this node's gossip push, every second</span>` : '', 's12')}
     </div>`;
   $('node-edit2')?.addEventListener('click', editNode);
   $('update-btn')?.addEventListener('click', updateNode);
@@ -809,6 +887,7 @@ function renderNode() {
   $('pub-signin')?.addEventListener('click', () => signInWithAir().then(render));
   for (const b of view('node').querySelectorAll('[data-pub]')) b.addEventListener('click', () => pubRun(b.dataset.pub, b.dataset.rid ?? null));
   $('seeds-refresh')?.addEventListener('click', () => { S.seedsAt = 0; findSeed().then(render); });
+  for (const c of view('node').querySelectorAll('[data-copy]')) c.addEventListener('click', () => { navigator.clipboard?.writeText(c.dataset.copy).then(() => { c.classList.add('copied'); setTimeout(() => c.classList.remove('copied'), 900); }).catch(() => {}); });
 }
 
 // ═══════════════════════════════════════════════ router ══

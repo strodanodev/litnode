@@ -381,3 +381,25 @@ ol.steps { margin: 0; padding-left: 20px; color: var(--fg2); line-height: 1.75; 
   .hero { flex-direction: column; align-items: stretch; } .hero h1 { font-size: 30px; } .cols { grid-template-columns: 1fr; }
   .stats4 { grid-template-columns: repeat(2, 1fr); } .page-h { flex-wrap: wrap; }
 }
+
+/* ---- Node page (0.11.15): setup checklist, hot-key purse, events strip, copyable ids */
+.checklist { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.checklist li { display: grid; grid-template-columns: 78px 1fr; gap: 10px; align-items: start; padding: 8px 10px; border: 1px solid var(--edge); background: rgba(6,9,15,.34); }
+.checklist li.ok { border-color: rgba(126,240,168,.35); }
+.checklist li.todo { border-color: rgba(200,177,255,.45); }
+.checklist li.warn { border-color: rgba(247,177,122,.45); }
+.checklist li.na { opacity: .55; }
+.checklist li b { display: block; font-size: 13px; }
+.checklist li small { display: block; color: var(--dim); font-size: 11px; line-height: 1.45; margin-top: 2px; word-break: break-word; }
+.checklist .st .tag { white-space: nowrap; }
+.purse .big-tok { margin-bottom: 8px; }
+.purse.low .big-tok .chrome { color: var(--red); }
+.purse .kv { margin-top: 4px; }
+.events { display: grid; gap: 4px; font-size: 12px; }
+.events div { display: grid; grid-template-columns: 64px 92px 1fr; gap: 8px; align-items: baseline; }
+.events time { color: var(--dim); font-family: var(--mono); font-size: 11px; }
+.events span:last-child { word-break: break-word; }
+.copy { cursor: copy; border-bottom: 1px dotted var(--dim); }
+.copy.copied { color: var(--green); border-bottom-color: var(--green); }
+a.link.mono { word-break: break-all; }
+.kv dd { word-break: break-word; }

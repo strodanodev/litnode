@@ -3,6 +3,37 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.11.15] — 2026-09-22 — the Node page is the operator's cockpit
+
+### Added
+- **Node page v2 (cabinet), fed by the node's signed `/fleet`** and verified on every
+  read (`cabinet/fleet.js`; a document another key signed is refused and the page
+  says so). Panels: **This node** (id, operator wallet, hot key — every address an
+  explorer link, ids click-to-copy; node vs cabinet version), **Setup** — a live
+  checklist read from the node and the chain (bonded → hot key set → hot key
+  funded → enrolled → public address verified → relay → announced → same contract
+  generation as the cabinet) with what clears each step, **Hot key · gas** (balance,
+  ~matches left at the head's price, red at `low`, the Caldera faucet — distinct
+  from the tLITVM bond faucet), **Reach · directory** (advertised URL, tunnel,
+  inbound, relay state and round trip, the NodeDirectory entry with its announce
+  tx, mesh counts, real gossip KB/s), **Release** (running, latest, registry gate
+  state explained, channel, rollback), **Chain · contracts** (RPC latency and
+  failures, head and lag, generation on the node vs in the cabinet, every contract
+  address linked and compared), **Settlement work · this key** (every commit,
+  settle, attest, finalize, expire, propose the hot key sent, with tx link, gas and
+  receipt outcome; recent finals; rooms held), **Events** (the node's own ring,
+  described), **Peers** (grade, ping or ←inbound ping, loss, version, bonded).
+  The uptime panel's work column counts chain transactions instead of v0.2
+  deltas. Degrades to the older rows on a node before 0.11.12/0.11.15.
+- **`/fleet`** carries `chain.matchBook.sent[]` (the hot key's transactions with
+  receipt outcome and gas), `chain.contracts` (the addresses this process runs
+  against + the generation its `deployed.testnet.json` claimed), the announcer's
+  directory `entry`, and the fuller `self.update` (registry, channel, rollback).
+
+### Removed
+- The v0.2 "Mesh work" table and the "Run a node" steps that sent operators to a
+  terminal for the bond — the Setup panel and the Operator panel cover both.
+
 ## [0.11.14] — 2026-09-22 — a placed match always has a relay; addresses have one source; a relay is verified before it is announced
 
 ### Added

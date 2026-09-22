@@ -90,6 +90,8 @@ export async function createNode({
   // Relay verification: (url) → true when a WebSocket opens through it. Default: a real WebSocket open (8 s);
   // tests pass a fake. A relay tunnel is advertised and announced only once this passes, and dropped when it stops.
   relayProbe = null,
+  // The contract generation deployed.testnet.json says the addresses above belong to (cli.mjs passes it); /fleet reports it beside the addresses so a cabinet can spot skew.
+  contractsGeneration = null,
   // UPnP: ask the router to forward our port (and the relay's) — what a
   // torrent client does. Reports CGNAT when the ISP makes it pointless.
   upnp = false, upnpGateway = null,
@@ -913,11 +915,13 @@ export async function createNode({
       at: new Date(now).toISOString(), nodeId, version, protocol: PROTOCOL_VERSION, cabinet: CABINET_VERSION,
       self: { nodeId, operator, roles, region, version, addr, lanAddr, wsAddr, startedAt: new Date(startedAt).toISOString(), uptimeMs: now - startedAt,
         bonded: stakes?.[nodeId]?.active ?? null, wallet: stakes?.[nodeId]?.operator ?? null, eligible: eligible.has(nodeId), bond: myBond ? { eligible: myBond.eligible, delegate: myBond.delegate, amount: myBond.amount.toString() } : null,
-        tunnel: tunnels.node?.status() ?? null, relay: relayPort ? relayStatus() : null, upnp: upnpCtl?.status() ?? null, update: (({ available, latest, checkedAt, lastError }) => ({ available, latest, checkedAt: checkedAt ?? null, lastError: lastError ?? null }))(updater.status()),
+        tunnel: tunnels.node?.status() ?? null, relay: relayPort ? relayStatus() : null, upnp: upnpCtl?.status() ?? null, update: (({ available, latest, checkedAt, lastError, registry, channel, canRollback, applying, date }) => ({ available, latest, checkedAt: checkedAt ?? null, lastError: lastError ?? null, registry, channel, canRollback, applying: !!applying, date: date ?? null }))(updater.status()),
         inbound: { peers: [...inbound.values()].filter((t) => now - t < 30_000).length, reachable: peersKnown.size ? [...inbound.values()].some((t) => now - t < 30_000) : null }, sandbox: sandbox.status() },
       chain: { ...(({ rpc, head, headTs, lagS, rpcMs, rpcLastMs, rpcCalls, rpcFailures, rpcAt, lastError, offline }) => ({ rpc, head, headTs, lagS, rpcMs, rpcLastMs, rpcCalls, rpcFailures, rpcAt, lastError, offline }))(chain.status()),
-        matchBook: mbs ? { contract: mbs.contract, delegate: mbs.delegate, delegated: mbs.delegated, funded: mbs.funded, enrolled: mbs.enrolled, purse: mbs.purse, cursor: mbs.cursor, scanRange: mbs.scanRange, events: mbs.events, sends: mbs.sends, lastTx: mbs.lastTx, lastError: mbs.lastError, hosting: mbs.hosting, seated: mbs.seated, windows: mbs.windows } : null,
-        announcer: announcer?.status() ? (({ address, delegated, funded, lastTx, lastError }) => ({ address, delegated, funded, lastTx, lastError }))(announcer.status()) : null,
+        matchBook: mbs ? { contract: mbs.contract, delegate: mbs.delegate, delegated: mbs.delegated, funded: mbs.funded, enrolled: mbs.enrolled, purse: mbs.purse, cursor: mbs.cursor, scanRange: mbs.scanRange, events: mbs.events, sends: mbs.sends, lastTx: mbs.lastTx, lastError: mbs.lastError, hosting: mbs.hosting, seated: mbs.seated, windows: mbs.windows, sent: mbook.sent(50) } : null,
+        // the addresses THIS process runs against, and the generation its deployed.testnet.json claimed — a cabinet compares with its own contracts.js
+        contracts: { generation: contractsGeneration, NodeStake: nodeStake, NodeDirectory: nodeDirectory, MatchBook: matchBookAddr, EpochAnchor: epochAnchor, ReleaseRegistry: releaseRegistry, TitleRegistry: titleRegistry, PlayerProfile: playerProfile, ERC6699Registry: erc6699 },
+        announcer: announcer?.status() ? (({ address, delegated, funded, lastTx, lastError, entry }) => ({ address, delegated, funded, lastTx, lastError, entry: entry ? { url: entry.url, wsAddr: entry.wsAddr || null, updatedAt: entry.updatedAt ? new Date(entry.updatedAt * 1000).toISOString() : null } : null }))(announcer.status()) : null,
         recentBlocks: chain.recentBlocks(12) },
       mesh: { active: peers.filter((p) => p.fresh).length + 1, known: peers.length + 1, bonded: peers.filter((p) => p.bonded).length + (stakes?.[nodeId]?.active ? 1 : 0), eligible: s.peers.length, incompatible: incompatible.size,
         snapshotRoot: s.root, epoch: s.epoch, versions, urls: peersKnown.size, unreachable: [...unreachable.keys()], gossip: trafficNow() },

@@ -78,6 +78,7 @@ const node = await createNode({
   // MatchBook: ranked matches committed, settled and attested on chain from the delegated key (BUILD-SPEC v0.3 §11).
   matchBook: env.MATCH_BOOK ?? deployed.MatchBook?.address ?? null,
   matchBookFromBlock: Number(env.MATCH_BOOK_FROM_BLOCK ?? deployed.MatchBook?.block ?? 0),
+  contractsGeneration: deployed.generation ?? null,
   matchBookWindows: { attestWindow: Number(deployed.MatchBook?.attestWindowS ?? 120), escalationWindow: Number(deployed.MatchBook?.escalationWindowS ?? 300) },
   epochAnchor: env.EPOCH_ANCHOR ?? ((deployed.EpochAnchor?.version ?? 1) >= 3 ? deployed.EpochAnchor?.address : null) ?? null,
   announce: env.ANNOUNCE !== '0',

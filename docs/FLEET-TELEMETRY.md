@@ -57,7 +57,7 @@ The test asserts exactly this set of keys.
 | `tunnel{mode,state,url,restarts,lastError}` | the quick/named tunnel, or null |
 | `relay{url,port,state,checkedAt,ms,lastError}` | the relay tunnel as a WebSocket client sees it: `verifying` → `up` (a WebSocket opened through the public hostname; only then is `wsAddr` advertised and announced) → `down` (three misses in a row: `wsAddr` withdrawn from the heartbeat and NodeDirectory) / `unreachable` (never opened in 5 min: hostname rotated). Null when the node fronts no relay. **Show `down` red** — it is what a player would call "server offline" |
 | `inbound{peers,reachable}` | peers that pushed gossip to us in the last 30 s; `reachable` null = no peers known |
-| `update{available,latest,checkedAt,lastError}` | registry-gated release check |
+| `update{available,latest,checkedAt,lastError,registry,channel,canRollback,applying,date}` | registry-gated release check; `registry` = `active` | `pending` | `revoked` | `unset` | `unchecked` | `unreadable` (0.11.15) |
 | `sandbox` | replay sandbox status |
 
 ### `chain`
@@ -67,7 +67,9 @@ The test asserts exactly this set of keys.
 | `rpcMs rpcLastMs rpcCalls rpcFailures rpcAt lastError` | RPC round trip: moving average and last; counts since start |
 | `matchBook.purse{address,balance,balanceWei,gasPriceWei,txType,matchesLeft,low,readAt}` | the **hot key**: zkLTC balance, the price the last send paid, ~matches it still covers as host (670k gas each), `low` under 25 — **show this red**; `txType` 2 = EIP-1559 |
 | `matchBook.{cursor,scanRange,events,sends,lastTx,lastError,hosting,seated,windows,delegated,funded,enrolled}` | settlement driver state |
-| `announcer{address,delegated,funded,lastTx,lastError}` | the NodeDirectory announce key (same key as the purse today) |
+| `matchBook.sent[]` | the hot key's transactions since start, newest last (up to 50): `{ what, matchId, tx, at, ok, gasUsed, block }` — `ok` null until the receipt is read, then true/false (reverted). The operator's ledger of work (0.11.15) |
+| `contracts{generation, NodeStake, NodeDirectory, MatchBook, EpochAnchor, ReleaseRegistry, TitleRegistry, PlayerProfile, ERC6699Registry}` | the addresses THIS process runs against and the generation its `deployed.testnet.json` claimed — compare with your own copy to spot skew (0.11.15) |
+| `announcer{address,delegated,funded,lastTx,lastError,entry}` | the NodeDirectory announce key (same key as the purse today); `entry` = what the directory holds for this node right now `{ url, wsAddr, updatedAt }` or null (0.11.15) |
 | `recentBlocks[]` | the last 12 blocks this node sampled: `{ number, hash, timestamp }` — a real block strip |
 
 ### `mesh` — the mesh as this node hears it

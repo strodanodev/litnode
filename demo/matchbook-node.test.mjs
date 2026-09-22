@@ -139,6 +139,9 @@ test('phase 2: commit → settle → three attests → final on the chain, and e
   assert.equal(room.state, 'final'); assert.equal(room.ours, true); assert.equal(room.attests, 3); assert.equal(room.room, `LIT-${d.matchId}`);
   assert.equal(fl.recent.at(-1).matchId, mb.matchIdBytes32(d.matchId), 'the final is the newest on the recent strip');
   assert.equal(fl.chain.matchBook.purse.txType, 2, 'the host signed type-2 transactions');
+  const sent = fl.chain.matchBook.sent;
+  for (const what of ['commit', 'settle', 'finalize']) { const x = sent.find((y) => y.what === what); assert.ok(x, `${what} in the sent ledger`); assert.match(x.tx, /^0x[0-9a-f]{64}$/); assert.equal(x.ok, true, `${what} receipt read`); assert.ok(x.gasUsed > 0, `${what} gas recorded`); }
+  assert.equal(fl.chain.contracts.MatchBook, book, 'the node reports the contracts it runs against');
   assert.ok(Number(fl.chain.matchBook.purse.balance) > 0 && fl.chain.matchBook.purse.matchesLeft > 0, 'the purse is read');
 
   // ---- the hour's root over the chain-finalized set: the same tree on a witness as on the host; the settler proposes it and it finalizes by stake

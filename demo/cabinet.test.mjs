@@ -71,6 +71,22 @@ test('cabinet contract: fields by name, cabinet served at /, vendored protocol i
   const served = await json('/cabinet/contracts.json');
   assert.equal(served.contracts.NodeDirectory.address, deployed.NodeDirectory.address, 'a title can fetch the current set from any node (and from the arcade)');
   assert.equal(served.generation, deployed.generation);
+  // the Node page (0.11.15) reads the node's signed /fleet through cabinet/fleet.js — every field by name
+  const { readFleet, checklist, describeEvent } = await import('../cabinet/fleet.js');
+  const f = await readFleet(node.addr, { expectNodeId: node.nodeId });
+  for (const k of ['nodeId', 'operator', 'roles', 'region', 'version', 'addr', 'lanAddr', 'wsAddr', 'startedAt', 'uptimeMs', 'bonded', 'wallet', 'eligible', 'bond', 'tunnel', 'relay', 'inbound', 'update']) assert.ok(k in f.self, `self.${k}`);
+  for (const k of ['available', 'latest', 'checkedAt', 'lastError', 'registry', 'channel', 'canRollback', 'applying', 'date']) assert.ok(k in f.self.update, `self.update.${k}`);
+  for (const k of ['rpc', 'offline', 'head', 'lagS', 'rpcMs', 'rpcLastMs', 'rpcCalls', 'rpcFailures', 'lastError', 'matchBook', 'announcer', 'contracts', 'recentBlocks']) assert.ok(k in f.chain, `chain.${k}`);
+  for (const k of ['generation', 'NodeStake', 'NodeDirectory', 'MatchBook', 'EpochAnchor', 'ReleaseRegistry', 'TitleRegistry', 'PlayerProfile']) assert.ok(k in f.chain.contracts, `chain.contracts.${k}`);
+  for (const k of ['active', 'known', 'bonded', 'eligible', 'incompatible', 'versions', 'gossip']) assert.ok(k in f.mesh, `mesh.${k}`);
+  assert.ok(Array.isArray(f.peers) && Array.isArray(f.events) && Array.isArray(f.recent) && Array.isArray(f.rooms));
+  await assert.rejects(readFleet(node.addr, { expectNodeId: 'ab'.repeat(32) }), /did not sign/, 'a document for another key is refused');
+  const steps = checklist(f, { cabinetContracts: CONTRACTS.contracts });
+  assert.deepEqual(steps.map((x) => x.key), ['bonded', 'hotkey', 'funded', 'enrolled', 'public', 'announced', 'contracts'], 'the setup steps, in order (no relay on this node)');
+  assert.ok(steps.every((x) => ['ok', 'todo', 'warn', 'na'].includes(x.state) && typeof x.label === 'string' && typeof x.detail === 'string'));
+  assert.equal(steps.find((x) => x.key === 'public').state, 'na', 'an offline LAN node: public address is n/a, not a failure');
+  assert.equal(steps.find((x) => x.key === 'contracts').state, 'ok', 'an offline test node runs against no contracts: nothing to disagree about');
+  assert.equal(typeof describeEvent({ t: 1, type: 'gas-low', balance: '0.001', matchesLeft: 3 }), 'string');
 
   // the node is a frontend host: the cabinet at /, its files at the root, the protocol modules it imports
   const page = await get('/'); assert.match(page.headers.get('content-type'), /text\/html/); assert.match(await page.text(), /LIT GAMES/);
