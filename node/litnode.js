@@ -784,7 +784,7 @@ export async function createNode({
       seal(MATCH_TAG, d, identity).then((env) => { const e = matchBook.get(m.matchId); if (e) e.envelope = env; }).catch(() => {});
       commitIfHost(m.matchId);
     }
-    return [...matchBook.values()].map((e) => ({ ...e.descriptor, disputes: e.disputes, commitTx: e.commitTx ?? null }));
+    return [...matchBook.values()].map((e) => ({ ...e.descriptor, disputes: e.disputes, commitTx: e.commitTx ?? null, commitSkipped: e.commitSkipped ?? null }));
   };
   /** The drawn host commits BEFORE play (§6): the panel is on chain before a tick is played. Runs for a
    *  placement this node computed AND for one it adopted from a peer — the adopted path used to commit
@@ -818,7 +818,11 @@ export async function createNode({
       if (place?.panel?.length === 3) { desc = { ...d, panel: place.panel.map((n) => n.nodeId) }; e.descriptor = desc; log(`placement ${matchId.slice(0, 12)}: ${d.computedBy === nodeId ? 'our' : 'an adopted'} draw seated ${d.panel?.length ?? 0}; redrawn from our snapshot: ${desc.panel.map((k) => k.slice(0, 8)).join(',')}`); }
     }
     e.committing = true;
-    mbook.commit(desc).then((tx) => { e.commitTx = tx; if (!tx) e.commitFailedAt = Date.now(); }).catch(() => { e.commitFailedAt = Date.now(); }).finally(() => { e.committing = false; e.resolveCommitted?.(); });
+    // A draw that seated fewer than three witnesses cannot go on MatchBook: the match stands casual-only. Say so on
+    // the entry, so a player's page waiting on this host for a commit (cabinet/client.js confirmWithHost) launches
+    // at once instead of waiting out its deadline for a transaction that is never sent.
+    const seated = desc.panel?.length ?? 0;
+    mbook.commit(desc).then((tx) => { e.commitTx = tx; if (!tx) e.commitFailedAt = Date.now(); e.commitSkipped = !tx && seated !== 3 ? `the draw seated ${seated} witnesses, MatchBook needs 3: casual-only` : null; }).catch(() => { e.commitFailedAt = Date.now(); }).finally(() => { e.committing = false; e.resolveCommitted?.(); });
   };
   /** Adopt or dispute a peer's descriptor. */
   const absorbMatch = async (env) => {

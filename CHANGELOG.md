@@ -15,6 +15,14 @@ follows [Keep a Changelog](https://keepachangelog.com/).
   domain a title logs in itself, as before. The Pickle Brawl services bundle sets
   `AIR_PARTNER_IDS` so its API and matchmaker take the arcade's tokens.
   docs/UNIVERSAL-LOGIN.md "Titles inside the arcade".
+
+### Fixed
+- **Find match no longer freezes for 15 s after pairing.** A ranked placement whose
+  draw seats fewer than three witnesses cannot go on MatchBook, so the host never
+  commits it; the arcade still waited its full 15 s for that commit, with the panel
+  frozen, and players pressed Stop and queued again (three courts for one pair on
+  23 Sep). The host now marks the entry `commitSkipped` on `/match`, the client
+  launches at once as casual-only, and the panel says "paired" while it checks.
 - **The arcade opens on the Arcade tab, already playing.** `#/` (and the logo)
   land on Arcade; Home moved to `#/home`. The arcade window at the top of the tab
   loads the featured title (the first playable one in `cabinet/config.js`) and

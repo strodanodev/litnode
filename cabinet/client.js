@@ -96,7 +96,9 @@ export function createClient({ nodeUrl, player, fetchImpl = globalThis.fetch, rp
    *  for these players — which may not be the one the node we poll showed first (two nodes can pair the same
    *  players a bucket apart while gossip catches up). So before launching, ask the host itself: the entry it
    *  lists for us WITH a commit transaction is the match. Unreachable host (a LAN address from a browser
-   *  elsewhere) → the placement we have, unconfirmed. */
+   *  elsewhere) → the placement we have, unconfirmed. A host that says it will not commit (`commitSkipped`: the draw
+   *  seated fewer than three witnesses, so the match stands casual-only) ends the wait at once: waiting out the
+   *  deadline for a transaction nobody sends froze the Find match panel for 15 s (23 Sep 2026). */
   const confirmWithHost = async (m, s, { deadlineMs = 15_000, signal } = {}) => {
     if ((m.mode ?? 'casual') !== 'ranked') return null;
     const host = s.peers?.find((p) => p.nodeId === m.host);
@@ -109,6 +111,8 @@ export function createClient({ nodeUrl, player, fetchImpl = globalThis.fetch, rp
         const ours = (await r.json()).matches.filter((x) => x.rulesetId === m.rulesetId && x.mode === 'ranked' && m.participants.every((p) => x.participants.includes(p)));
         const committed = ours.find((x) => x.commitTx);
         if (committed) return { ...committed, confirmedByHost: true };
+        const skipped = ours.find((x) => x.matchId === m.matchId && x.commitSkipped);
+        if (skipped) return { ...skipped, confirmedByHost: true, casualOnly: skipped.commitSkipped };
       } catch { return null; }
       await new Promise((r) => setTimeout(r, 500));
     }
@@ -119,13 +123,14 @@ export function createClient({ nodeUrl, player, fetchImpl = globalThis.fetch, rp
    *  entry is signed for every bucket while waiting: an entry lives in ONE
    *  2 s bucket (protocol/pairing.js), so two players who click ten seconds
    *  apart never meet unless the earlier one keeps re-entering. */
-  const waitForMatch = async ({ timeoutMs = 30_000, intervalMs = 500, sinceBucket = 0, requeue = null, onTick, signal } = {}) => {
+  const waitForMatch = async ({ timeoutMs = 30_000, intervalMs = 500, sinceBucket = 0, requeue = null, onTick, onPaired, signal } = {}) => {
     const t0 = Date.now();
     let lastBucket = bucketOf(Date.now());
     while (Date.now() - t0 < timeoutMs && !signal?.aborted) {
       const m = await match({ sinceBucket });
       onTick?.(m);
       if (m) {
+        onPaired?.(m); // paired: what follows (snapshot, the host's commit, the beacon) takes seconds, and the page should say so
         const s = (await verifiedSnapshot().catch(() => null)) ?? await snapshot();
         const confirmed = await confirmWithHost(m, s, { deadlineMs: Math.max(0, Math.min(15_000, t0 + timeoutMs - Date.now())), signal });
         if (confirmed) Object.assign(m, confirmed);

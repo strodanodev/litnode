@@ -59,3 +59,26 @@ test('arcade: lobby served, identity persists, queue → pair → client verifie
 
   const st = await c1.stats('agent-fighter.v1'); assert.equal(st.matches, 0);
 });
+
+test('confirmWithHost: a host that says it will not commit ends the wait at once (casual-only)', { timeout: 10_000 }, async () => {
+  const p = await loadPlayer(memStorage());
+  const m = { matchId: 'm1', rulesetId: 'pickle-brawl.v1', mode: 'ranked', host: 'h1', participants: [p.publicKey, 'other'] };
+  const s = { peers: [{ nodeId: 'h1', addr: 'http://host.test' }] };
+  const reply = (entry) => async () => ({ ok: true, json: async () => ({ matches: [entry] }) });
+
+  // Skipped: answered on the first ask, not after the 15 s deadline.
+  const skipped = createClient({ nodeUrl: 'http://node.test', player: p, fetchImpl: reply({ ...m, commitTx: null, commitSkipped: 'the draw seated 2 witnesses, MatchBook needs 3: casual-only' }) });
+  const t0 = Date.now();
+  const r = await skipped.confirmWithHost(m, s, { deadlineMs: 15_000 });
+  assert.ok(Date.now() - t0 < 2000, 'no wait for a commit that is never sent');
+  assert.equal(r.confirmedByHost, true);
+  assert.match(r.casualOnly, /casual-only/);
+
+  // Committed: the transaction wins, as before.
+  const committed = createClient({ nodeUrl: 'http://node.test', player: p, fetchImpl: reply({ ...m, commitTx: '0xabc', commitSkipped: null }) });
+  assert.equal((await committed.confirmWithHost(m, s)).commitTx, '0xabc');
+
+  // An older host with neither field: waits to the deadline, then the placement stands unconfirmed.
+  const older = createClient({ nodeUrl: 'http://node.test', player: p, fetchImpl: reply({ ...m, commitTx: null }) });
+  assert.equal(await older.confirmWithHost(m, s, { deadlineMs: 800 }), null);
+});
