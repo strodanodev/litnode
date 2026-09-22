@@ -552,7 +552,7 @@ function renderGame(g) {
 // The point of the design (client.js): sign a queue entry, wait for the pair,
 // recompute placement from a snapshot this page can hash, and refuse a host
 // the rule did not produce. The node is a directory, never an authority.
-const MM = { state: 'idle', game: null, text: '', match: null, check: null, host: null, waitedMs: 0 };
+const MM = { state: 'idle', game: null, text: '', match: null, check: null, host: null, relay: null, waitedMs: 0 };
 let mmAbort = null;
 function renderMatchmaking(g) {
   const el = $('mm'); if (!el) return;
@@ -570,7 +570,7 @@ function renderMatchmaking(g) {
         <div><dt>witness</dt><dd class="mono">${c.witness ? short(c.witness, 16) : 'none (single operator)'}</dd></div>
         <div><dt>verdict</dt><dd>${c.ok ? `<span class="res w">ACCEPT</span> — the host is the one the rule produces${m.disputes?.length ? ` (${m.disputes.length} node(s) disputed)` : ''}` : `<span class="res l">REFUSE</span> — ${esc(c.reason)}`}</dd></div>
       </dl>
-      <div class="hero-actions">${c.ok ? (MM.host ? `<button class="btn primary" data-mm-launch>Launch on this host</button>${MM.host.wsAddr ? '' : `<span class="dim">host ${short(m.host ?? '', 12)} advertises no relay (wsAddr): the title brings its own transport</span>`}` : `<span class="dim">host ${short(m.host ?? '', 12)} is not in the snapshot — placed, not launchable from here</span>`) : '<span class="dim">not launching against a host the rule did not produce</span>'}<button class="btn" data-mm-reset>Clear</button></div>
+      <div class="hero-actions">${c.ok ? (MM.host ? `<button class="btn primary" data-mm-launch>Launch on this host</button>${MM.host.wsAddr ? '' : MM.relay ? `<span class="dim">host ${short(m.host ?? '', 12)} advertises no relay: launching on ${esc(MM.relay)}</span>` : `<span class="dim">host ${short(m.host ?? '', 12)} advertises no relay (wsAddr) and no bonded peer does: the title brings its own transport</span>`}` : `<span class="dim">host ${short(m.host ?? '', 12)} is not in the snapshot — placed, not launchable from here</span>`) : '<span class="dim">not launching against a host the rule did not produce</span>'}<button class="btn" data-mm-reset>Clear</button></div>
       <div class="source">paired after ${(MM.waitedMs / 1000).toFixed(1)} s · snapshot root ${short(m.snapshotRoot ?? '', 12)}${c.sameSnapshot === false ? ' · eligible set moved since the draw' : ''}</div>`;
   el.innerHTML = panel('Find match', body, '', 'mm');
 }
@@ -607,7 +607,14 @@ async function findMatch(g) {
     const r = await client.waitForMatch({ timeoutMs: 5 * 60_000, sinceBucket: bucket, requeue: entry, signal: mmAbort.signal,
       onTick: () => { MM.text = `waiting… ${((Date.now() - t0) / 1000).toFixed(0)} s — the other player must press Find match too`; if (route.name === 'game') renderMatchmaking(g); } });
     if (!r) { if (MM.state === 'queued') { Object.assign(MM, { state: 'idle', text: '' }); render(); } return; }
-    Object.assign(MM, { state: 'placed', match: r.match, check: r.check, host: r.snapshot.peers.find((p) => p.nodeId === r.match.host) ?? null, waitedMs: r.waitedMs });
+    // The relay both players join: the host's, or — when the drawn host fronts none (m16, the Ally) — the same
+    // fallback on both screens: the lowest-keyed bonded peer in the verified snapshot that carries this title and
+    // advertises one. Without this the title fell back to its own on-chain discovery, which still read the
+    // generation-2 directory: a relay hostname dead since 20 Sep → "SERVER OFFLINE" on every launch the desktop
+    // did not host (22 Sep 2026).
+    const host = r.snapshot.peers.find((p) => p.nodeId === r.match.host) ?? null;
+    const relay = host?.wsAddr || r.snapshot.peers.filter((p) => p.wsAddr && p.buildHashes?.[r.match.rulesetId] && p.standing !== 0).sort((a, b) => (a.nodeId < b.nodeId ? -1 : 1))[0]?.wsAddr || null;
+    Object.assign(MM, { state: 'placed', match: r.match, check: r.check, host, relay, waitedMs: r.waitedMs });
     render();
   } catch (e) { Object.assign(MM, { state: 'idle', text: '' }); alert(`queue: ${e.message}`); render(); }
   finally { mmAbort = null; }
@@ -845,7 +852,7 @@ document.addEventListener('click', (e) => {
   // Everything a title needs to run and settle the placed match (sdk/client.js):
   // the host's address to POST /ledger to, the build to sign for, the mode the
   // node will require, the participant order the log is recorded in.
-  else if ('mmLaunch' in t.dataset) { if (MM.game && MM.check?.ok) play(MM.game, { matchId: MM.match.matchId, host: MM.match.host, hostAddr: MM.host?.addr ?? null, witness: MM.check.witness, wsAddr: MM.host?.wsAddr ?? null, beacon: MM.match.beacon, beaconSource: MM.match.beaconSource ?? null, participants: MM.match.participants, mode: MM.match.mode ?? null, buildHash: MM.match.buildHash ?? null, rulesetId: MM.match.rulesetId ?? MM.game.rulesetId ?? null }); }
+  else if ('mmLaunch' in t.dataset) { if (MM.game && MM.check?.ok) play(MM.game, { matchId: MM.match.matchId, host: MM.match.host, hostAddr: MM.host?.addr ?? null, witness: MM.check.witness, wsAddr: MM.relay ?? MM.host?.wsAddr ?? null, beacon: MM.match.beacon, beaconSource: MM.match.beaconSource ?? null, participants: MM.match.participants, mode: MM.match.mode ?? null, buildHash: MM.match.buildHash ?? null, rulesetId: MM.match.rulesetId ?? MM.game.rulesetId ?? null }); }
   else if (t.dataset.lb) { lbTab = t.dataset.lb; render(); }
   else if (t.dataset.style) { styleFilter = t.dataset.style; render(); }
   else if (t.id === 'name-btn') setName();

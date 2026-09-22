@@ -3,6 +3,18 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.11.14] — 2026-09-22 — a placed match always has a relay
+
+### Fixed
+- **"SERVER OFFLINE" on every Agent Fighter launch the desktop did not host.** The
+  cabinet passed `?ws=` only when the drawn host advertised a relay; m16 and the
+  Ally front none, so the title fell back to its own on-chain discovery — which
+  still read the generation-2 NodeDirectory, where the desktop's last entry is a
+  quick-tunnel hostname from 20 Sep. Two fixes: the cabinet now launches on the
+  same fallback relay on both screens (the lowest-keyed bonded peer in the
+  verified snapshot that carries the title and advertises `wsAddr`), and the
+  Agent Fighter client (87722a0) reads the generation-3 contracts.
+
 ## [0.11.13] — 2026-09-22 — pilot cut: one-way links, the purse priced from the head, attestWindow 300 in the config
 
 The release behind the MVP pilot: 0.11.12 plus the three things the first live hours
