@@ -52,6 +52,9 @@ export function createAnnouncer({ dataDir, nodeId, contract, chainId, rpc, log =
       lastSentAt = Date.now();
       lastTx = await call('eth_sendRawTransaction', [raw]);
       lastError = null;
+      // What the directory will say once the transaction mines — status() shows it now rather than the pre-send
+      // entry for up to a cycle (the Node page read "announce due" for ten minutes after every restart).
+      entry = { ...(ent ?? {}), url, wsAddr: wsAddr || '', updatedAt: nowS, announcer: address };
       log(`announced ${url}${wsAddr ? ` + ${wsAddr}` : ''} on NodeDirectory (tx ${lastTx.slice(0, 12)}…)`);
       emit('announced', { url, wsAddr: wsAddr || null, tx: lastTx });
       return 'sent';

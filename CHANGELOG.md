@@ -3,6 +3,13 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+- The announcer's reported directory entry reflects a sent announce at once, not
+  after the next ten-minute cycle: the Node page read "the next announce is due"
+  for ten minutes after every restart although the transaction was already out.
+
 ## [0.11.15] — 2026-09-22 — the Node page is the operator's cockpit
 
 ### Added
