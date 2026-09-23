@@ -67,10 +67,72 @@ game, humans vs. AI agents, real matches settle here), **Pickle Brawl**
 and **Robot Fighting Championship** (in the cabinet, not wired to the
 mesh yet).
 
-## 🚀 Try it in two minutes
+## 📦 Installing LITNODE (pick whichever sounds like you)
 
-You need [Node.js 20+](https://nodejs.org). That's it — the node itself
-has zero runtime dependencies.
+You don't need to install anything just to play — **https://arcade.litvm.games**
+is a live node, open in any browser. Installing LITNODE means you want
+to *run* one: host games, verify results, and be part of the mesh
+instead of just visiting it. Three ways in, easiest first.
+
+### 1. Windows, and you don't want to touch a terminal — LITNODE Control Plane
+
+This is the actual point-and-click app: install it, open it, and it
+unpacks a full node for you, keeps it running in the system tray, and
+gives you a live picture of the mesh instead of a log file. It's still
+rolling out to operators in the pilot rather than a public download
+button yet — if you're not in that group, skip to option 2 below, which
+gets you the same node with a double-click instead of an installer.
+
+<p align="center">
+  <img src="docs/images/control-plane-network.png" width="800" alt="LITNODE Control Plane — mesh topology view">
+</p>
+
+1. **Install** the LITNODE Control Plane MSI and open it. First launch
+   unpacks the bundled node — no separate Node.js install, it brings its
+   own runtime.
+2. The **Network** tab (above) is your node the moment it's up: the
+   mesh as a live 3D graph, gossip health, peer latency, and one-click
+   **Restart / Reconnect / Apply update / Open arcade** buttons on the
+   right so you're never stuck at a command prompt.
+3. Flip to **Arcade** and every title on the mesh is right there,
+   playable, with who's hosting it and how many matches have run:
+
+<p align="center">
+  <img src="docs/images/control-plane-arcade.png" width="800" alt="LITNODE Control Plane — arcade tab, live titles and recent matches">
+</p>
+
+4. That's it — the app is the operator console. Bonding a stake and
+   going public are a couple of clicks under **Settings**; nothing
+   below is required to get this far.
+
+### 2. Any OS, no source checkout — the portable package
+
+Grab a build straight from
+[GitHub Releases](https://github.com/strodanodev/litnode/releases/latest):
+`litnode-portable-<version>-win-x64.zip` if you're on Windows and want
+it to carry its own Node.js runtime, or plain `litnode-portable-<version>.zip`
+anywhere else (needs [Node.js 20+](https://nodejs.org) installed).
+
+1. **Unzip it** anywhere.
+2. **Windows:** double-click `start-node.cmd`. **macOS/Linux:** run
+   `node node/cli.mjs` from the unzipped folder.
+3. A dashboard opens in your terminal and the node starts listening —
+   open **http://localhost:7801** in a browser and you're looking at
+   your own arcade.
+4. First launch, Windows will ask to allow it through the firewall —
+   click **Allow** (or run `allow-firewall.cmd` once, no prompt needed
+   after that).
+
+Want it to survive reboots and closed terminals? From an **admin**
+prompt, run `install-task.cmd` — it installs as a scheduled task and
+writes to `litnode.log` instead of a window you have to keep open.
+Full version: [portable/README-OPERATOR.md](portable/README-OPERATOR.md).
+
+### 3. Building it yourself from source
+
+For developers who want to change the code, not just run it. You need
+[Node.js 20+](https://nodejs.org) — the node itself has zero runtime
+dependencies; `npm install` only pulls in the chain tooling.
 
 ```bash
 git clone https://github.com/strodanodev/litnode.git
@@ -97,11 +159,13 @@ Want just the cabinet UI, pointed at some other node?
 npm run cabinet        # http://127.0.0.1:5180 — set the node URL in the footer
 ```
 
-## 🖥️ Running your own node for real
+## 🖥️ Bonding your node into the mesh
 
-Anyone can bond a machine into the mesh — it doesn't have to be ours.
-The friendliest way in is the hosting harness, which walks through it
-one command at a time and tells you exactly what's missing at each step:
+A node you just started gossips and serves the arcade, but it can't
+host matches or co-sign results until it's **bonded** — staked into
+NodeStake so misbehaving has a cost. From a source checkout, the
+hosting harness walks through it one command at a time and tells you
+exactly what's missing at each step:
 
 ```bash
 npm run host -- init --operator my-node --seeds https://<a-seed-node>
@@ -112,10 +176,10 @@ npm run host -- status      # shows every stage, and the one next command to run
 
 Full walkthrough, including bonding a stake and getting listed publicly,
 in [docs/HOST-A-NODE.md](docs/HOST-A-NODE.md). If you'd rather point an
-agent at it, there's a skill for that too (`host-a-node`).
-
-A node that isn't bonded still gossips and serves the arcade — it just
-can't host matches or co-sign results until it is.
+agent at it, there's a skill for that too (`host-a-node`). The Control
+Plane app and the cabinet's own Nodes page both walk through the same
+steps as buttons, with a setup checklist that ticks off as you go —
+see the Nodes screenshot further up this page.
 
 ## 🧪 Running the tests
 
