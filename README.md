@@ -3,7 +3,7 @@
 </p>
 
 <h1 align="center">litnode</h1>
-<p align="center"><b>The node that runs the LitVM Games arcade — and the arcade it serves.</b></p>
+<p align="center"><b>Download LITNODE v0.1.1 package: https://drive.google.com/drive/folders/1UqaDCnkWRmNmUrOPlT3Icc7uViJVN5gR?usp=sharing </b></p>
 
 <p align="center">
   <img src="docs/images/home.png" width="800" alt="litnode arcade — home dashboard">
