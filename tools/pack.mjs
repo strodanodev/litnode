@@ -8,9 +8,9 @@
  *        checked against nodejs.org's SHASUMS256.txt; default is the newest LTS.
  *  Same daemon in both; the operator build adds tools and an operator README. */
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -56,13 +56,22 @@ async function vendorRuntime(want) {
 }
 const runtime = runtimeArg ? await vendorRuntime(runtimeArg.includes('=') ? runtimeArg.split('=')[1] : null) : null;
 
+// Folders copied whole from the working tree — minus what git ignores (cabinet/.vercel held the Vercel project and
+// org ids and shipped in every zip up to 0.11.16). Read once; a checkout without git ships everything, as before.
+const SHIPPED = ['node', 'protocol', 'sdk', 'titles', 'rulesets', 'cabinet'];
+const ignored = (() => {
+  const r = spawnSync('git', ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '--', ...SHIPPED], { cwd: root, encoding: 'utf8' });
+  return r.status === 0 ? r.stdout.split(/\r?\n/).filter(Boolean).map((p) => resolve(root, p).replace(/[\\/]+$/, '').toLowerCase()) : [];
+})();
+const isIgnored = (src) => { const p = resolve(src).toLowerCase(); return ignored.some((i) => p === i || p.startsWith(i + sep)); };
+
 for (const kind of kinds) {
   const name = `litnode-${kind}-${stamp}${runtime ? '-win-x64' : ''}`;
   const stage = join(dist, name);
   rmSync(stage, { recursive: true, force: true });
   mkdirSync(stage, { recursive: true });
 
-  for (const d of ['node', 'protocol', 'sdk', 'titles', 'rulesets', 'cabinet']) cpSync(join(root, d), join(stage, d), { recursive: true });
+  for (const d of SHIPPED) cpSync(join(root, d), join(stage, d), { recursive: true, filter: (src) => !isIgnored(src) });
   mkdirSync(join(stage, 'contracts'), { recursive: true });
   for (const f of ['deployed.testnet.json', 'deploy.testnet.json']) if (existsSync(join(root, 'contracts', f))) cpSync(join(root, 'contracts', f), join(stage, 'contracts', f));
   mkdirSync(join(stage, 'tools'), { recursive: true });
