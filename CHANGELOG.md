@@ -16,7 +16,20 @@ follows [Keep a Changelog](https://keepachangelog.com/).
   `AIR_PARTNER_IDS` so its API and matchmaker take the arcade's tokens.
   docs/UNIVERSAL-LOGIN.md "Titles inside the arcade".
 
+- **Find match says when ranked will play casual-only.** Before the queue, the
+  panel counts the operators with a fresh bonded node carrying the title; under
+  four (a host and three witnesses), it says the match will stay off the official
+  ladder.
+- **`SERVICE_NAME` in node.env** names the start-at-logon task or unit
+  (`npm run host -- install-service`, default `litnode`), so a second node on
+  one machine installs beside the first instead of replacing its task.
+- **Rewards treasury.** `contracts/deploy.testnet.json` sets `treasury` to
+  `0xeA09E9B9Acf53462dC4490c9174fdB41B3f62eF2`; `npm run params` now shows and
+  applies a treasury change (`--calldata` for the admin to send).
+
 ### Fixed
+- **One dropped poll no longer ends a five-minute queue.** `waitForMatch` rides
+  out three failed `/match` reads in a row and rejects on the fourth.
 - **Find match no longer freezes for 15 s after pairing.** A ranked placement whose
   draw seats fewer than three witnesses cannot go on MatchBook, so the host never
   commits it; the arcade still waited its full 15 s for that commit, with the panel

@@ -33,7 +33,7 @@ export const ENV_FILE = 'node.env';
 /** Where node.env and litnode.log live: the code folder, or LITNODE_HOME
  *  (so a config can sit outside the checkout, and tests get a scratch one). */
 export const home = () => (process.env.LITNODE_HOME ? resolve(process.env.LITNODE_HOME) : ROOT);
-export const KNOWN_KEYS = ['OPERATOR', 'ROLES', 'PORT', 'HOST', 'PUBLIC_ADDR', 'SEEDS', 'RULESETS', 'DATA_DIR', 'REGION', 'TUNNEL', 'TUNNEL_NAME', 'TUNNEL_HOST', 'UPNP', 'RELAY_PORT', 'RELAY_TUNNEL_NAME', 'RELAY_TUNNEL_HOST', 'WS_ADDR', 'RELAY_KEYS', 'COURTS', 'TITLE_TRUST', 'TRUSTED_PUBLISHERS', 'SANDBOX_TIMEOUT_MS', 'SANDBOX_MEMORY_MB', 'RELEASE_CHANNEL', 'RPC', 'NODE_STAKE', 'NODE_DIRECTORY', 'ANNOUNCE', 'ERC6699', 'OFFLINE', 'AF_ROOT', 'AIR_PARTNER_ID', 'AIR_JWKS_URL', 'AIR', 'TITLE_REGISTRY', 'STAKE_TOKEN', 'RELEASE_REGISTRY', 'MATCH_BOOK', 'GAUNTLETS', 'GAUNTLET_UPSTREAM', 'GAUNTLET_GATEWAY_PORT', 'SERVICES'];
+export const KNOWN_KEYS = ['OPERATOR', 'ROLES', 'PORT', 'HOST', 'PUBLIC_ADDR', 'SEEDS', 'RULESETS', 'DATA_DIR', 'REGION', 'TUNNEL', 'TUNNEL_NAME', 'TUNNEL_HOST', 'UPNP', 'RELAY_PORT', 'RELAY_TUNNEL_NAME', 'RELAY_TUNNEL_HOST', 'WS_ADDR', 'RELAY_KEYS', 'COURTS', 'TITLE_TRUST', 'TRUSTED_PUBLISHERS', 'SANDBOX_TIMEOUT_MS', 'SANDBOX_MEMORY_MB', 'RELEASE_CHANNEL', 'RPC', 'NODE_STAKE', 'NODE_DIRECTORY', 'ANNOUNCE', 'ERC6699', 'OFFLINE', 'AF_ROOT', 'AIR_PARTNER_ID', 'AIR_JWKS_URL', 'AIR', 'TITLE_REGISTRY', 'STAKE_TOKEN', 'RELEASE_REGISTRY', 'MATCH_BOOK', 'GAUNTLETS', 'GAUNTLET_UPSTREAM', 'GAUNTLET_GATEWAY_PORT', 'SERVICES', 'SERVICE_NAME'];
 /** The arcade's AIR partner app (cabinet/config.js AIR.partnerId); `host init` pins tokens to it unless --no-air. */
 export const AIR_PARTNER_ID = '62e01755-138f-4e58-9cdc-fab71e037afd';
 export const ALL_ROLES = ['mesh', 'host', 'witness', 'settler'];
@@ -133,6 +133,8 @@ export function effectiveConfig(env = readEnv() ?? {}, { root = ROOT, processEnv
     nodeStake: e.NODE_STAKE || deployed.NodeStake?.address || null,
     nodeDirectory: e.NODE_DIRECTORY || deployed.NodeDirectory?.address || null,
     announce: e.ANNOUNCE !== '0',
+    // The start-at-logon task/unit name. A second node on one machine needs its own, or installing it replaces the first.
+    serviceName: /^[A-Za-z0-9._-]{1,64}$/.test(e.SERVICE_NAME ?? '') ? e.SERVICE_NAME : 'litnode',
     titleTrust: e.TITLE_TRUST === 'open' ? 'open' : 'trusted',
     releaseChannel: e.RELEASE_CHANNEL || 'stable',
     localUrl: `http://127.0.0.1:${port}`,
@@ -466,23 +468,24 @@ export function plan(cfg, s) {
  *  checkout, say) is reported as `foreign` and never touched. */
 export function serviceStatus(cfg) {
   if (process.platform === 'win32') {
-    const q = spawnSync('schtasks', ['/Query', '/TN', 'litnode', '/FO', 'LIST', '/V'], { encoding: 'utf8', windowsHide: true });
-    if (q.status !== 0) return { kind: 'schtasks', name: 'litnode', installed: false, ours: false, detail: 'no scheduled task litnode' };
+    const name = cfg.serviceName ?? 'litnode';
+    const q = spawnSync('schtasks', ['/Query', '/TN', name, '/FO', 'LIST', '/V'], { encoding: 'utf8', windowsHide: true });
+    if (q.status !== 0) return { kind: 'schtasks', name, installed: false, ours: false, detail: `no scheduled task ${name}` };
     const state = /Status:\s*(\S+)/.exec(q.stdout)?.[1] ?? '?';
     const startIn = (/Start In:\s*(.+)/.exec(q.stdout)?.[1] ?? '').trim().replace(/[\\/]+$/, '');
     const run = (/Task To Run:\s*(.+)/.exec(q.stdout)?.[1] ?? '').trim();
     const same = (a, b) => resolve(a).toLowerCase() === resolve(b).toLowerCase();
     const ours = !!startIn && same(startIn, cfg.root) && (/supervisor\.mjs/i.test(run) || /run-node\.cmd/i.test(run));
-    return { kind: 'schtasks', name: 'litnode', installed: ours, ours, state, detail: ours ? `scheduled task litnode: ${state} (${/supervisor/i.test(run) ? 'harness supervisor' : 'run-node.cmd'})` : `scheduled task litnode belongs to ${startIn || 'another install'} (${state}); not this one`, ...(ours ? {} : { foreign: startIn || run }) };
+    return { kind: 'schtasks', name, installed: ours, ours, state, detail: ours ? `scheduled task ${name}: ${state} (${/supervisor/i.test(run) ? 'harness supervisor' : 'run-node.cmd'})` : `scheduled task ${name} belongs to ${startIn || 'another install'} (${state}); not this one — set SERVICE_NAME in node.env to install this node beside it`, ...(ours ? {} : { foreign: startIn || run }) };
   }
   const sup = join(cfg.root, 'sdk', 'host', 'supervisor.mjs');
   if (process.platform === 'darwin') {
-    const p = join(process.env.HOME ?? '', 'Library', 'LaunchAgents', 'games.litvm.litnode.plist');
+    const p = join(process.env.HOME ?? '', 'Library', 'LaunchAgents', `games.litvm.${cfg.serviceName ?? 'litnode'}.plist`);
     if (!existsSync(p)) return { kind: 'launchd', installed: false, ours: false, detail: 'no LaunchAgent' };
     const ours = readFileSync(p, 'utf8').includes(sup);
     return { kind: 'launchd', installed: ours, ours, detail: ours ? p : `${p} runs another install`, ...(ours ? {} : { foreign: p }) };
   }
-  const p = join(process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? '', '.config'), 'systemd', 'user', 'litnode.service');
+  const p = join(process.env.XDG_CONFIG_HOME ?? join(process.env.HOME ?? '', '.config'), 'systemd', 'user', `${cfg.serviceName ?? 'litnode'}.service`);
   if (!existsSync(p)) return { kind: 'systemd', installed: false, ours: false, detail: 'no user unit' };
   const ours = readFileSync(p, 'utf8').includes(sup);
   return { kind: 'systemd', installed: ours, ours, detail: ours ? p : `${p} runs another install`, ...(ours ? {} : { foreign: p }) };

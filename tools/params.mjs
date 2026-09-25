@@ -28,6 +28,9 @@ const want = {
   book: { settleWindow: BigInt(cfg.MatchBook.settleWindowS), attestWindow: BigInt(cfg.MatchBook.attestWindowS), escalationWindow: BigInt(cfg.MatchBook.escalationWindowS), drawDelay: BigInt(cfg.MatchBook.drawDelayBlocks ?? 2), hostSlashBps: Number(cfg.MatchBook.hostSlashBps), witnessSlashBps: Number(cfg.MatchBook.witnessSlashBps) },
   stake: { minStake: BigInt(cfg.NodeStake.minStake), lockTerm: BigInt(cfg.NodeStake.lockTerm), eligibilityAge: BigInt(cfg.NodeStake.eligibilityAge), unbondingPeriod: BigInt(cfg.NodeStake.unbondingPeriod) },
 };
+// cfg.treasury: null keeps the live treasury; an address moves it (checksummed, so a mistyped one is refused before anything is sent).
+let wantTreasury = null;
+if (cfg.treasury != null) { try { wantTreasury = ethers.getAddress(cfg.treasury); } catch { console.error(`contracts/deploy.testnet.json treasury ${cfg.treasury} is not a valid address`); process.exit(1); } if (wantTreasury === ethers.ZeroAddress) { console.error('treasury cannot be the zero address'); process.exit(1); } }
 const total = want.book.settleWindow + 2n * want.book.attestWindow + 2n * want.book.escalationWindow;
 if (want.stake.unbondingPeriod <= total) { console.error(`NodeStake.unbondingPeriod (${want.stake.unbondingPeriod}s) must exceed MatchBook.totalWindow() (${total}s): fix contracts/deploy.testnet.json first`); process.exit(1); }
 
@@ -46,12 +49,14 @@ console.log(`MatchBook ${deployed.MatchBook.address} (admin ${bookAdmin})`);
 for (const k of Object.keys(want.book)) row(k, live.book[k], want.book[k]);
 console.log(`NodeStake ${deployed.NodeStake.address} (admin ${stakeAdmin}, treasury ${treasury})`);
 for (const k of Object.keys(want.stake)) row(k, live.stake[k], want.stake[k]);
+const treasuryTo = wantTreasury ?? treasury;
+row('treasury', treasury, treasuryTo);
 const bookDiff = Object.keys(want.book).some((k) => String(live.book[k]) !== String(want.book[k]));
-const stakeDiff = Object.keys(want.stake).some((k) => String(live.stake[k]) !== String(want.stake[k]));
+const stakeDiff = Object.keys(want.stake).some((k) => String(live.stake[k]) !== String(want.stake[k])) || treasuryTo.toLowerCase() !== treasury.toLowerCase();
 if (show || (!bookDiff && !stakeDiff)) { console.log(bookDiff || stakeDiff ? 'differences shown; run without --show to apply' : 'live parameters match the config'); process.exitCode = 0; }
 else {
   const bookData = book.interface.encodeFunctionData('setParams', [await retry(() => book.stake()), want.book, bookAdmin]);
-  const stakeData = stake.interface.encodeFunctionData('setParams', [want.stake.minStake, want.stake.lockTerm, want.stake.eligibilityAge, want.stake.unbondingPeriod, stakeAdmin, treasury]);
+  const stakeData = stake.interface.encodeFunctionData('setParams', [want.stake.minStake, want.stake.lockTerm, want.stake.eligibilityAge, want.stake.unbondingPeriod, stakeAdmin, treasuryTo]);
   if (calldataOnly) { if (stakeDiff) console.log(`NodeStake.setParams → ${deployed.NodeStake.address}\n${stakeData}`); if (bookDiff) console.log(`MatchBook.setParams → ${deployed.MatchBook.address}\n${bookData}`); }
   else {
     const key = (process.env.ADMIN_KEY ?? process.env.DEPLOYER_KEY ?? '').trim();
@@ -63,7 +68,7 @@ else {
     if (stakeDiff) { const tx = await retry(() => wallet.sendTransaction({ to: deployed.NodeStake.address, data: stakeData })); const rc = await tx.wait(); console.log(`NodeStake.setParams: tx ${rc.hash}`); }
     if (bookDiff) { const tx = await retry(() => wallet.sendTransaction({ to: deployed.MatchBook.address, data: bookData })); const rc = await tx.wait(); console.log(`MatchBook.setParams: tx ${rc.hash}`); }
     Object.assign(deployed.MatchBook, { settleWindowS: Number(want.book.settleWindow), attestWindowS: Number(want.book.attestWindow), escalationWindowS: Number(want.book.escalationWindow), drawDelayBlocks: Number(want.book.drawDelay), hostSlashBps: want.book.hostSlashBps, witnessSlashBps: want.book.witnessSlashBps });
-    Object.assign(deployed.NodeStake, { minStake: String(want.stake.minStake), lockTerm: Number(want.stake.lockTerm), eligibilityAge: Number(want.stake.eligibilityAge), unbondingPeriod: Number(want.stake.unbondingPeriod) });
+    Object.assign(deployed.NodeStake, { minStake: String(want.stake.minStake), lockTerm: Number(want.stake.lockTerm), eligibilityAge: Number(want.stake.eligibilityAge), unbondingPeriod: Number(want.stake.unbondingPeriod), treasury: treasuryTo });
     writeFileSync(outPath, JSON.stringify(deployed, null, 2) + '\n');
     console.log(`wrote ${outPath} — nodes read the windows from it on restart (or the next release)`);
   }

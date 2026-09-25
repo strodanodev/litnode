@@ -5,7 +5,8 @@
   "evmVersion": "shanghai",
   "admin": null,
   "adminNote": "The multisig behind a timelock that holds admin on NodeStake, ReleaseRegistry, EpochAnchor and ERC6699Registry. null = the deployer wallet, an EOA — the deploy tool warns and /health says admin: eoa (BUILD-SPEC v0.3 §2.3).",
-  "treasury": null,
+  "treasury": "0xeA09E9B9Acf53462dC4490c9174fdB41B3f62eF2",
+  "treasuryNote": "NodeStake.treasury: receives slashed bonds today; the rewards treasury when staking rewards ship (25 Sep 2026). An EOA holding zkLTC on LiteForge. Applied by the admin with npm run params (tools/params.mjs); null keeps the live value.",
   "TestLITVM": {
     "faucetAmount": "1000 tLITVM",
     "faucetCooldown": "1 day"

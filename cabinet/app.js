@@ -614,7 +614,7 @@ let mmAbort = null;
 function renderMatchmaking(g) {
   const el = $('mm'); if (!el) return;
   if (MM.game && MM.game.id !== g.id && MM.state !== 'idle') { el.innerHTML = ''; return; }
-  if (MM.state === 'idle') { el.innerHTML = player.kp ? '' : panel('Find match', '<div class="empty">This page has no WebCrypto (plain http from a network address), so it holds no player key and cannot queue. Open it as http://localhost:&lt;port&gt;/ on the node&#39;s machine, or over https.</div>'); return; }
+  if (MM.state === 'idle') { const notice = player.kp && rankedShortfall(g); el.innerHTML = player.kp ? (notice ? panel('Find match', `<div class="empty">${esc(notice)}</div>`) : '') : panel('Find match', '<div class="empty">This page has no WebCrypto (plain http from a network address), so it holds no player key and cannot queue. Open it as http://localhost:&lt;port&gt;/ on the node&#39;s machine, or over https.</div>'); return; }
   const m = MM.match, c = MM.check;
   const body = MM.state === 'queued' ? `<div class="empty">${esc(MM.text)}</div><div class="hero-actions"><button class="btn" data-mm-stop>Stop</button></div>`
     : `<dl class="mesh">
@@ -630,6 +630,16 @@ function renderMatchmaking(g) {
       <div class="hero-actions">${c.ok ? (MM.host ? `<button class="btn primary" data-mm-launch>Launch on this host</button>${MM.host.wsAddr ? '' : MM.relay ? `<span class="dim">host ${short(m.host ?? '', 12)} advertises no relay: launching on ${esc(MM.relay)}</span>` : `<span class="dim">host ${short(m.host ?? '', 12)} advertises no relay (wsAddr) and no bonded peer does: the title brings its own transport</span>`}` : `<span class="dim">host ${short(m.host ?? '', 12)} is not in the snapshot — placed, not launchable from here</span>`) : '<span class="dim">not launching against a host the rule did not produce</span>'}<button class="btn" data-mm-reset>Clear</button></div>
       <div class="source">paired after ${(MM.waitedMs / 1000).toFixed(1)} s · snapshot root ${short(m.snapshotRoot ?? '', 12)}${c.sameSnapshot === false ? ' · eligible set moved since the draw' : ''}</div>`;
   el.innerHTML = panel('Find match', body, '', 'mm');
+}
+/** A ranked match goes on chain only when the draw seats a host plus three witnesses under three other operators
+ *  (protocol/placement.js PANEL; node/matchbook.js skips the commit otherwise). Say so before the queue, not after:
+ *  on 23-25 Sep every ranked match played casual-only because two or three nodes were fresh. Counts distinct
+ *  operators among fresh bonded nodes that carry the title — the draw's exact rule (build hash, eligibility age,
+ *  staking addresses) can only seat fewer, so a warning here is never a false alarm. */
+function rankedShortfall(g) {
+  const operators = new Set(S.peers.filter((p) => p.fresh && p.bonded && (p.rulesets ?? []).includes(g.rulesetId)).map((p) => p.operator));
+  const need = 4;
+  return operators.size < need ? `Ranked plays casual-only right now: going on chain needs a host and three witnesses under ${need} different operators, and ${operators.size} ${operators.size === 1 ? 'is' : 'are'} online with this title. You can still play; the result stays off the official ladder.` : null;
 }
 /** Matchmaking is a function of everyone's clock (2 s buckets). A node whose
  *  clock disagrees with its bonded peers computes buckets nobody else has
@@ -661,8 +671,12 @@ async function findMatch(g) {
     // Keep re-entering every bucket for up to 5 min: an entry lives in one
     // 2 s bucket, so waiting without re-queuing would only ever pair with
     // someone who clicked in the same two seconds.
+    const say = (text) => { MM.text = text; if (route.name === 'game') renderMatchmaking(g); };
     const r = await client.waitForMatch({ timeoutMs: 5 * 60_000, sinceBucket: bucket, requeue: entry, signal: mmAbort.signal,
-      onTick: () => { MM.text = `waiting… ${((Date.now() - t0) / 1000).toFixed(0)} s — the other player must press Find match too`; if (route.name === 'game') renderMatchmaking(g); } });
+      onTick: (m) => { if (!m) say(`waiting… ${((Date.now() - t0) / 1000).toFixed(0)} s — the other player must press Find match too`); },
+      // Paired: checking the placement and asking the host for its on-chain commit takes a few seconds. Say so, or the
+      // panel reads as frozen and players press Stop and queue again (23 Sep 2026: three courts for one pair).
+      onPaired: () => say('paired — checking the placement and asking the host to commit it on chain (a few seconds)…') });
     if (!r) { if (MM.state === 'queued') { Object.assign(MM, { state: 'idle', text: '' }); render(); } return; }
     // The relay both players join: the host's, or — when the drawn host fronts none (m16, the Ally) — the same
     // fallback on both screens: the lowest-keyed bonded peer in the verified snapshot that carries this title and

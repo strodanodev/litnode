@@ -126,8 +126,12 @@ export function createClient({ nodeUrl, player, fetchImpl = globalThis.fetch, rp
   const waitForMatch = async ({ timeoutMs = 30_000, intervalMs = 500, sinceBucket = 0, requeue = null, onTick, onPaired, signal } = {}) => {
     const t0 = Date.now();
     let lastBucket = bucketOf(Date.now());
+    let failures = 0;
     while (Date.now() - t0 < timeoutMs && !signal?.aborted) {
-      const m = await match({ sinceBucket });
+      // One dropped poll (a tunnel blip, a node restart) must not end a five-minute queue; four in a row is an outage.
+      let m;
+      try { m = await match({ sinceBucket }); failures = 0; }
+      catch (e) { if (++failures > 3) throw e; await new Promise((r) => setTimeout(r, intervalMs)); continue; }
       onTick?.(m);
       if (m) {
         onPaired?.(m); // paired: what follows (snapshot, the host's commit, the beacon) takes seconds, and the page should say so

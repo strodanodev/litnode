@@ -14,7 +14,7 @@
  *    npm run host -- bond                bond this node (OPERATOR_KEY in the environment; the tool never prints it)
  *    npm run host -- publish [--tunnel quick|named …]   public URL through cloudflared + on-chain announce
  *    npm run host -- announce [--fund 0.02]              delegate + fund this node's announcer (OPERATOR_KEY)
- *    npm run host -- install-service [--remove]          start at logon: schtasks / systemd --user / launchd
+ *    npm run host -- install-service [--remove]          start at logon: schtasks / systemd --user / launchd (name: SERVICE_NAME, default litnode)
  *    npm run host -- verify              status with a strict exit code (3 when a required stage is not done)
  *    npm run host -- stop | restart | logs [--lines 50] | env
  *
@@ -145,7 +145,7 @@ const commands = {
     const did = [];
     const svc = serviceStatus(c);
     if (svc.foreign) did.push(`service ${svc.kind} runs another install (${svc.foreign}); left alone`);
-    if (process.platform === 'win32' && svc.ours) { const r = spawnSync('schtasks', ['/End', '/TN', 'litnode'], { encoding: 'utf8', windowsHide: true }); did.push(`task litnode: ${r.status === 0 ? 'ended' : 'not running or not permitted'}`); }
+    if (process.platform === 'win32' && svc.ours) { const r = spawnSync('schtasks', ['/End', '/TN', svc.name], { encoding: 'utf8', windowsHide: true }); did.push(`task ${svc.name}: ${r.status === 0 ? 'ended' : 'not running or not permitted'}`); }
     const supFile = join(c.dataDir, 'supervisor.pid');
     const supPid = readPid(supFile);
     if (supPid) { writeFileSync(join(c.dataDir, 'supervisor.stop'), '1'); did.push(`supervisor ${supPid}: ${alive(supPid) && kill(supPid) ? 'signalled' : 'not running'}`); }
@@ -250,41 +250,42 @@ const commands = {
 
   async 'install-service'() {
     const c = cfg();
+    const name = c.serviceName;
     if (!readEnv()) fail(2, `${ENV_FILE} missing — init first`);
     const sup = join(ROOT, 'sdk', 'host', 'supervisor.mjs');
     const existing = serviceStatus(c);
     if (existing.foreign && !flags.force) fail(2, `a ${existing.kind} service already runs another install (${existing.foreign}); this harness will not replace it — remove it there first, or --force`, { foreign: existing.foreign });
     if (process.platform === 'win32') {
-      if (flags.remove) { const r = spawnSync('schtasks', ['/Delete', '/TN', 'litnode', '/F'], { encoding: 'utf8', windowsHide: true }); return out({ ok: r.status === 0, output: r.stdout + r.stderr }, r.status === 0 ? 'task litnode removed' : `remove failed: ${(r.stderr || r.stdout).trim()} (admin prompt?)`); }
+      if (flags.remove) { const r = spawnSync('schtasks', ['/Delete', '/TN', name, '/F'], { encoding: 'utf8', windowsHide: true }); return out({ ok: r.status === 0, output: r.stdout + r.stderr }, r.status === 0 ? `task ${name} removed` : `remove failed: ${(r.stderr || r.stdout).trim()} (admin prompt?)`); }
       const ps = [
         `$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -Hidden -MultipleInstances IgnoreNew;`,
         `$triggers = @((New-ScheduledTaskTrigger -AtLogOn), (New-ScheduledTaskTrigger -AtStartup));`,
         `$principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType S4U -RunLevel Highest;`,
         `$action = New-ScheduledTaskAction -Execute '${process.execPath}' -Argument '"${sup}"' -WorkingDirectory '${ROOT}';`,
-        `Stop-ScheduledTask -TaskName litnode -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName litnode -Confirm:$false -ErrorAction SilentlyContinue;`,
-        `Register-ScheduledTask -TaskName litnode -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Force | Out-Null;`,
-        `Start-ScheduledTask -TaskName litnode; Start-Sleep -Seconds 2; (Get-ScheduledTask -TaskName litnode).State`,
+        `Stop-ScheduledTask -TaskName ${name} -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName ${name} -Confirm:$false -ErrorAction SilentlyContinue;`,
+        `Register-ScheduledTask -TaskName ${name} -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Force | Out-Null;`,
+        `Start-ScheduledTask -TaskName ${name}; Start-Sleep -Seconds 2; (Get-ScheduledTask -TaskName ${name}).State`,
       ].join(' ');
       const r = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { encoding: 'utf8', windowsHide: true });
       if (r.status !== 0) fail(2, `scheduled task registration failed — run from an administrator prompt`, { stderr: (r.stderr || r.stdout).trim().slice(-1500) });
       const h = await waitFor(() => health(c.localUrl), 45_000);
-      return out({ ok: !!h, kind: 'schtasks', task: 'litnode', state: r.stdout.trim(), url: c.localUrl }, [`scheduled task litnode: ${r.stdout.trim()} (headless; log litnode.log)`, h ? `node up at ${c.localUrl}` : 'node not answering yet; check litnode.log']);
+      return out({ ok: !!h, kind: 'schtasks', task: name, state: r.stdout.trim(), url: c.localUrl }, [`scheduled task ${name}: ${r.stdout.trim()} (headless; log litnode.log)`, h ? `node up at ${c.localUrl}` : 'node not answering yet; check litnode.log']);
     }
     if (process.platform === 'darwin') {
       const dir = join(process.env.HOME, 'Library', 'LaunchAgents'); mkdirSync(dir, { recursive: true });
-      const plist = join(dir, 'games.litvm.litnode.plist');
+      const plist = join(dir, `games.litvm.${name}.plist`);
       if (flags.remove) { spawnSync('launchctl', ['bootout', `gui/${process.getuid()}`, plist]); rmSync(plist, { force: true }); return out({ ok: true }, 'LaunchAgent removed'); }
-      writeFileSync(plist, `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n<key>Label</key><string>games.litvm.litnode</string>\n<key>ProgramArguments</key><array><string>${process.execPath}</string><string>${sup}</string></array>\n<key>WorkingDirectory</key><string>${ROOT}</string>\n<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n<key>StandardOutPath</key><string>${join(home(), 'litnode.log')}</string>\n<key>StandardErrorPath</key><string>${join(home(), 'litnode.log')}</string>\n</dict></plist>\n`);
+      writeFileSync(plist, `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n<key>Label</key><string>games.litvm.${name}</string>\n<key>ProgramArguments</key><array><string>${process.execPath}</string><string>${sup}</string></array>\n<key>WorkingDirectory</key><string>${ROOT}</string>\n<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n<key>StandardOutPath</key><string>${join(home(), 'litnode.log')}</string>\n<key>StandardErrorPath</key><string>${join(home(), 'litnode.log')}</string>\n</dict></plist>\n`);
       const r = spawnSync('launchctl', ['bootstrap', `gui/${process.getuid()}`, plist], { encoding: 'utf8' });
       const h = await waitFor(() => health(c.localUrl), 45_000);
       return out({ ok: !!h, kind: 'launchd', plist, launchctl: r.status }, [`LaunchAgent ${plist} (${r.status === 0 ? 'loaded' : 'write ok; launchctl bootstrap returned ' + r.status})`, h ? `node up at ${c.localUrl}` : 'node not answering yet; check litnode.log']);
     }
     const dir = join(process.env.XDG_CONFIG_HOME ?? join(process.env.HOME, '.config'), 'systemd', 'user'); mkdirSync(dir, { recursive: true });
-    const unit = join(dir, 'litnode.service');
-    if (flags.remove) { spawnSync('systemctl', ['--user', 'disable', '--now', 'litnode']); rmSync(unit, { force: true }); return out({ ok: true }, 'user unit removed'); }
+    const unit = join(dir, `${name}.service`);
+    if (flags.remove) { spawnSync('systemctl', ['--user', 'disable', '--now', name]); rmSync(unit, { force: true }); return out({ ok: true }, 'user unit removed'); }
     writeFileSync(unit, `[Unit]\nDescription=litnode (LIT GAMES arcade node)\nAfter=network-online.target\n\n[Service]\nWorkingDirectory=${ROOT}\nExecStart=${process.execPath} ${sup}\nRestart=always\nRestartSec=5\nKillMode=mixed\n\n[Install]\nWantedBy=default.target\n`);
     const have = !!onPath('systemctl');
-    const r = have ? spawnSync('systemctl', ['--user', 'daemon-reload'], { encoding: 'utf8' }) && spawnSync('systemctl', ['--user', 'enable', '--now', 'litnode'], { encoding: 'utf8' }) : null;
+    const r = have ? spawnSync('systemctl', ['--user', 'daemon-reload'], { encoding: 'utf8' }) && spawnSync('systemctl', ['--user', 'enable', '--now', name], { encoding: 'utf8' }) : null;
     const h = have ? await waitFor(() => health(c.localUrl), 45_000) : null;
     return out({ ok: have ? !!h : null, kind: 'systemd', unit, enabled: r?.status === 0, linger: 'loginctl enable-linger $USER  (so it runs without a login session)' }, [`user unit ${unit}${have ? ` (${r?.status === 0 ? 'enabled' : 'enable failed: ' + (r?.stderr ?? '').trim()})` : ' written; no systemctl here'}`, 'to keep it running after logout: loginctl enable-linger $USER', h ? `node up at ${c.localUrl}` : 'node not answering yet; check litnode.log']);
   },

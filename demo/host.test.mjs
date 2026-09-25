@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createNode } from '../node/litnode.js';
-import { parseEnv, writeEnv, readEnv, validateEnv, effectiveConfig, daemonEnv, ensureIdentity, readIdentity, preflight, inspect, plan, ROOT } from '../sdk/host/index.mjs';
+import { parseEnv, writeEnv, readEnv, validateEnv, effectiveConfig, daemonEnv, ensureIdentity, readIdentity, preflight, inspect, plan, serviceStatus, ROOT } from '../sdk/host/index.mjs';
 
 const RULESET = join(ROOT, 'rulesets', 'tug.v1.js');
 const cli = (home, args, env = {}) => {
@@ -173,4 +173,15 @@ test('host CLI: init → doctor → start --detach → status/next/verify → st
   assert.equal(r.code, 0, 'stop when nothing runs is fine');
   r = cli(home, ['verify']);
   assert.equal(r.code, 3, 'verify is strict: a stopped node is not ready');
+});
+
+test('host: SERVICE_NAME names the start-at-logon task, so a second node on one machine never takes the first one’s', () => {
+  assert.equal(effectiveConfig({}, { processEnv: {} }).serviceName, 'litnode', 'default unchanged for existing installs');
+  assert.equal(effectiveConfig({ SERVICE_NAME: 'litnode-witness-2' }, { processEnv: {} }).serviceName, 'litnode-witness-2');
+  for (const bad of ['', 'a b', 'x;del', '../x', 'n'.repeat(65)]) assert.equal(effectiveConfig({ SERVICE_NAME: bad }, { processEnv: {} }).serviceName, 'litnode', `rejected: ${JSON.stringify(bad)}`);
+  // A name nothing is registered under: the real service manager is asked, and the answer names it.
+  const name = `litnode-test-${process.pid}`;
+  const st = serviceStatus({ ...effectiveConfig({ SERVICE_NAME: name }, { processEnv: {} }), root: ROOT });
+  assert.equal(st.installed, false); assert.equal(st.ours, false); assert.equal(st.foreign, undefined);
+  if (process.platform === 'win32') { assert.equal(st.name, name); assert.match(st.detail, new RegExp(name)); }
 });
