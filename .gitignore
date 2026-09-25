@@ -18,3 +18,6 @@ audit-test-output.txt
 
 # An operator install writes its node.env beside the code; never commit one
 /node.env
+
+# Local wallet signer (tools/signer): internal tool, kept out of the repo on purpose (25 Sep 2026)
+tools/signer/

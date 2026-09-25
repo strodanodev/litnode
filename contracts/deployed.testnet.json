@@ -32,7 +32,9 @@
     "eligibilityAge": 120,
     "unbondingPeriod": 3600,
     "admin": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
-    "version": 3
+    "version": 3,
+    "treasury": "0xeA09E9B9Acf53462dC4490c9174fdB41B3f62eF2",
+    "treasuryTx": "0xd923676b9997e35ec42728dbc160ce3683cf648cf3110464bb98baecae0ef144"
   },
   "ERC6699Registry": {
     "address": "0x38DF2543e039E775D3f674f7414df43e4eF2f883",
