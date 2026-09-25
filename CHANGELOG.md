@@ -5,6 +5,8 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.11.17] — 2026-09-26 — ranked says when it will play casual-only; one sign-in in the arcade; rewards treasury
+
 ### Added
 - **One sign-in in the arcade.** A first-party title the arcade frames (Agent
   Fighter, Pickle Brawl: `login: 'arcade'` in `cabinet/config.js`) signs in with
@@ -23,9 +25,9 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 - **`SERVICE_NAME` in node.env** names the start-at-logon task or unit
   (`npm run host -- install-service`, default `litnode`), so a second node on
   one machine installs beside the first instead of replacing its task.
-- **Rewards treasury.** `contracts/deploy.testnet.json` sets `treasury` to
-  `0xeA09E9B9Acf53462dC4490c9174fdB41B3f62eF2`; `npm run params` now shows and
-  applies a treasury change (`--calldata` for the admin to send).
+- **Rewards treasury.** NodeStake's treasury is `0xeA09E9B9Acf53462dC4490c9174fdB41B3f62eF2`
+  (tx `0xd923676b…f144`, 26 Sep); `npm run params` shows and applies a treasury
+  change (`--calldata` for the admin to send).
 
 ### Fixed
 - **One dropped poll no longer ends a five-minute queue.** `waitForMatch` rides
