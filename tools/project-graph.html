@@ -1,0 +1,698 @@
+<title>litnode Atlas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Template for tools/project-graph.mjs — the generator inlines the graph where the GRAPH marker sits.
+   Tokens follow the cabinet (cabinet/style.css): dark glass, cyan accent, Space Grotesk + IBM Plex Mono. */
+:root {
+  color-scheme: dark;
+  --bg: #070b12; --panel: #0d131d; --panel2: #131b28; --line: rgba(170, 215, 255, .13); --line2: rgba(170, 215, 255, .28);
+  --fg: #eef3f8; --fg2: #c5d3e0; --dim: #93a9bd; --faint: #5d7184;
+  --accent: #8ce8ff; --accent-ink: #03222b; --accent-soft: rgba(140, 232, 255, .14);
+  --good: #7ef0a8; --warn: #f2c46d; --bad: #ff7b8a; --in: #f7b17a;
+  --l-protocol: #8ce8ff; --l-node: #f7b17a; --l-cabinet: #c8b1ff; --l-sdk: #7ef0a8; --l-games: #f2c46d;
+  --l-contracts: #ff7b8a; --l-tools: #7aa7ff; --l-tests: #6f8497; --l-docs: #b3c1cf;
+  --e-import: #8aa0b6; --e-loads: #5fc6e0; --e-script: #f2c46d; --e-launcher: #f7b17a; --e-vendored: #8ce8ff; --e-contract: #ff7b8a; --e-doc: #b3c1cf;
+  --heat: #ff9f6a; --ring: #ffffff;
+  --head: 'Space Grotesk', 'Segoe UI', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #eef2f6; --panel: #ffffff; --panel2: #e6edf3; --line: rgba(20, 50, 80, .12); --line2: rgba(20, 50, 80, .26);
+    --fg: #0e1722; --fg2: #2b3a4a; --dim: #56697b; --faint: #8797a7;
+    --accent: #0a7a96; --accent-ink: #ffffff; --accent-soft: rgba(10, 122, 150, .12);
+    --good: #1c8a4e; --warn: #9a6d00; --bad: #c62f4b; --in: #c05a1c;
+    --l-protocol: #0d93b5; --l-node: #d8702e; --l-cabinet: #7a5cd6; --l-sdk: #1f9a58; --l-games: #b8860b;
+    --l-contracts: #d23a55; --l-tools: #3567d6; --l-tests: #8494a3; --l-docs: #6d7c8b;
+    --e-import: #6c8196; --e-loads: #1a8fae; --e-script: #b8860b; --e-launcher: #d8702e; --e-vendored: #0d93b5; --e-contract: #d23a55; --e-doc: #8797a7;
+    --heat: #e2572a; --ring: #0e1722;
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eef2f6; --panel: #ffffff; --panel2: #e6edf3; --line: rgba(20, 50, 80, .12); --line2: rgba(20, 50, 80, .26);
+  --fg: #0e1722; --fg2: #2b3a4a; --dim: #56697b; --faint: #8797a7;
+  --accent: #0a7a96; --accent-ink: #ffffff; --accent-soft: rgba(10, 122, 150, .12);
+  --good: #1c8a4e; --warn: #9a6d00; --bad: #c62f4b; --in: #c05a1c;
+  --l-protocol: #0d93b5; --l-node: #d8702e; --l-cabinet: #7a5cd6; --l-sdk: #1f9a58; --l-games: #b8860b;
+  --l-contracts: #d23a55; --l-tools: #3567d6; --l-tests: #8494a3; --l-docs: #6d7c8b;
+  --e-import: #6c8196; --e-loads: #1a8fae; --e-script: #b8860b; --e-launcher: #d8702e; --e-vendored: #0d93b5; --e-contract: #d23a55; --e-doc: #8797a7;
+  --heat: #e2572a; --ring: #0e1722;
+}
+
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 var(--head); }
+button, input, select { font: inherit; color: inherit; }
+code, .mono { font-family: var(--mono); }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.label { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: .14em; color: var(--dim); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.app { height: 100%; display: grid; grid-template-rows: auto 1fr; padding-inline: 16px; box-sizing: border-box; }
+
+/* header */
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding-block: 14px 12px; border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.brand h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
+.brand h1 span { font-style: italic; color: var(--accent); }
+.meta { font-family: var(--mono); font-size: 12px; color: var(--dim); display: flex; gap: 6px 14px; flex-wrap: wrap; }
+.meta b { color: var(--fg2); font-weight: 500; }
+.meta .dirty { color: var(--warn); }
+.tabs { display: flex; gap: 2px; padding: 3px; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; margin-left: auto; }
+.tabs button { border: 0; background: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-family: var(--mono); font-size: 12px; text-transform: uppercase; letter-spacing: .12em; color: var(--dim); }
+.tabs button:hover { color: var(--fg); }
+.tabs button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.search { position: relative; flex: 0 1 260px; min-width: 180px; }
+.search input { width: 100%; box-sizing: border-box; padding: 7px 10px; background: var(--panel); border: 1px solid var(--line2); border-radius: 8px; font-family: var(--mono); font-size: 13px; }
+.search input::placeholder { color: var(--faint); }
+.results { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0; margin: 0; padding: 4px; list-style: none; background: var(--panel); border: 1px solid var(--line2); border-radius: 8px; box-shadow: 0 12px 30px rgba(0, 0, 0, .35); max-height: 320px; overflow: auto; }
+.results button { width: 100%; text-align: left; border: 0; background: none; padding: 5px 8px; border-radius: 5px; cursor: pointer; font-family: var(--mono); font-size: 12px; display: flex; gap: 8px; align-items: center; }
+.results button:hover, .results button.on { background: var(--accent-soft); }
+
+/* stage */
+.stage { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; min-height: 0; padding-block: 14px 16px; }
+.viz { position: relative; min-height: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.toolbar .grp { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.toolbar select { background: var(--panel2); border: 1px solid var(--line2); border-radius: 6px; padding: 3px 6px; font-family: var(--mono); font-size: 12px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border: 1px solid var(--line2); border-radius: 999px; cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--dim); user-select: none; }
+.pill input { position: absolute; opacity: 0; pointer-events: none; }
+.pill i { width: 14px; height: 0; border-top: 2px solid currentColor; }
+.pill i.dash { border-top-style: dashed; }
+.pill:has(input:checked) { color: var(--fg); background: var(--panel2); }
+.pill:has(input:not(:checked)) i { opacity: .35; }
+.pill:has(input:focus-visible) { outline: 2px solid var(--accent); }
+.btn { border: 1px solid var(--line2); background: var(--panel2); border-radius: 6px; padding: 3px 10px; cursor: pointer; font-family: var(--mono); font-size: 12px; }
+.btn:hover { border-color: var(--accent); }
+.canvas { position: relative; flex: 1; min-height: 0; }
+.canvas svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+.canvas svg:active { cursor: grabbing; }
+.legend { position: absolute; left: 10px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 4px 12px; max-width: calc(100% - 20px); padding: 7px 10px; background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line); border-radius: 8px; font-family: var(--mono); font-size: 11px; color: var(--dim); pointer-events: none; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend i { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+.hint { position: absolute; right: 10px; top: 10px; font-family: var(--mono); font-size: 11px; color: var(--faint); pointer-events: none; }
+.tip { position: absolute; z-index: 5; pointer-events: none; max-width: 300px; padding: 7px 10px; background: var(--panel2); border: 1px solid var(--line2); border-radius: 8px; font-size: 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, .3); }
+.tip code { font-size: 12px; color: var(--fg); }
+.tip p { margin: 3px 0 0; color: var(--dim); }
+
+/* layer colors, as fills and as text */
+.l-protocol { --c: var(--l-protocol); } .l-node { --c: var(--l-node); } .l-cabinet { --c: var(--l-cabinet); }
+.l-sdk { --c: var(--l-sdk); } .l-games { --c: var(--l-games); } .l-contracts { --c: var(--l-contracts); }
+.l-tools { --c: var(--l-tools); } .l-tests { --c: var(--l-tests); } .l-docs { --c: var(--l-docs); }
+.legend .l-protocol, .legend .l-node, .legend .l-cabinet, .legend .l-sdk, .legend .l-games, .legend .l-contracts, .legend .l-tools, .legend .l-tests, .legend .l-docs { color: var(--c); }
+.legend span b { color: var(--dim); font-weight: 400; }
+
+/* network */
+.net .edge { fill: none; stroke-width: 1; stroke-opacity: .28; }
+.net .edge.k-import { stroke: var(--e-import); }
+.net .edge.k-loads { stroke: var(--e-loads); stroke-dasharray: 4 3; }
+.net .edge.k-script { stroke: var(--e-script); stroke-opacity: .18; }
+.net .edge.k-launcher { stroke: var(--e-launcher); }
+.net .edge.k-vendored { stroke: var(--e-vendored); stroke-dasharray: 1 3; stroke-width: 1.5; }
+.net .edge.k-contract { stroke: var(--e-contract); stroke-opacity: .16; }
+.net .edge.k-doc { stroke: var(--e-doc); stroke-dasharray: 2 4; stroke-opacity: .16; }
+.net .dot { fill: var(--c); stroke: var(--panel); stroke-width: 1.2; cursor: pointer; }
+.net .dot.flag { stroke: var(--bad); stroke-width: 2; }
+.net .lbl { font-family: var(--mono); font-size: 10px; fill: var(--fg2); paint-order: stroke; stroke: var(--panel); stroke-width: 3px; stroke-linejoin: round; pointer-events: none; display: none; }
+.net .lbl.big, .net.zoomed .lbl { display: block; }
+.net.focus .dot, .net.focus .lbl { opacity: .14; }
+.net.focus .edge { stroke-opacity: .04; }
+.net.focus .dot.hot, .net.focus .lbl.hot { opacity: 1; }
+.net.focus.trace .lbl.hot, .net .lbl.selname { display: block; }
+.net.focus .edge.out { stroke: var(--accent); stroke-opacity: .9; stroke-width: 1.6; }
+.net.focus .edge.in { stroke: var(--in); stroke-opacity: .9; stroke-width: 1.6; }
+.net .dot.sel { stroke: var(--ring); stroke-width: 2.5; }
+.net.searching .dot:not(.match) { opacity: .1; }
+.net.searching .lbl.match { display: block; }
+.net .ghost { font-family: var(--head); font-weight: 700; font-size: 26px; fill: var(--c); opacity: .13; text-anchor: middle; pointer-events: none; letter-spacing: -.02em; }
+
+/* tree */
+.tree .link { fill: none; stroke: var(--line2); stroke-width: 1; }
+.tree .n { cursor: pointer; }
+.tree .n circle { fill: var(--c); stroke: var(--panel); stroke-width: 1.5; }
+.tree .n.dir circle { fill: var(--panel); stroke: var(--c, var(--dim)); stroke-width: 2; }
+.tree .n.dir.shut circle { fill: var(--c, var(--dim)); }
+.tree .n text { font-family: var(--mono); font-size: 12px; fill: var(--fg2); paint-order: stroke; stroke: var(--panel); stroke-width: 3px; }
+.tree .n.dir text { font-family: var(--head); font-weight: 600; font-size: 13px; fill: var(--fg); }
+.tree .n text tspan.m { fill: var(--faint); font-family: var(--mono); font-weight: 400; font-size: 11px; }
+.tree .bar { fill: var(--c); opacity: .35; }
+.tree .n.sel text { fill: var(--accent); }
+.tree .n.sel circle { stroke: var(--ring); stroke-width: 2.5; }
+.tree.searching .n.leaf:not(.match) { opacity: .25; }
+
+/* map */
+.map .tile { fill: var(--c); fill-opacity: .72; stroke: var(--panel); stroke-width: 1; cursor: pointer; }
+.map .tile.heat { fill: var(--h); fill-opacity: 1; }
+.map .tile:hover { fill-opacity: 1; }
+.map .dir { fill: none; stroke: var(--line2); }
+.map .dirname { font-family: var(--mono); font-size: 11px; fill: var(--dim); text-transform: uppercase; letter-spacing: .1em; pointer-events: none; }
+.map .tn { font-family: var(--mono); font-size: 11px; fill: #0a0f16; pointer-events: none; }
+.map .tn.sub { opacity: .7; font-size: 10px; }
+.map .tile.sel { stroke: var(--ring); stroke-width: 2.5; }
+.map.searching .tile:not(.match) { fill-opacity: .12; }
+
+/* side */
+.side { display: flex; flex-direction: column; gap: 14px; min-height: 0; overflow: auto; padding-right: 2px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+.card h2 { margin: 0 0 10px; font-size: 11px; font-family: var(--mono); font-weight: 500; text-transform: uppercase; letter-spacing: .14em; color: var(--dim); }
+.path { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.path code { font-size: 14px; font-weight: 600; word-break: break-all; }
+.chip { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .12em; padding: 2px 7px; border-radius: 999px; background: color-mix(in srgb, var(--c, var(--dim)) 18%, transparent); color: var(--c, var(--dim)); }
+.about { margin: 10px 0 0; color: var(--fg2); font-size: 13px; line-height: 1.55; }
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 12px 0 0; }
+.stats div { display: flex; flex-direction: column; gap: 2px; }
+.stats dt { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .12em; color: var(--faint); }
+.stats dd { margin: 0; font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 13px; }
+.scripts { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+.scripts code { font-size: 11px; padding: 2px 7px; border-radius: 5px; background: var(--panel2); color: var(--warn); }
+.rel { margin-top: 14px; }
+.rel h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 12px; font-weight: 600; }
+.rel h3 i { width: 14px; border-top: 2px solid var(--accent); }
+.rel.in h3 i { border-color: var(--in); }
+.rel h3 .num { color: var(--faint); font-weight: 400; }
+.rel .kind { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .12em; color: var(--faint); margin: 8px 0 3px; }
+.links { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.links button, .flist button { width: 100%; display: flex; align-items: center; gap: 7px; border: 0; background: none; text-align: left; padding: 3px 6px; margin-inline: -6px; border-radius: 5px; cursor: pointer; font-family: var(--mono); font-size: 12px; color: var(--fg2); min-width: 0; }
+.links button:hover, .flist button:hover { background: var(--accent-soft); color: var(--fg); }
+.links button span, .flist button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sw { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+.more { font-family: var(--mono); font-size: 11px; color: var(--faint); padding: 2px 0; }
+.none { color: var(--faint); font-size: 12px; margin: 0; }
+
+.finding { padding-block: 10px; border-top: 1px solid var(--line); }
+.finding:first-of-type { border-top: 0; padding-top: 0; }
+.finding header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.finding header strong { font-size: 13px; font-weight: 600; }
+.badge { margin-left: auto; font-family: var(--mono); font-size: 11px; padding: 1px 8px; border-radius: 999px; font-variant-numeric: tabular-nums; }
+.badge.ok { color: var(--good); background: color-mix(in srgb, var(--good) 14%, transparent); }
+.badge.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.badge.info { color: var(--dim); background: var(--panel2); }
+.finding p { margin: 0 0 6px; color: var(--dim); font-size: 12px; line-height: 1.5; }
+.flist { list-style: none; margin: 0; padding: 0; }
+.flist .v { margin-left: auto; flex: none; color: var(--faint); font-variant-numeric: tabular-nums; }
+.flist .barline { flex: none; height: 4px; border-radius: 2px; background: var(--c); opacity: .7; }
+
+@media (max-width: 860px) {
+  .app { height: auto; }
+  .stage { grid-template-columns: minmax(0, 1fr); }
+  .viz { height: 70vh; min-height: 420px; }
+  .side { overflow: visible; }
+  .tabs { margin-left: 0; }
+  .search { flex: 1 1 100%; }
+  .hint { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <h1>litnode <span>atlas</span></h1>
+      <div class="meta" id="meta"></div>
+    </div>
+    <nav class="tabs" role="tablist" aria-label="View">
+      <button role="tab" id="tab-network" data-view="network">Network</button>
+      <button role="tab" id="tab-tree" data-view="tree">Tree</button>
+      <button role="tab" id="tab-map" data-view="map">Map</button>
+    </nav>
+    <div class="search">
+      <input id="q" type="search" placeholder="Find a file  (e.g. matchbook)" autocomplete="off" aria-label="Find a file">
+      <ul class="results" id="results" hidden></ul>
+    </div>
+  </header>
+
+  <main class="stage">
+    <section class="viz" aria-label="Project graph">
+      <div class="toolbar" id="tb-network">
+        <div class="grp">
+          <span class="label">Show</span>
+          <select id="scope" aria-label="Files to show">
+            <option value="code">Code</option>
+            <option value="docs">Code + docs</option>
+            <option value="all">Every file</option>
+          </select>
+        </div>
+        <div class="grp" id="kinds"></div>
+        <label class="pill"><input type="checkbox" id="cluster" checked> Group by area</label>
+      </div>
+      <div class="toolbar" id="tb-tree" hidden>
+        <div class="grp"><button class="btn" id="expand" type="button">Open all folders</button><button class="btn" id="collapse" type="button">Top level only</button></div>
+        <span class="label">Bars show line count</span>
+      </div>
+      <div class="toolbar" id="tb-map" hidden>
+        <div class="grp"><span class="label">Size</span>
+          <select id="size" aria-label="Tile size"><option value="lines">Lines</option><option value="bytes">Bytes</option></select></div>
+        <div class="grp"><span class="label">Color</span>
+          <select id="color" aria-label="Tile color"><option value="layer">Area</option><option value="commits">Commits</option><option value="age">Last touched</option></select></div>
+      </div>
+      <div class="canvas" id="canvas">
+        <svg id="svg" role="img" aria-label="Interactive project graph"></svg>
+        <div class="legend" id="legend"></div>
+        <div class="hint" id="hint"></div>
+        <div class="tip" id="tip" hidden></div>
+      </div>
+    </section>
+
+    <aside class="side">
+      <section class="card" id="detail" aria-live="polite"></section>
+      <section class="card" id="findings"></section>
+    </aside>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script>
+const G = /*__GRAPH__*/null;
+
+const AREAS = [
+  { key: 'protocol', label: 'Protocol', groups: ['protocol', 'cabinet/protocol'] },
+  { key: 'node', label: 'Node', groups: ['node', 'portable'] },
+  { key: 'cabinet', label: 'Cabinet', groups: ['cabinet'] },
+  { key: 'sdk', label: 'SDK', groups: ['sdk'] },
+  { key: 'games', label: 'Games', groups: ['rulesets', 'titles', 'gauntlets'] },
+  { key: 'contracts', label: 'Contracts', groups: ['contracts'] },
+  { key: 'tools', label: 'Tools', groups: ['tools'] },
+  { key: 'tests', label: 'Tests', groups: ['tests'] },
+  { key: 'docs', label: 'Docs & audit', groups: ['docs', 'audit', 'skills', 'root'] },
+];
+const areaOfGroup = new Map(AREAS.flatMap((a) => a.groups.map((g) => [g, a.key])));
+const KINDS = {
+  import: { label: 'imports', on: true },
+  loads: { label: 'loads by path', on: true, dash: true },
+  script: { label: 'npm script', on: false },
+  launcher: { label: '.cmd launcher', on: true },
+  vendored: { label: 'vendored copy', on: true, dash: true },
+  contract: { label: 'names contract', on: false },
+  doc: { label: 'doc mentions', on: false, dash: true },
+};
+const CODE = new Set(['.js', '.mjs', '.cjs', '.sol', '.cmd', '.html', '.css']);
+
+const byId = new Map(G.nodes.map((n) => [n.id, n]));
+for (const n of G.nodes) { n.area = areaOfGroup.get(n.group) ?? 'docs'; n.name = n.id.split('/').pop(); }
+const outE = new Map(G.nodes.map((n) => [n.id, []]));
+const inE = new Map(G.nodes.map((n) => [n.id, []]));
+for (const e of G.edges) { outE.get(e.source).push(e); inE.get(e.target).push(e); }
+const flagged = new Set([...G.findings.unreached, ...G.findings.unrunTests, ...G.findings.cycles.flat()]);
+
+const store = {
+  get(k) { try { return localStorage.getItem('atlas:' + k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem('atlas:' + k, v); } catch {} },
+};
+const state = {
+  view: ['network', 'tree', 'map'].includes(location.hash.slice(1)) ? location.hash.slice(1) : (store.get('view') || 'network'),
+  selected: byId.has('node/litnode.js') ? 'node/litnode.js' : G.nodes[0].id,
+  query: '', matches: new Set(),
+  scope: 'code', cluster: true, kinds: Object.fromEntries(Object.entries(KINDS).map(([k, v]) => [k, v.on])),
+  open: new Set(['.']), size: 'lines', color: 'layer',
+};
+for (const g of new Set(G.nodes.map((n) => n.id.includes('/') ? n.id.split('/')[0] : null))) if (g) state.open.add(g);
+
+const $ = (s) => document.querySelector(s);
+const svg = d3.select('#svg');
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmt = d3.format(',');
+const kb = (b) => b >= 1e6 ? (b / 1e6).toFixed(1) + ' MB' : b >= 1e3 ? Math.round(b / 1e3) + ' KB' : b + ' B';
+const dateFmt = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
+const ago = (iso) => iso ? Math.max(0, Math.round((new Date(G.generatedAt) - new Date(iso)) / 864e5)) : null;
+
+/* ---------- header ---------- */
+$('#meta').innerHTML = [
+  `<span>v<b>${esc(G.version)}</b></span>`,
+  `<span>commit <b>${esc(G.commit)}</b>${G.dirty ? ` <span class="dirty">+${G.dirty} uncommitted</span>` : ''}</span>`,
+  `<span><b>${fmt(G.nodes.length)}</b> files</span>`,
+  `<span><b>${fmt(G.edges.length)}</b> relations</span>`,
+  `<span>mapped ${esc(dateFmt(G.generatedAt))}</span>`,
+].join('');
+
+/* ---------- tooltip ---------- */
+const tip = $('#tip');
+function showTip(ev, n) {
+  const r = $('#canvas').getBoundingClientRect();
+  tip.innerHTML = `<code>${esc(n.id)}</code>${n.about ? `<p>${esc(n.about)}</p>` : ''}<p class="num">${n.lines ? fmt(n.lines) + ' lines · ' : ''}${kb(n.bytes)} · ${n.commits} commits</p>`;
+  tip.hidden = false;
+  const x = Math.min(ev.clientX - r.left + 14, r.width - tip.offsetWidth - 8);
+  const y = ev.clientY - r.top + 14 + tip.offsetHeight > r.height ? ev.clientY - r.top - tip.offsetHeight - 10 : ev.clientY - r.top + 14;
+  tip.style.left = Math.max(8, x) + 'px'; tip.style.top = Math.max(8, y) + 'px';
+}
+const hideTip = () => { tip.hidden = true; };
+
+/* ---------- views ---------- */
+let sim = null, zoom = null, view = null;
+function size() { const r = $('#canvas').getBoundingClientRect(); return { w: Math.max(200, r.width), h: Math.max(200, r.height) }; }
+
+function legendAreas(extra = '') {
+  $('#legend').innerHTML = AREAS.map((a) => `<span class="l-${a.key}"><i></i><b>${a.label}</b></span>`).join('') + extra;
+}
+
+function resetSvg(cls) {
+  if (sim) { sim.stop(); sim = null; }
+  svg.selectAll('*').remove();
+  svg.on('.zoom', null).on('wheel.pan', null);
+  svg.attr('class', cls);
+  const g = svg.append('g');
+  zoom = d3.zoom().scaleExtent([0.15, 6]).on('zoom', (e) => { g.attr('transform', e.transform); view?.onZoom?.(e.transform); });
+  svg.call(zoom).on('dblclick.zoom', null);
+  return g;
+}
+
+/* Network */
+function inScope(n) {
+  if (state.scope === 'all') return true;
+  if (n.id === 'package.json') return true;
+  if (CODE.has(n.ext)) return true;
+  if (n.ext === '.json' && !n.id.startsWith('audit/') && n.id !== 'package-lock.json' && n.id !== '.claude/launch.json') return true;
+  return state.scope === 'docs' && n.ext === '.md';
+}
+const radius = (n) => Math.min(17, 3.2 + Math.sqrt(n.lines || n.bytes / 60) / 4.2);
+
+function drawNetwork() {
+  const root = resetSvg('net');
+  const { w, h } = size();
+  const nodes = G.nodes.filter(inScope);
+  const ids = new Set(nodes.map((n) => n.id));
+  const links = G.edges.filter((e) => state.kinds[e.kind] && ids.has(e.source) && ids.has(e.target)).map((e) => ({ ...e }));
+  const deg = new Map(nodes.map((n) => [n.id, 0]));
+  const adj = new Map(nodes.map((n) => [n.id, new Set([n.id])]));
+  for (const l of links) { deg.set(l.source, deg.get(l.source) + 1); deg.set(l.target, deg.get(l.target) + 1); adj.get(l.source).add(l.target); adj.get(l.target).add(l.source); }
+
+  const R = Math.min(w, h) * 0.36;
+  const centers = new Map(AREAS.map((a, i) => { const t = (i / AREAS.length) * 2 * Math.PI - Math.PI / 2; return [a.key, { x: w / 2 + Math.cos(t) * R * 1.15, y: h / 2 + Math.sin(t) * R }]; }));
+  for (const n of nodes) if (n.x == null) { const c = centers.get(n.area); n.x = c.x + (Math.random() - .5) * 60; n.y = c.y + (Math.random() - .5) * 60; }
+
+  const ghosts = root.append('g').selectAll('text').data(state.cluster ? AREAS.filter((a) => nodes.some((n) => n.area === a.key)) : []).join('text')
+    .attr('class', (a) => `ghost l-${a.key}`).text((a) => a.label);
+  const edge = root.append('g').selectAll('line').data(links).join('line').attr('class', (l) => `edge k-${l.kind}`);
+  const dot = root.append('g').selectAll('circle').data(nodes, (n) => n.id).join('circle')
+    .attr('class', (n) => `dot l-${n.area}${flagged.has(n.id) ? ' flag' : ''}`).attr('r', radius)
+    .on('mouseenter', (ev, n) => { focusOn(n.id, true); showTip(ev, n); })
+    .on('mousemove', (ev, n) => showTip(ev, n))
+    .on('mouseleave', () => { hideTip(); focusOn(state.selected); })
+    .on('click', (ev, n) => select(n.id))
+    .call(d3.drag()
+      .on('start', (ev, n) => { if (!ev.active) sim.alphaTarget(0.2).restart(); n.fx = n.x; n.fy = n.y; })
+      .on('drag', (ev, n) => { n.fx = ev.x; n.fy = ev.y; })
+      .on('end', (ev, n) => { if (!ev.active) sim.alphaTarget(0); n.fx = null; n.fy = null; }));
+  const lbl = root.append('g').selectAll('text').data(nodes, (n) => n.id).join('text')
+    .attr('class', (n) => `lbl${deg.get(n.id) >= 9 || n.lines >= 700 ? ' big' : ''}`).attr('dy', (n) => -radius(n) - 3).attr('text-anchor', 'middle').text((n) => n.name);
+
+  function focusOn(id, trace = false) {
+    const on = id && adj.has(id);
+    svg.classed('focus', on).classed('trace', trace);
+    lbl.classed('selname', (n) => n.id === state.selected);
+    if (!on) return;
+    const near = adj.get(id);
+    dot.classed('hot', (n) => near.has(n.id)).classed('sel', (n) => n.id === state.selected);
+    lbl.classed('hot', (n) => near.has(n.id));
+    edge.classed('out', (l) => l.source.id === id).classed('in', (l) => l.target.id === id);
+  }
+
+  sim = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id((n) => n.id).distance((l) => l.kind === 'import' ? 36 : 60).strength((l) => l.kind === 'import' || l.kind === 'vendored' ? 0.35 : 0.12))
+    .force('charge', d3.forceManyBody().strength(-55).distanceMax(260))
+    .force('collide', d3.forceCollide((n) => radius(n) + 2.5))
+    .force('x', d3.forceX((n) => state.cluster ? centers.get(n.area).x : w / 2).strength(state.cluster ? 0.12 : 0.03))
+    .force('y', d3.forceY((n) => state.cluster ? centers.get(n.area).y : h / 2).strength(state.cluster ? 0.12 : 0.03))
+    .alphaDecay(0.035)
+    .on('tick', () => {
+      edge.attr('x1', (l) => l.source.x).attr('y1', (l) => l.source.y).attr('x2', (l) => l.target.x).attr('y2', (l) => l.target.y);
+      dot.attr('cx', (n) => n.x).attr('cy', (n) => n.y);
+      lbl.attr('x', (n) => n.x).attr('y', (n) => n.y);
+      if (state.cluster) ghosts.each(function (a) {
+        const ns = nodes.filter((n) => n.area === a.key);
+        const top = d3.min(ns, (n) => n.y - radius(n)) - 14;
+        d3.select(this).attr('x', d3.mean(ns, (n) => n.x)).attr('y', top);
+      });
+    });
+  if (nodes.every((n) => n.vx != null)) sim.alpha(0.3);
+
+  $('#hint').textContent = 'Scroll to zoom · drag to pan · hover to trace';
+  legendAreas(`<span style="color:var(--accent)"><i style="border-radius:0;height:2px;width:12px"></i><b>uses</b></span><span style="color:var(--in)"><i style="border-radius:0;height:2px;width:12px"></i><b>used by</b></span><span style="color:var(--bad)"><i style="background:none;border:2px solid"></i><b>flagged</b></span>`);
+
+  view = {
+    onZoom: (t) => svg.classed('zoomed', t.k > 1.7),
+    select(id) { focusOn(id); },
+    search() { svg.classed('searching', !!state.query); dot.classed('match', (n) => state.matches.has(n.id)); lbl.classed('match', (n) => state.matches.has(n.id)); },
+    center(id) {
+      const n = byId.get(id);
+      if (!n || n.x == null || !ids.has(id)) return;
+      const k = Math.max(1.4, d3.zoomTransform(svg.node()).k);
+      svg.transition().duration(600).call(zoom.transform, d3.zoomIdentity.translate(w / 2 - n.x * k, h / 2 - n.y * k).scale(k));
+    },
+  };
+  focusOn(state.selected);
+}
+
+/* Tree */
+function hierarchyOf(filter = () => true) {
+  const root = { name: 'litnode', path: '.', children: [] };
+  const dirs = new Map([['.', root]]);
+  for (const n of G.nodes.filter(filter)) {
+    const parts = n.id.split('/');
+    let cur = root, p = '';
+    for (let i = 0; i < parts.length - 1; i++) {
+      p = p ? p + '/' + parts[i] : parts[i];
+      if (!dirs.has(p)) { const d = { name: parts[i], path: p, children: [] }; dirs.set(p, d); cur.children.push(d); }
+      cur = dirs.get(p);
+    }
+    cur.children.push({ name: parts.at(-1), path: n.id, node: n });
+  }
+  const sort = (d) => { if (!d.children) return; d.children.sort((a, b) => (!!b.children - !!a.children) || a.name.localeCompare(b.name)); d.children.forEach(sort); };
+  sort(root);
+  return root;
+}
+const TREE = hierarchyOf();
+const dirStats = new Map();
+(function stat(d) {
+  if (!d.children) return { files: 1, lines: d.node.lines, area: d.node.area };
+  let files = 0, lines = 0; const areas = new Map();
+  for (const c of d.children) { const s = stat(c); files += s.files; lines += s.lines; areas.set(s.area, (areas.get(s.area) || 0) + s.files); }
+  const area = [...areas].sort((a, b) => b[1] - a[1])[0]?.[0];
+  dirStats.set(d.path, { files, lines, area });
+  return { files, lines, area };
+})(TREE);
+
+function drawTree(keep) {
+  const prev = keep ? d3.zoomTransform(svg.node()) : null;
+  const root = resetSvg('tree');
+  const { w, h } = size();
+  const prune = (d) => d.children ? { ...d, children: state.open.has(d.path) ? d.children.map(prune) : null } : d;
+  const hroot = d3.hierarchy(prune(TREE), (d) => d.children);
+  const dx = 20, dy = Math.max(150, Math.min(220, w / 5));
+  d3.tree().nodeSize([dx, dy]).separation((a, b) => a.parent === b.parent ? 1 : 1.2)(hroot);
+  const maxLines = d3.max(G.nodes, (n) => n.lines) || 1;
+
+  root.append('g').selectAll('path').data(hroot.links()).join('path').attr('class', 'link')
+    .attr('d', d3.linkHorizontal().x((d) => d.y).y((d) => d.x));
+  const n = root.append('g').selectAll('g').data(hroot.descendants()).join('g')
+    .attr('class', (d) => {
+      const leaf = !d.data.children;
+      const area = leaf ? d.data.node.area : dirStats.get(d.data.path)?.area;
+      return `n ${leaf ? 'leaf' : 'dir'}${!leaf && !state.open.has(d.data.path) ? ' shut' : ''}${area ? ' l-' + area : ''}${leaf && d.data.path === state.selected ? ' sel' : ''}`;
+    })
+    .attr('transform', (d) => `translate(${d.y},${d.x})`)
+    .on('click', (ev, d) => {
+      if (d.data.children) { state.open.has(d.data.path) && d.data.path !== '.' ? state.open.delete(d.data.path) : state.open.add(d.data.path); drawTree(true); }
+      else select(d.data.path);
+    })
+    .on('mouseenter', (ev, d) => d.data.node && showTip(ev, d.data.node))
+    .on('mousemove', (ev, d) => d.data.node && showTip(ev, d.data.node))
+    .on('mouseleave', hideTip);
+  n.append('circle').attr('r', (d) => d.data.children ? 5 : 3.5);
+  n.filter((d) => !d.data.children && d.data.node.lines).append('rect').attr('class', 'bar')
+    .attr('x', 8).attr('y', 5).attr('height', 2).attr('width', (d) => 4 + 90 * Math.sqrt(d.data.node.lines / maxLines));
+  const t = n.append('text').attr('dy', '0.32em').attr('x', (d) => d.data.children && d.depth === 0 ? -10 : 9).attr('text-anchor', (d) => d.depth === 0 ? 'end' : 'start');
+  t.append('tspan').text((d) => d.data.name + (d.data.children ? '/' : ''));
+  t.append('tspan').attr('class', 'm').attr('dx', 6).text((d) => {
+    if (d.data.children) { const s = dirStats.get(d.data.path); return `${s.files} · ${fmt(s.lines)} ln`; }
+    return d.data.node.lines ? fmt(d.data.node.lines) : kb(d.data.node.bytes);
+  });
+
+  const x0 = d3.min(hroot.descendants(), (d) => d.x);
+  svg.call(zoom.transform, prev ?? d3.zoomIdentity.translate(Math.min(120, w * 0.18), 30 - x0));
+  zoom.filter((e) => e.type !== 'wheel' || e.ctrlKey || e.metaKey);
+  svg.on('wheel.pan', (e) => { if (e.ctrlKey || e.metaKey) return; e.preventDefault(); const k = d3.zoomTransform(svg.node()).k; zoom.translateBy(svg, -e.deltaX / k, -e.deltaY / k); }, { passive: false });
+
+  $('#hint').textContent = 'Click a folder to open it · scroll to move · ctrl+scroll to zoom';
+  legendAreas();
+  view = {
+    select() { n.classed('sel', (d) => !d.data.children && d.data.path === state.selected); },
+    search() { svg.classed('searching', !!state.query); n.classed('match', (d) => state.matches.has(d.data.path)); },
+    center(id) {
+      const parts = id.split('/'); let p = '', changed = false;
+      for (let i = 0; i < parts.length - 1; i++) { p = p ? p + '/' + parts[i] : parts[i]; if (!state.open.has(p)) { state.open.add(p); changed = true; } }
+      if (changed) { drawTree(true); return view.center(id); }
+      const d = hroot.descendants().find((d) => d.data.path === id);
+      if (!d) return;
+      const k = d3.zoomTransform(svg.node()).k;
+      svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity.translate(w / 3 - d.y * k, h / 2 - d.x * k).scale(k));
+    },
+  };
+}
+$('#expand').onclick = () => { (function walk(d) { if (d.children) { state.open.add(d.path); d.children.forEach(walk); } })(TREE); drawTree(); };
+$('#collapse').onclick = () => { state.open = new Set(['.']); drawTree(); };
+
+/* Map */
+function drawMap() {
+  const root = resetSvg('map');
+  const { w, h } = size();
+  const val = (n) => state.size === 'bytes' ? n.bytes : n.lines;
+  const data = hierarchyOf((n) => val(n) > 0);
+  const hroot = d3.hierarchy(data, (d) => d.children).sum((d) => d.node ? val(d.node) : 0).sort((a, b) => b.value - a.value);
+  d3.treemap().size([w, h]).paddingOuter(3).paddingTop((d) => d.depth ? 17 : 3).paddingInner(1.5).round(true).tile(d3.treemapSquarify.ratio(1.3))(hroot);
+
+  const dirs = hroot.descendants().filter((d) => d.children && d.depth);
+  const dg = root.append('g').selectAll('g').data(dirs).join('g');
+  dg.append('rect').attr('class', 'dir').attr('x', (d) => d.x0).attr('y', (d) => d.y0).attr('width', (d) => d.x1 - d.x0).attr('height', (d) => d.y1 - d.y0).attr('rx', 3);
+  dg.filter((d) => d.x1 - d.x0 > 44).append('text').attr('class', 'dirname').attr('x', (d) => d.x0 + 5).attr('y', (d) => d.y0 + 12)
+    .text((d) => { const room = Math.floor((d.x1 - d.x0 - 10) / 7); const s = `${d.data.name} · ${fmt(d.value)}`; return s.length > room ? d.data.name.slice(0, room) : s; });
+
+  const maxC = d3.max(G.nodes, (n) => n.commits) || 1;
+  const maxAge = d3.max(G.nodes, (n) => ago(n.last) ?? 0) || 1;
+  const heat = (n) => state.color === 'commits' ? Math.sqrt(n.commits / maxC) : 1 - Math.sqrt((ago(n.last) ?? maxAge) / maxAge);
+  const leaves = hroot.leaves();
+  const tg = root.append('g').selectAll('g').data(leaves).join('g');
+  const tile = tg.append('rect')
+    .attr('class', (d) => `tile l-${d.data.node.area}${state.color !== 'layer' ? ' heat' : ''}${d.data.path === state.selected ? ' sel' : ''}`)
+    .attr('x', (d) => d.x0).attr('y', (d) => d.y0).attr('width', (d) => Math.max(0, d.x1 - d.x0)).attr('height', (d) => Math.max(0, d.y1 - d.y0))
+    .attr('style', (d) => state.color === 'layer' ? null : `--h: color-mix(in oklab, var(--heat) ${Math.round(8 + 88 * heat(d.data.node))}%, var(--panel2))`)
+    .on('click', (ev, d) => select(d.data.path))
+    .on('mouseenter', (ev, d) => showTip(ev, d.data.node)).on('mousemove', (ev, d) => showTip(ev, d.data.node)).on('mouseleave', hideTip);
+  const lab = tg.filter((d) => d.x1 - d.x0 > 46 && d.y1 - d.y0 > 15);
+  const inkFor = (d) => state.color === 'layer' || heat(d.data.node) > .45 ? '#0a0f16' : 'var(--fg2)';
+  lab.append('text').attr('class', 'tn').attr('x', (d) => d.x0 + 4).attr('y', (d) => d.y0 + 12).style('fill', inkFor)
+    .text((d) => { const room = Math.floor((d.x1 - d.x0 - 8) / 6.6); return d.data.name.length > room ? d.data.name.slice(0, room - 1) + '…' : d.data.name; });
+  lab.filter((d) => d.y1 - d.y0 > 30 && d.x1 - d.x0 > 60).append('text').attr('class', 'tn sub').attr('x', (d) => d.x0 + 4).attr('y', (d) => d.y0 + 25).style('fill', inkFor)
+    .text((d) => state.color === 'commits' ? `${d.data.node.commits} commits` : state.color === 'age' ? `${ago(d.data.node.last) ?? '—'} d ago` : state.size === 'bytes' ? kb(d.data.node.bytes) : `${fmt(d.data.node.lines)} ln`);
+
+  $('#hint').textContent = state.size === 'bytes' ? 'Area = bytes on disk' : 'Area = lines of text';
+  if (state.color === 'layer') legendAreas();
+  else $('#legend').innerHTML = `<span><b>${state.color === 'commits' ? 'Few commits' : 'Untouched longest'}</b></span><span style="width:90px;height:8px;border-radius:4px;background:linear-gradient(90deg,color-mix(in oklab,var(--heat) 8%,var(--panel2)),var(--heat))"></span><span><b>${state.color === 'commits' ? `${maxC} commits` : 'Touched today'}</b></span>`;
+  view = {
+    select() { tile.classed('sel', (d) => d.data.path === state.selected); },
+    search() { svg.classed('searching', !!state.query); tile.classed('match', (d) => state.matches.has(d.data.path)); },
+    center() {},
+  };
+}
+
+/* ---------- side: detail ---------- */
+function relList(list, key) {
+  if (!list.length) return '<p class="none">None</p>';
+  const groups = d3.group(list, (e) => e.kind);
+  return [...groups].sort((a, b) => Object.keys(KINDS).indexOf(a[0]) - Object.keys(KINDS).indexOf(b[0])).map(([k, es]) => {
+    const items = es.map((e) => byId.get(e[key])).sort((a, b) => a.id.localeCompare(b.id));
+    const shown = items.slice(0, 14);
+    return `<div class="kind">${esc(KINDS[k].label)} · ${items.length}</div><ul class="links">${shown.map((m) =>
+      `<li><button type="button" data-go="${esc(m.id)}" title="${esc(m.id)}"><i class="sw l-${m.area}"></i><span>${esc(m.id)}</span></button></li>`).join('')}</ul>${items.length > shown.length ? `<div class="more">+ ${items.length - shown.length} more</div>` : ''}`;
+  }).join('');
+}
+function renderDetail() {
+  const n = byId.get(state.selected);
+  const area = AREAS.find((a) => a.key === n.area);
+  const issues = [];
+  if (G.findings.unreached.includes(n.id)) issues.push('Nothing in the repo imports, loads, runs or documents this file.');
+  if (G.findings.unrunTests.includes(n.id)) issues.push('<code>npm test</code> does not run this test file.');
+  $('#detail').innerHTML = `
+    <h2>Selected file</h2>
+    <div class="path"><span class="chip l-${n.area}">${esc(area.label)}</span><code>${esc(n.id)}</code></div>
+    ${n.about ? `<p class="about">${esc(n.about)}</p>` : ''}
+    ${issues.map((t) => `<p class="about" style="color:var(--warn)">${t}</p>`).join('')}
+    <dl class="stats">
+      <div><dt>Lines</dt><dd>${n.lines ? fmt(n.lines) : '—'}</dd></div>
+      <div><dt>Size</dt><dd>${kb(n.bytes)}</dd></div>
+      <div><dt>Commits</dt><dd>${n.commits}</dd></div>
+      <div><dt>Touched</dt><dd>${ago(n.last) == null ? '—' : ago(n.last) === 0 ? 'today' : ago(n.last) + ' d'}</dd></div>
+    </dl>
+    ${n.scripts ? `<div class="scripts">${n.scripts.map((s) => `<code>npm run ${esc(s)}</code>`).join('')}</div>` : ''}
+    <div class="rel"><h3><i></i>Uses <span class="num">${outE.get(n.id).length}</span></h3>${relList(outE.get(n.id), 'target')}</div>
+    <div class="rel in"><h3><i></i>Used by <span class="num">${inE.get(n.id).length}</span></h3>${relList(inE.get(n.id), 'source')}</div>`;
+}
+
+/* ---------- side: findings ---------- */
+function flist(items, val, max) {
+  return `<ul class="flist">${items.map((it) => {
+    const n = byId.get(it.id ?? it);
+    const v = val ? val(it) : null;
+    return `<li><button type="button" data-go="${esc(n.id)}" title="${esc(n.id)}"><i class="sw l-${n.area}"></i><span>${esc(n.id)}</span>${v != null ? `<span class="v num">${fmt(v)}</span><i class="barline l-${n.area}" style="width:${Math.round(4 + 40 * v / max)}px"></i>` : ''}</button></li>`;
+  }).join('')}</ul>`;
+}
+function renderFindings() {
+  const f = G.findings;
+  const block = (title, count, text, body, good) => `<div class="finding"><header><strong>${title}</strong><span class="badge ${count ? (good ? 'info' : 'warn') : 'ok'}">${count ? count : 'none'}</span></header><p>${text}</p>${body}</div>`;
+  const ext = Object.entries(G.external);
+  $('#findings').innerHTML = `<h2>Tidy-up list</h2>` +
+    block('Nothing reaches these', f.unreached.length, 'JavaScript that no file imports or loads, no npm script runs, and no doc names. Wire it in, document it, or delete it.', flist(f.unreached)) +
+    block('Tests npm test skips', f.unrunTests.length, 'Test files that exist but are missing from the <code>test</code> script in package.json.', flist(f.unrunTests)) +
+    block('Import cycles', f.cycles.length, f.cycles.length ? 'Groups of files that import each other in a loop.' : 'No file imports itself through a chain of others.', f.cycles.map((c) => flist(c)).join('')) +
+    block('protocol/ reaching outside', f.layerBreaks.length, f.layerBreaks.length ? 'protocol/ should stay pure and isomorphic; these imports cross out of it.' : 'protocol/ imports only protocol/, so the cabinet can vendor it as-is.', f.layerBreaks.map((s) => `<div class="more">${esc(s)}</div>`).join('')) +
+    block('Largest files', f.largest.length, 'Candidates to split when they next change.', flist(f.largest, (x) => x.lines, f.largest[0]?.lines || 1), true) +
+    block('Most changed', f.hottest.length, 'Where commits land most often, across the whole history.', flist(f.hottest, (x) => x.commits, f.hottest[0]?.commits || 1), true) +
+    block('Outside packages', ext.length, 'npm packages the code imports, and how many files use each.', `<ul class="flist">${ext.map(([k, v]) => `<li><button type="button" data-go="${esc(v[0])}" title="First importer: ${esc(v[0])}"><span>${esc(k)}</span><span class="v num">${v.length}</span></button></li>`).join('')}</ul>`, true);
+}
+
+/* ---------- wiring ---------- */
+function select(id, { center = false } = {}) {
+  if (!byId.has(id)) return;
+  state.selected = id;
+  renderDetail();
+  view?.select(id);
+  if (center) view?.center(id);
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-go]');
+  if (!b) return;
+  const id = b.dataset.go;
+  if (state.view === 'network' && !inScope(byId.get(id))) { state.scope = 'all'; $('#scope').value = 'all'; show('network'); }
+  select(id, { center: true });
+  $('#results').hidden = true;
+});
+
+function show(v) {
+  state.view = v; store.set('view', v);
+  document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.view === v)));
+  for (const k of ['network', 'tree', 'map']) $('#tb-' + k).hidden = k !== v;
+  hideTip();
+  ({ network: drawNetwork, tree: drawTree, map: drawMap })[v]();
+  view.search();
+}
+document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => show(b.dataset.view)));
+
+$('#kinds').innerHTML = Object.entries(KINDS).map(([k, v]) =>
+  `<label class="pill" style="--k:var(--e-${k})"><input type="checkbox" id="kind-${k}" data-kind="${k}" ${v.on ? 'checked' : ''}><i class="${v.dash ? 'dash' : ''}" style="color:var(--e-${k})"></i>${esc(v.label)}</label>`).join('');
+$('#kinds').addEventListener('change', (e) => { state.kinds[e.target.dataset.kind] = e.target.checked; drawNetwork(); view.search(); });
+$('#scope').addEventListener('change', (e) => { state.scope = e.target.value; drawNetwork(); view.search(); });
+$('#cluster').addEventListener('change', (e) => { state.cluster = e.target.checked; drawNetwork(); view.search(); });
+$('#size').addEventListener('change', (e) => { state.size = e.target.value; drawMap(); view.search(); });
+$('#color').addEventListener('change', (e) => { state.color = e.target.value; drawMap(); view.search(); });
+
+const q = $('#q'), results = $('#results');
+let hits = [], cursor = 0;
+function paintResults() {
+  results.innerHTML = hits.slice(0, 10).map((n, i) => `<li><button type="button" class="${i === cursor ? 'on' : ''}" data-go="${esc(n.id)}"><i class="sw l-${n.area}"></i><span>${esc(n.id)}</span></button></li>`).join('');
+  results.hidden = !hits.length;
+}
+q.addEventListener('input', () => {
+  state.query = q.value.trim().toLowerCase();
+  hits = state.query ? G.nodes.filter((n) => n.id.toLowerCase().includes(state.query) || n.about.toLowerCase().includes(state.query))
+    .sort((a, b) => (b.name.toLowerCase().includes(state.query) - a.name.toLowerCase().includes(state.query)) || b.lines - a.lines) : [];
+  state.matches = new Set(hits.map((n) => n.id));
+  cursor = 0; paintResults(); view.search();
+});
+q.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); cursor = (cursor + (e.key === 'ArrowDown' ? 1 : -1) + Math.min(10, hits.length)) % Math.max(1, Math.min(10, hits.length)); paintResults(); }
+  else if (e.key === 'Enter' && hits[cursor]) { results.querySelector('.on')?.click(); }
+  else if (e.key === 'Escape') { q.value = ''; q.dispatchEvent(new Event('input')); }
+});
+document.addEventListener('click', (e) => { if (!e.target.closest('.search')) results.hidden = true; });
+q.addEventListener('focus', () => { if (hits.length) results.hidden = false; });
+
+let rt;
+new ResizeObserver(() => { clearTimeout(rt); rt = setTimeout(() => show(state.view), 180); }).observe($('#canvas'));
+
+renderDetail();
+renderFindings();
+show(state.view);
+</script>

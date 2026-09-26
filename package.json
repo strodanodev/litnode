@@ -41,6 +41,7 @@
     "params": "node tools/params.mjs",
     "fleet": "node tools/fleet.mjs",
     "prune:dist": "node tools/prune-dist.mjs",
+    "graph": "node tools/project-graph.mjs",
     "version": "node tools/sync-version.mjs --stage"
   },
   "engines": {
