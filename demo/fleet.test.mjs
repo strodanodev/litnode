@@ -46,7 +46,7 @@ test('/fleet: measured links, graded peers, a graph from everyone\'s heartbeat, 
   assert.ok(f.mesh.gossip.outPerMin > 0 && f.mesh.gossip.outBytesPerMin > 0, 'gossip out counted');
   assert.ok(f.mesh.gossip.inPerMin > 0, 'gossip in counted (replies and pushes)');
   // shape the dashboard binds to
-  assert.deepEqual(Object.keys(f).sort(), ['at', 'cabinet', 'chain', 'digest', 'events', 'graph', 'mesh', 'nodeId', 'peers', 'proof', 'protocol', 'queue', 'recent', 'rooms', 'self', 'titles', 'version'].sort());
+  assert.deepEqual(Object.keys(f).sort(), ['at', 'cabinet', 'chain', 'digest', 'events', 'graph', 'guardian', 'mesh', 'nodeId', 'peers', 'proof', 'protocol', 'queue', 'recent', 'rooms', 'self', 'titles', 'version'].sort());
   assert.ok(Array.isArray(f.rooms) && Array.isArray(f.queue) && Array.isArray(f.titles) && Array.isArray(f.events));
   assert.equal(f.proof, null, 'no nonce, no proof');
   assert.equal(f.chain.offline, true);
