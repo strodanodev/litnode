@@ -51,6 +51,8 @@ export function formatEvent(ev, color = true) {
     case 'update': return `${tag(G.ruleset, 'update', c.yellow)} ${ev.latest} is available (running ${ev.version}) — press u to update and restart`;
     case 'restart': return `${tag(G.ruleset, 'restart', c.yellow)} restarting to run the new build`;
     case 'refused': return `${tag(G.bad, 'refused', c.red)} ${ev.what}${ev.matchId ? ` ${ev.matchId}` : ''}: ${ev.reason}`;
+    case 'guardian': return `${tag(G.bad, 'guardian', c.red)} ${P(c.white, ev.matchId)}  flagged by ${hash(ev.guardianId, 12)}: ${ev.failed.join(', ')} — witnesses should re-check`;
+    case 'guardian.ok': return `${tag(G.cosign, 'guardian', c.gray)} ${P(c.gray, `${ev.matchId}  ${ev.verdict} · ${hash(ev.guardianId, 12)}`)}`;
     case 'log': return `${tag(G.log, 'log', c.gray)} ${P(c.gray, ev.msg)}`;
     default: return `${tag(G.log, ev.type, c.gray)} ${P(c.gray, JSON.stringify(ev).slice(0, 120))}`;
   }

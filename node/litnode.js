@@ -47,6 +47,7 @@ import { answerChallenge, checkChallenge, newNonce, NONCE_RE } from '../protocol
 import { CABINET_VERSION } from '../cabinet/version.js';
 import { descriptorHash as descriptorHashOf } from './settle.js';
 import { proposeCalldata } from '../protocol/epoch.js';
+import { verifyReport } from '../protocol/guardian.js';
 
 // Every response is readable from any origin, and from an https page reaching
 // a loopback node (Chrome's Private Network Access asks on the preflight).
@@ -156,7 +157,7 @@ export async function createNode({
   // from it, a log file gets a line per event, tests can subscribe. Never
   // throws into the caller.
   // The last RECENT_MAX events worth a line on a dashboard — not the per-second ticks — served on /fleet.events.
-  const RECENT_MAX = 100, QUIET = new Set(['gossip.out', 'gossip.in', 'block']);
+  const RECENT_MAX = 100, QUIET = new Set(['gossip.out', 'gossip.in', 'block', 'guardian.ok']);
   const recent = [];
   const emit = (type, data = {}) => {
     const ev = { t: Date.now(), type, ...data };
@@ -167,6 +168,22 @@ export async function createNode({
   mkdirSync(join(dataDir, 'rulesets'), { recursive: true });
   if (!offline) installDoh({ log }); // once per process: quick-tunnel names — ours and our peers' — resolve through Cloudflare's DoH
   const startedAt = Date.now(); // /health reports it so a dashboard can show process uptime
+  // Lite-guardian reports: advisory, in memory, bounded. matchId → Map(guardianId → report).
+  const guardianReports = new Map();
+  const guardianWindow = new Map(); // guardianId → { from, n } — per-guardian rate limit
+  const guardianRecent = [];        // newest last, for /fleet
+  const GUARDIAN_PER_MIN = 30, GUARDIAN_MATCHES = 5000, GUARDIANS_PER_MATCH = 64;
+  const guardianSummary = () => {
+    let reports = 0; const flagged = [];
+    for (const [matchId, m] of guardianReports) { reports += m.size; if ([...m.values()].some((r) => r.verdict === 'inconsistent')) flagged.push(matchId); }
+    return { matches: guardianReports.size, reports, flagged };
+  };
+  const guardianFleet = () => {
+    const { matches, reports, flagged } = guardianSummary();
+    const hourAgo = Date.now() - 3_600_000;
+    const active = new Set(guardianRecent.filter((r) => r.receivedAt > hourAgo).map((r) => r.guardianId));
+    return { matches, reports, flagged: flagged.slice(-20), flaggedCount: flagged.length, guardiansLastHour: active.size, recent: guardianRecent.slice(-20) };
+  };
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
   version ??= (() => { try { return JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version ?? null; } catch { return null; } })();
 
@@ -947,7 +964,7 @@ export async function createNode({
         snapshotRoot: s.root, epoch: s.epoch, versions, urls: peersKnown.size, unreachable: [...unreachable.keys()], gossip: trafficNow() },
       peers, graph: { nodes: [{ nodeId, operator, self: true, fresh: true }, ...peers.map((p) => ({ nodeId: p.nodeId, operator: p.operator, self: false, fresh: p.fresh }))], edges },
       rooms, queue: [...waiting.values()].map((w) => ({ ...w, buckets: [...w.buckets].sort() })), titles: titlesNow().map((t) => ({ rulesetId: t.rulesetId, display: t.display, hosts: t.hosts.length, bondedHosts: t.bondedHosts, published: t.published })),
-      recent: mbook ? mbook.recent(20) : [], events: recent.slice(-50),
+      recent: mbook ? mbook.recent(20) : [], events: recent.slice(-50), guardian: guardianFleet(),
     };
   };
 
@@ -974,7 +991,7 @@ export async function createNode({
           sandbox: sandbox.status(), trust: { policy: titleTrust, publishers: trustedPublishers, titleRegistry: titleRegistry ?? null, relayKeys, courts: Object.keys(courts) }, registry: registry ? 'chain' : erc6699 ? 'offline' : 'unset',
           cabinet: { version: CABINET_VERSION }, // the copy this node serves at /; a cabinet loaded from elsewhere compares its own
           relay: relayFront ? relayStatus() : null, // the relay tunnel as a WebSocket client sees it: verified before it is advertised
-          wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, upnp: upnpCtl?.status() ?? null, gauntlet: gauntlet?.status() ?? null,
+          wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, upnp: upnpCtl?.status() ?? null, gauntlet: gauntlet?.status() ?? null, guardian: (({ matches, reports, flagged }) => ({ matches, reports, flagged: flagged.length }))(guardianSummary()),
           directory: nodeDirectory ? { contract: nodeDirectory, seeds: chainSeeds.length, announcer: announcer?.status() ?? null } : null, startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt,
           // reachable: a peer has pushed gossip to us in the last 30 s. null = no peers known, so nothing to conclude.
           inbound: { peers: [...inbound.values()].filter((t) => Date.now() - t < 30_000).length, lastAt: inbound.size ? new Date(Math.max(...inbound.values())).toISOString() : null, reachable: peersKnown.size ? [...inbound.values()].some((t) => Date.now() - t < 30_000) : null } });
@@ -1099,6 +1116,35 @@ export async function createNode({
         if (r.ok) emit('cosigned', { matchId: c.matchId, witnessId: c.witnessId, sig: c.sig, cosigners: r.cosigners.length });
         else emit('refused', { what: 'cosign', reason: r.reason, matchId: c.matchId });
         return json(res, 200, r);
+      }
+      if (req.method === 'POST' && url.pathname === '/guardian') {
+        let env; try { env = await readBody(req); } catch (e) { return json(res, 400, { ok: false, reason: e.message }); }
+        const bad = await verifyReport(env);
+        if (bad) return json(res, 400, { ok: false, reason: bad });
+        const b = env.body, gid = env.signer;
+        const w = guardianWindow.get(gid);
+        if (w && Date.now() - w.from < 60_000) { if (++w.n > GUARDIAN_PER_MIN) return json(res, 429, { ok: false, reason: 'rate limited' }); }
+        else { if (guardianWindow.size > 10_000) guardianWindow.clear(); guardianWindow.set(gid, { from: Date.now(), n: 1 }); }
+        const d = settlement.delta(b.matchId);
+        if (!d) return json(res, 404, { ok: false, reason: 'unknown match' });
+        if (d.resultHash !== b.resultHash) return json(res, 409, { ok: false, reason: 'report is for another result' });
+        let m = guardianReports.get(b.matchId);
+        if (!m) {
+          if (guardianReports.size >= GUARDIAN_MATCHES) guardianReports.delete(guardianReports.keys().next().value);
+          guardianReports.set(b.matchId, (m = new Map()));
+        }
+        if (!m.has(gid) && m.size >= GUARDIANS_PER_MATCH) return json(res, 200, { ok: true, counted: false });
+        m.set(gid, { verdict: b.verdict, failed: b.failed, at: b.at, sig: env.sig });
+        guardianRecent.push({ matchId: b.matchId, guardianId: gid, verdict: b.verdict, failed: b.failed, at: b.at, receivedAt: Date.now() });
+        if (guardianRecent.length > 200) guardianRecent.splice(0, guardianRecent.length - 200);
+        emit(b.verdict === 'inconsistent' ? 'guardian' : 'guardian.ok', { matchId: b.matchId, guardianId: gid, verdict: b.verdict, failed: b.failed });
+        return json(res, 200, { ok: true, counted: true });
+      }
+      if (req.method === 'GET' && url.pathname === '/guardian') {
+        const id = url.searchParams.get('matchId');
+        if (!id) return json(res, 200, guardianSummary());
+        const m = guardianReports.get(id);
+        return json(res, 200, { matchId: id, reports: m ? [...m].map(([guardianId, r]) => ({ guardianId, ...r })) : [] });
       }
       // Updates: anyone may ask; only this machine may apply. The cabinet's
       // button works on http://localhost:<port>/ and nowhere else.

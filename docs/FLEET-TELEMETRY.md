@@ -45,7 +45,7 @@ them in `cabinet/protocol/` and the exe can vendor the same two files
 
 ## 2. The document
 
-Top level: `at nodeId version protocol cabinet self chain mesh peers graph rooms queue titles recent events digest proof`.
+Top level: `at nodeId version protocol cabinet self chain mesh peers graph rooms queue titles recent events guardian digest proof`.
 The test asserts exactly this set of keys.
 
 ### `self` — the node the exe runs
@@ -121,6 +121,10 @@ Types you will see: `placed settled attested chain-final backstop tx tx-failed g
 tunnel announced update incompatible peer.forgotten seed-refused proposed enrolled`.
 
 ---
+
+### `guardian` — lite-guardian reports this node received (advisory; `POST /guardian`)
+
+`{ matches, reports, flagged[] (last 20 matchIds), flaggedCount, guardiansLastHour, recent[] (last 20: { matchId, guardianId, verdict, failed, at, receivedAt }) }`. In memory; resets with the process. A flag is also an `events[]` entry of type `guardian`.
 
 ## 3. The quality grade
 

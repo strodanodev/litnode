@@ -77,6 +77,8 @@ node's own protocol modules.
 | GET | `/deltas[?ruleset=&scope=official]` | every settled delta (labelled), or official only — **cabinet reads this** |
 | POST | `/cosign` | witness co-signature over `{matchId, resultHash}` — the whole result, not one hash inside it |
 | POST | `/dispute` | a witness that recomputed a different result files it, signed; the delta is `disputed` until agreement outnumbers disputes |
+| POST | `/guardian` | lite-guardian report `{body:{v, matchId, resultHash, hostId, verdict, failed, at}, signer, sig}` (`protocol/guardian.js`): host signature, commitment and log head checked without chain or sandbox. **Advisory** — counted per guardian key (30/min), never changes `verification` or `official`; an `inconsistent` verdict is an event for witnesses to re-check. Worker: `npm run guardian` |
+| GET | `/guardian[?matchId=]` | reports for one match, or `{matches, reports, flagged[]}` |
 | GET | `/leaderboard?ruleset=[&scope=all]` | Elo ladder over OFFICIAL results by default (ranked, placed, verified, undisputed); `scope=all` folds every settled delta — **cabinet reads this** |
 | GET | `/credits?ruleset=[&currency=&player=&scope=]` | derived credit balances |
 | GET | `/stats?ruleset=[&player=&scope=]` | matches/wins/ticks per player — **cabinet reads this** |
