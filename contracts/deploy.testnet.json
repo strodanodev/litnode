@@ -44,5 +44,51 @@
     "note": "NodeStake.unbondingPeriod must exceed MatchBook.totalWindow() = settle + 2×attest + 2×escalation = 2640 s at these values; the deploy tool and tools/params.mjs refuse otherwise",
     "settleWindowHuman": "30 minutes from commit (placement) to settle: a human Agent Fighter match lasts minutes; the first ranked match on 21 Sep 2026 met a 60 s window"
   },
+  "Rewards": {
+    "status": "POINTS ONLY — computed from the chain by npm run rewards (tools/rewards.mjs over protocol/rewards.js). Nothing is paid; there is no rewards contract (BUILD-SPEC §16). Rules: docs/REWARDS.md",
+    "params": {
+      "pool": "200",
+      "seasonStart": null,
+      "minActive": 10,
+      "countBy": "operator",
+      "activeWindowH": 24,
+      "halfLifeDays": 180,
+      "multiplier": {
+        "cap": 3,
+        "scale": 400,
+        "trailingH": 24
+      },
+      "split": {
+        "host": 3500,
+        "witness": 1000,
+        "publisher": 2000,
+        "guardian": 1500
+      },
+      "quality": {
+        "pairCapPerDay": 5,
+        "playerCapPerDay": 30,
+        "diversityOpponents": 3,
+        "diversityWindowH": 168,
+        "requireProfiles": true
+      },
+      "reliability": {
+        "windowH": 168,
+        "full": 0.9,
+        "zero": 0.5,
+        "lonelyDissentMisses": 2,
+        "lonelyDissentForfeit": true
+      },
+      "allowlist": null,
+      "waivers": []
+    },
+    "notes": {
+      "pool": "zkLTC in the rewards treasury 0xeA09E9B9Acf53462dC4490c9174fdB41B3f62eF2 (26 Sep 2026). Raise it when the litVM allocation lands.",
+      "gate": "User decision 27 Sep 2026: rewards run only while 10+ are active and pause below 10. Active = did on-chain work (hosted, attested, finalized, proposed an epoch) in the last 24 h, counted per operator wallet so one person cannot open the gate with ten machines. countBy: \"node\" counts machines instead.",
+      "seasonStart": "null = the hour of the first finalized ranked match; set an ISO time to start the season there.",
+      "split": "bps of what is left after each duty's own gas is refunded; witness is per agreeing seat (3 seats).",
+      "allowlist": "null = every bonded operator earns; a list of operator wallets restricts earning (and the gate count) to them.",
+      "waivers": "matchIds whose lone dissent was a genuine report (e.g. a determinism bug), exempt from the lone-dissent forfeit."
+    }
+  },
   "note": "Testnet-only values. One faucet pull (1000 tLITVM) funds 1000 node bonds at this minimum."
 }

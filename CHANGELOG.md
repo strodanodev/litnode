@@ -9,6 +9,18 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 - **`npm run host -- init --service-name <name>`** sets `SERVICE_NAME`, and
   `init` refuses a name outside 1-64 of `A-Z a-z 0-9 . _ -` instead of
   letting it fall back to `litnode` and find the first node's task.
+- **Season Zero reward points, from the chain** (`npm run rewards`,
+  docs/REWARDS.md). Read-only: nothing is paid, and there is no rewards
+  contract. One pure fold over MatchBook, NodeStake, TitleRegistry,
+  PlayerProfile and EpochAnchor logs (`protocol/rewards.js`) gives every
+  operator and publisher the same totals, exact to the wei. Rewards run only
+  while 10 or more operator wallets did on-chain work in the last 24 h, and
+  pause below that. Each duty's own gas is refunded first; repeat pairs, daily
+  caps and opponent diversity weigh farmed matches down; reliability and week
+  forfeits (a slash, a lone dissent on a voided match) scale operator shares;
+  everything unpaid rolls back into the pool. It reads the chain's own
+  `eth_getLogs` (the explorer's index was missing events) and caches the scan
+  in `data/rewards/`.
 
 ### Changed
 - **SDK docs reviewed against 0.11.17** (docs/SDK.md, the arcade's
