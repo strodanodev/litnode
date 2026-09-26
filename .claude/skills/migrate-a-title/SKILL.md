@@ -80,7 +80,9 @@ what changes is that one message per finished match reaches a node.
      frontend host. Prove it: `GET <relay>/svc` lists every service `up`.
    Where the node's hostname can rotate (quick tunnels), use `--node auto`
    / `LITNODE_URL=auto` or `bridge resolve` so nothing is pinned to it.
-5. **Test one match.** Submit a real finished match (`bridge submit
+5. **Test one match.** For a placed match, the receipt at
+   `arcade.litvm.games/#/match/<matchId>` shows each on-chain step re-checked
+   from the browser; use it to show the publisher what they got. Submit a real finished match (`bridge submit
    <file>` or through the wiring); `bridge check <matchId>` must find it
    with the expected attestation. A refusal names the fix.
 6. **Run it as a service** beside the node (`install-service` pattern in
@@ -88,7 +90,11 @@ what changes is that one message per finished match reaches a node.
    restarts re-send nothing.
 7. **Backfill** if they want history: `bridge backfill --adapter … --source …`.
    Old results settle unplaced and labelled; they are never official.
-8. **Toward official** (replayable only): their client asks the arcade
+8. **Toward official** (replayable only). Official also needs four
+   operators online with the title (a host and three witnesses); until
+   then ranked plays casual-only whatever the publisher configures, and
+   you say so instead of promising a date.
+   Then: their client asks the arcade
    shell to sign at match end (`docs/BUILD-FROM-SCRATCH.md` §shell) and
    their relay includes both `signatures`; matches launched from the
    arcade carry `room`. Then `check` reports `players`, placed, and —

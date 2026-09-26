@@ -1,8 +1,8 @@
 # The litnode SDK, in one page
 
 The instructions a publisher, a developer or an agent needs to make a game
-litnode-compatible, current for litnode **0.11.15** (protocol 3, settlement
-v1.0 on `MatchBook`). The same text is served by every node's cabinet and
+litnode-compatible, current for litnode **0.11.17** (protocol 3, settlement
+v1.0 on `MatchBook`; reviewed 26 Sep 2026). The same text is served by every node's cabinet and
 by the arcade at **arcade.litvm.games/#/build** (`cabinet/build.js`), with
 the "for dummies" pictures. Everything here is code you can run; nothing is
 promised that a test does not exercise.
@@ -37,6 +37,20 @@ re-run it too, and the result is only **official** once the chain says
 they agreed. A witness that reaches a different answer files a dispute,
 and nine more nodes are drawn to settle it.
 
+**Ranked needs four operators.** Going on chain takes a host and three
+witnesses under four different operators, each with a fresh bonded node
+carrying the title. With fewer online, a ranked match still plays but stays
+casual-only, off the official ladder. The arcade's Find match says so
+before the queue, and the host marks such a placement `commitSkipped` on
+`/match`, so the players launch at once instead of waiting for a commit
+that will not come.
+
+**Every match has a receipt.** `arcade.litvm.games/#/match/<matchId>` shows
+the result and the on-chain timeline (Committed, Settled, each Attested,
+Finalized), each step linked to the Liteforge explorer and re-checked from
+the viewer's own browser. A step the chain does not back is marked, never
+upgraded.
+
 ### Who holds which key
 
 | key | where | what it does |
@@ -60,7 +74,7 @@ flowchart LR
     A1[your server posts one record] --> A2[bridge signs it as your court or relay] --> A3[node settles: attested or relay]
   end
   subgraph B[B. Run it on the node]
-    B1[nothing hosted elsewhere] --> B2[node spawns your server per match, seats the players] --> B3[your server reports over loopback: placed]
+    B1[nothing hosted elsewhere] --> B2[a court per match, plus your API and matchmaker for as long as they run] --> B3[your court reports over loopback: placed]
   end
   subgraph C[C. Build from scratch]
     C1[one deterministic file] --> C2[client records inputs; the arcade shell signs] --> C3[node replays: players-signed, can be OFFICIAL]
@@ -141,7 +155,12 @@ A title is an ERC-721 on TitleRegistry: whoever holds it is the publisher,
 and a hand-over is a transfer. Nodes load a build from the chain's word.
 The arcade lists a registered title only while a bonded node from the same
 wallet hosts it; registered but unhosted is not listed and nothing is lost.
-Spec: [PUBLISHER-BONDS.md](PUBLISHER-BONDS.md).
+Claim as soon as the bundle passes conformance: names are first come, and
+until you claim, no other node loads your build, so nobody can witness
+your matches. Register the exact file your node loads. A node bonded from
+your AIR wallet can claim from the arcade's Publisher panel instead.
+Practical notes: [HOST-YOUR-TITLE.md §1d](HOST-YOUR-TITLE.md); spec:
+[PUBLISHER-BONDS.md](PUBLISHER-BONDS.md).
 
 ### 4A. Bring your backend
 
@@ -160,7 +179,13 @@ Your server POSTs the unsigned submission to the bridge's `/submit` at match end
 nothing is pinned to a hostname that rotates. Shapes, adapters and the
 worked example (Pickle Brawl): [BRING-YOUR-BACKEND.md](BRING-YOUR-BACKEND.md).
 
-### 4B. Run your match server on the node
+### 4B. Run your servers on the node
+
+Two shapes, and a studio can use both. A **gauntlet** is one process per
+placed match. **Publisher services** are long-lived: an accounts API, a
+matchmaker, a pool of courts.
+
+#### A court per match (gauntlet)
 
 ```json
 { "command": "${node}", "args": ["node_modules/tsx/dist/cli.mjs", "services/court/src/court.ts"], "cwd": "/your/checkout",
@@ -176,7 +201,30 @@ mints one HMAC join ticket per placed player (`{ sub, matchId, team, slot,
 mode, exp }`), serves them at `https://<wsAddr host>/<room>/ticket?player=<key>`,
 proxies `wss://<wsAddr>/<room>` to it, and ends it a few seconds after the
 match settles. Your client reads `?ws&room&player&match` from the arcade
-launch, fetches its ticket, joins. Section 6a of BRING-YOUR-BACKEND.md.
+launch, fetches its ticket, joins. A node that runs a title's gauntlet
+advertises it, and placement draws that node first to host the title.
+Section 6a of BRING-YOUR-BACKEND.md.
+
+#### Your whole backend (publisher services)
+
+```json
+{ "prefix": "my-game", "cwd": "/your/runtime-checkout", "envFiles": ["/your/checkout/services/api/.env"],
+  "portRange": [8790, 8819],
+  "services": {
+    "api":        { "command": "${node}", "args": ["node_modules/tsx/dist/cli.mjs", "services/api/src/server.ts"], "env": { "PORT": "${port}" } },
+    "matchmaker": { "command": "${node}", "args": ["node_modules/tsx/dist/cli.mjs", "services/matchmaker/src/server.ts"],
+                    "env": { "PORT": "${port}", "API_URL": "${local:api}", "COURT_URLS": "${public:court-1}" } } } }
+```
+
+`SERVICES=/abs/path/my-game.services.json` in `node.env` (`npm run host --
+init --services …`). The node supervises each service, restarts it with
+backoff and again when the tunnel's hostname changes, and publishes it at
+`https://<wsAddr host>/svc/<prefix>.<name>/…` (WebSocket too, prefix
+stripped). `GET /svc` lists what runs. Secrets stay in your `envFiles` on
+that machine; operator keys are never passed. A public hostname that
+rotates cannot be baked into a build, so the client looks the node up at
+runtime (NodeDirectory, then `/svc`); Pickle Brawl's `web/litnodeBackend.ts`
+is about 150 lines to copy. Section 6c of BRING-YOUR-BACKEND.md.
 
 ### 4C. Build from scratch
 
@@ -212,6 +260,20 @@ your game. Transport between players is yours. [BUILD-FROM-SCRATCH.md](BUILD-FRO
 Drop-in helper for init and exit only: `cabinet/sdk-client.js` (a no-op outside the arcade); to sign, use `connectShell` from `sdk/client.js`. Launch
 URL for a placed match: `?ws=<relay>&room=LIT-…&player=<key>&match=<id>&build=<hash>`.
 
+### Check a match
+
+```bash
+npm run bridge -- check <matchId> --node auto --ruleset my-game.v1   # the node's verdict, in words
+curl https://<node>/match/<matchId>/chain                             # its decoded MatchBook events
+```
+
+In a browser, `arcade.litvm.games/#/match/<matchId>` is the receipt: every
+transaction re-checked against the chain. Anyone can also run a lite
+guardian (`npm run guardian`): no stake, no gas, it spot-checks settled
+results and posts signed verdicts to `POST /guardian`. Guardian reports
+are advisory; they never change `official`, and an `inconsistent` verdict
+is a flag for witnesses to re-check.
+
 ### 5. Run a node
 
 ```bash
@@ -225,6 +287,10 @@ npm run enroll -- <nodeId>                      # the nine-seat escalation pool
 unset OPERATOR_KEY
 npm run host -- install-service && npm run host -- verify
 ```
+
+A second node on the same machine sets its own start-at-logon name with
+`init --service-name litnode-2` (`SERVICE_NAME` in `node.env`), so it
+installs beside the first instead of replacing its task.
 
 Or the same from the arcade's Nodes page with a wallet: Bond this node,
 name the delegate, enroll, and a live setup checklist read from the
@@ -250,7 +316,12 @@ and slash sizes live in the contract and are read at start.
 ### 7. Said plainly
 
 - Testnet contracts, unaudited. No fees, rewards or credits reconcile on
-  chain yet; the per-match fee split is phase 3.
+  chain yet. NodeStake's treasury is now a dedicated rewards treasury
+  (`0xeA09…2eF2`, 26 Sep), but no contract pays anyone from it; the
+  per-match fee split is phase 3.
+- Ranked is casual-only until four operators with fresh bonded nodes carry
+  the title. A single studio's node, however well configured, cannot make
+  a result official on its own.
 - The character registry is deployed and empty: every match hydrates
   external, zero-stat agents until one is forged.
 - An attested title cannot become official by configuration; the path is
@@ -270,6 +341,8 @@ and slash sizes live in the contract and are read at start.
 | `docs/HOST-A-NODE.md` | the node harness, stage by stage |
 | `docs/PUBLISHER-BONDS.md` | titles as tokens, host grants, escalation seats |
 | `docs/UNIVERSAL-LOGIN.md` | sign in with AIR, proxy wallets, one profile |
-| `docs/FLEET-TELEMETRY.md` | `GET /fleet`, the signed operator document |
+| `docs/FLEET-TELEMETRY.md` | `GET /fleet`, the signed operator document; guardian reports |
+| `cabinet/receipt.js` | the match receipt, `#/match/<matchId>` |
+| `gauntlets/` | per-match (`<id>.json`) and long-lived (`<id>.services.json`) examples |
 | `.claude/skills/` | `host-a-node`, `migrate-a-title`, `build-a-title`, `host-a-title` |
 | `cabinet/build.js` | this page, as the arcade serves it |

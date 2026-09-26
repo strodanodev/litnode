@@ -92,6 +92,8 @@ export function validateEnv(env) {
   if (env.TUNNEL === 'named' && !(env.TUNNEL_NAME && env.TUNNEL_HOST)) errors.push('TUNNEL=named needs TUNNEL_NAME and TUNNEL_HOST');
   if (env.TITLE_TRUST && !['trusted', 'open'].includes(env.TITLE_TRUST)) errors.push('TITLE_TRUST must be trusted or open');
   if (env.RELEASE_CHANNEL && !['stable', 'canary'].includes(env.RELEASE_CHANNEL)) errors.push('RELEASE_CHANNEL must be stable or canary');
+  // effectiveConfig falls back to 'litnode' on a bad name; refusing it here stops a typo from silently taking the first node's task.
+  if (env.SERVICE_NAME && !/^[A-Za-z0-9._-]{1,64}$/.test(env.SERVICE_NAME)) errors.push(`SERVICE_NAME "${env.SERVICE_NAME}" must be 1-64 of A-Z a-z 0-9 . _ -`);
   return errors;
 }
 

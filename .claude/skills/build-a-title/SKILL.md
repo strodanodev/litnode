@@ -59,11 +59,22 @@ path, client included.
    -- register rulesets/<id>.v1.js` — an ERC-721 the wallet holds; the mesh
    loads the build from the chain's word and `GET /titles` reports
    `published: true` while that wallet's bonded host carries it. Hand-over
-   = transfer the token.
+   = transfer the token. Claim as soon as the bundle passes, because names
+   are first come, and until the claim no other node will witness the
+   title. Confirm with `publish:title -- status`. Pitfalls (the cabinet's
+   Claim button, wallet fees, line endings): `docs/HOST-YOUR-TITLE.md` §1d.
 7. **Arcade round trip.** Open the cabinet against that node, *Find match*
    with two browsers, launch, play, and read `GET /delta/<matchId>`:
-   `placed: true`, `attestation: 'players'`. With a witness under another
-   operator, `official: true`.
+   `placed: true`, `attestation: 'players'`. The receipt at
+   `#/match/<matchId>` shows each on-chain step. `official: true` also
+   needs a host and three witnesses under four different operators online
+   with the title; with fewer, Find match warns and the match plays
+   casual-only, which is expected, not a bug.
+7b. **Sign-in, if the game has accounts.** Inside the arcade the game uses
+   the arcade's AIR session (`cabinet:air`, `cabinet:air-login`,
+   `cabinet:air-logout`; listed with `login: 'arcade'` in
+   `cabinet/config.js`), so the player signs in once. On its own domain it
+   signs in itself. `docs/UNIVERSAL-LOGIN.md`, "Titles inside the arcade".
 8. **Report** what works, the `buildHash`, the node's URL, and which of
    the known gaps (`docs/BUILD-FROM-SCRATCH.md` §Known gaps) apply.
 

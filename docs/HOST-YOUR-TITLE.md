@@ -93,6 +93,37 @@ only while a bonded node with the `host` role, bonded from the wallet that
 holds the token, hosts it (`GET /titles` → `published`). Registered and
 unhosted is not an error; it is unlisted until your node is up.
 
+**1d. Claiming, in practice** (learned claiming Agent Fighter and Pickle
+Brawl on 26 Sep 2026):
+
+- **Claim early.** Do it as soon as the rulesetId is final and the bundle
+  passes conformance. Names are first come, and whoever holds a name
+  decides which builds every node trusts under it. Until you claim, no
+  other node loads your build from a peer, so nobody can witness your
+  matches.
+- **Claim from the wallet that bonded your host.** A title held by any
+  other wallet stays "not listed". The Publisher panel's **Claim** button
+  uses your AIR account's wallet on that node, so use it only when the
+  node was bonded from that same wallet ("Bond this node from my AIR
+  wallet"). For a node bonded from MetaMask or a CLI key, claim with
+  `npm run publish:title` from that key.
+- **Register the exact file your node loads**, the `rulesets/<id>.js` named
+  in `RULESETS`. The hash covers the bytes. `.gitattributes` keeps
+  checkouts on LF, but a copy re-saved with CRLF is a different build.
+- **From a browser wallet** (`--calldata`): MetaMask's plain Send drops
+  the hex data. On Liteforge, MetaMask can also quote a max fee equal to
+  the base fee, which moves every block, and the RPC then refuses the
+  transaction before it is mined ("Interaction failed", nothing spent).
+  Set the max fee to at least twice the base fee. `PUBLISHER_KEY` on the
+  CLI signs with headroom of its own.
+- **Check it.** `npm run publish:title -- status rulesets/<id>.js` shows
+  the publisher and the build `active`. Within a minute, the host's
+  `GET /titles` shows `owner` and `published: true`; nodes re-read owners
+  every 60 s.
+- **Ship a new build.** A new bundle is a new build: `set-build` it from
+  the same wallet before your node serves it. It goes active 60 s after
+  it is mined, and until then peers refuse it.
+
 **2. Bytes pinned by hash** — `buildHash = H('ruleset', bytes)`. Nodes
 advertise the hash, fetch each other's builds by it, and refuse a body that
 does not hash to what was promised. A retune is a new build and a new hash;

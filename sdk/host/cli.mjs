@@ -6,7 +6,7 @@
  *  something only the operator can supply (a key, admin rights) · 3 not
  *  ready (verify).
  *
- *    npm run host -- init --operator laptop [--seeds https://…] [--roles mesh,host,witness,settler] [--tunnel quick] [--air-partner <id> | --no-air]
+ *    npm run host -- init --operator laptop [--seeds https://…] [--roles mesh,host,witness,settler] [--tunnel quick] [--air-partner <id> | --no-air] [--service-name litnode-2]
  *    npm run host -- doctor              preflight: runtime, ports, files, RPC, seeds, clock
  *    npm run host -- identity            create/print the node key and announcer address (no start needed)
  *    npm run host -- start [--detach]    run the node (dashboard), or supervised in the background
@@ -75,7 +75,7 @@ const commands = {
   async init() {
     const current = readEnv() ?? {};
     const values = {};
-    const map = { operator: 'OPERATOR', seeds: 'SEEDS', roles: 'ROLES', port: 'PORT', host: 'HOST', 'public-addr': 'PUBLIC_ADDR', rulesets: 'RULESETS', region: 'REGION', tunnel: 'TUNNEL', 'tunnel-name': 'TUNNEL_NAME', 'tunnel-host': 'TUNNEL_HOST', 'relay-port': 'RELAY_PORT', 'data-dir': 'DATA_DIR', channel: 'RELEASE_CHANNEL', rpc: 'RPC', trust: 'TITLE_TRUST', upnp: 'UPNP', gauntlets: 'GAUNTLETS', 'gauntlet-gateway-port': 'GAUNTLET_GATEWAY_PORT', 'gauntlet-upstream': 'GAUNTLET_UPSTREAM', courts: 'COURTS', 'relay-keys': 'RELAY_KEYS', services: 'SERVICES' };
+    const map = { operator: 'OPERATOR', seeds: 'SEEDS', roles: 'ROLES', port: 'PORT', host: 'HOST', 'public-addr': 'PUBLIC_ADDR', rulesets: 'RULESETS', region: 'REGION', tunnel: 'TUNNEL', 'tunnel-name': 'TUNNEL_NAME', 'tunnel-host': 'TUNNEL_HOST', 'relay-port': 'RELAY_PORT', 'data-dir': 'DATA_DIR', channel: 'RELEASE_CHANNEL', rpc: 'RPC', trust: 'TITLE_TRUST', upnp: 'UPNP', gauntlets: 'GAUNTLETS', 'gauntlet-gateway-port': 'GAUNTLET_GATEWAY_PORT', 'gauntlet-upstream': 'GAUNTLET_UPSTREAM', courts: 'COURTS', 'relay-keys': 'RELAY_KEYS', services: 'SERVICES', 'service-name': 'SERVICE_NAME' };
     for (const [f, k] of Object.entries(map)) if (f in flags) values[k] = flags[f] === true ? '1' : String(flags[f]);
     if (flags.offline) values.OFFLINE = '1';
     if (flags.witness) { values.ROLES = 'mesh,witness'; values.RULESETS = ''; }

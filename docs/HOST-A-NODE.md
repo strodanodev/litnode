@@ -46,6 +46,8 @@ npm run host -- init --operator <name> [--seeds u1,u2] [--roles mesh,host,witnes
                      [--region r] [--tunnel quick|named --tunnel-name n --tunnel-host h] [--relay-port 8477]
                      [--air-partner <id> | --no-air]   AIR_PARTNER_ID defaults to the arcade's partner app
                      [--data-dir d] [--channel stable|canary] [--trust trusted|open] [--upnp] [--offline] [--rpc url]
+                     [--gauntlets id=json,…] [--gauntlet-gateway-port p] [--gauntlet-upstream ws://…] [--services bundle.json]
+                     [--courts id:key] [--relay-keys k,…] [--service-name litnode-2]
 npm run host -- doctor              preflight (see below)
 npm run host -- identity            create/print nodeId + announcer address, no start needed
 npm run host -- env                 the effective configuration the daemon will run with
@@ -131,6 +133,12 @@ prompt (exit 2 otherwise). Linux: `~/.config/systemd/user/litnode.service`,
 survives logout. macOS: `~/Library/LaunchAgents/games.litvm.litnode.plist`,
 `KeepAlive`. An existing service for **another** install is refused
 (`--force` to replace it, only when the operator asks).
+
+The task or unit is named `SERVICE_NAME` (default `litnode`; `init
+--service-name litnode-2` sets it, and `init` refuses anything but 1-64 of
+`A-Z a-z 0-9 . _ -`). A second node on the same machine sets its own name
+so it installs beside the first instead of finding the first one's task
+and refusing it as foreign.
 
 ### The supervisor
 

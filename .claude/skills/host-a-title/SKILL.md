@@ -55,6 +55,11 @@ first; it is the rulebook, and every rule in it is enforced by code you can run.
    `host`-role node bonded from the holder's wallet hosts it. A retune is
    `set-build` (active after the registry delay), `revoke` is immediate, a
    hand-over is `transfer <rulesetId> <to>` or any wallet's NFT transfer.
+   Claim as soon as the bundle passes, because names are first come. Use
+   the bonding wallet, not the cabinet's **Claim** button, unless the node
+   was bonded from that AIR wallet. Confirm with `publish:title -- status`
+   and `GET /titles` (`published: true` within a minute). Pitfalls:
+   `docs/HOST-YOUR-TITLE.md` §1d.
 
 7. **Wire the client.** The arcade opens `display.url` with
    `?ws=<relay>&room=<LIT-…>&player=<key>`; the client queues via
@@ -66,6 +71,10 @@ first; it is the rulebook, and every rule in it is enforced by code you can run.
 8. **Verify end to end.** `npm test` (includes `demo/conformance.test.mjs`);
    then a real queue → match → ledger → delta on the running node, and the
    ladder at `GET /leaderboard?ruleset=<name>.v1`.
+   The receipt at `#/match/<matchId>` in the cabinet shows what the chain
+   recorded. Official standings need a host and three witnesses under four
+   different operators carrying the title; with fewer, ranked plays
+   casual-only and Find match says so.
 
 ## Do not
 

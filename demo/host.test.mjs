@@ -179,6 +179,9 @@ test('host: SERVICE_NAME names the start-at-logon task, so a second node on one 
   assert.equal(effectiveConfig({}, { processEnv: {} }).serviceName, 'litnode', 'default unchanged for existing installs');
   assert.equal(effectiveConfig({ SERVICE_NAME: 'litnode-witness-2' }, { processEnv: {} }).serviceName, 'litnode-witness-2');
   for (const bad of ['', 'a b', 'x;del', '../x', 'n'.repeat(65)]) assert.equal(effectiveConfig({ SERVICE_NAME: bad }, { processEnv: {} }).serviceName, 'litnode', `rejected: ${JSON.stringify(bad)}`);
+  // init validates it, so a typo is an error rather than a silent fallback onto the first node's task.
+  assert.deepEqual(validateEnv({ OPERATOR: 'w2', SERVICE_NAME: 'litnode-witness-2' }), []);
+  assert.ok(validateEnv({ OPERATOR: 'w2', SERVICE_NAME: 'x;del' }).some((e) => /SERVICE_NAME/.test(e)));
   // A name nothing is registered under: the real service manager is asked, and the answer names it.
   const name = `litnode-test-${process.pid}`;
   const st = serviceStatus({ ...effectiveConfig({ SERVICE_NAME: name }, { processEnv: {} }), root: ROOT });

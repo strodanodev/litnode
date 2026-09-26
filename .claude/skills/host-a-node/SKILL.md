@@ -28,6 +28,11 @@ idempotent, so re-running is always safe.
   things alone; never stop, replace or re-register them.
 - **Roles decide what is required.** A witness needs no inbound path; a
   host or seed does. `verify` is strict about required stages only.
+- **One node cannot make ranked official.** A ranked match goes on chain
+  only when a host and three witnesses under four different operators
+  have fresh bonded nodes carrying the title; with fewer it plays
+  casual-only (`commitSkipped` on `/match`). Tell the operator this rather
+  than debugging a correctly configured node that has no peers yet.
 
 ## Procedure
 
@@ -76,6 +81,14 @@ idempotent, so re-running is always safe.
    done; otherwise 3 with `failing[]`. Report the `stages` table to the
    operator, plus the public URL and `nodeId`.
 
+## Two nodes on one machine
+
+`init --service-name litnode-2` (`SERVICE_NAME` in `node.env`) gives the
+second install its own start-at-logon task or unit; without it,
+`install-service` would find the first node's `litnode` task, report it
+`foreign` and refuse. Give it its own `--port`, `--data-dir` and, if it
+should witness the first, a bond from a different wallet.
+
 ## Running a title's match server on the node (gauntlet)
 
 `init --gauntlets <id>=<json> --courts <id>:<court key>` and, when the node
@@ -84,6 +97,16 @@ already runs a title relay on `RELAY_PORT` (Agent Fighter), `--gauntlet-gateway-
 then advertises the title in its heartbeat and placement draws it first for
 that title. `status` shows `/health.gauntlet`. The config and the title's side are in
 `docs/BRING-YOUR-BACKEND.md` section 6a and the `migrate-a-title` skill.
+
+## Running a studio's whole backend (publisher services)
+
+`init --services /abs/path/<prefix>.services.json` (and
+`--gauntlet-gateway-port 8478` when a title relay already sits on
+`RELAY_PORT`). The node supervises each service and publishes it at
+`<wsAddr>/svc/<prefix>.<name>`; `curl <gateway>/svc` must list every
+service `up`. The bundle is the studio's to write (section 6c of
+`docs/BRING-YOUR-BACKEND.md`); secrets stay in its `envFiles` and you never
+copy them anywhere.
 
 ## Hosting a title
 
@@ -102,7 +125,7 @@ under `hosting`, and `GET /titles` on the node lists it with its display.
 | reachable | a public URL that answers `/whoami` with a signature by this node key, or inbound gossip in the last 30 s |
 | bonded | `NodeStake.standingOf(nodeId).active` on litVM |
 | announced | `NodeDirectory.entryOf(nodeId).url` equals what the node advertises |
-| service | a scheduled task / unit / agent **for this folder** exists |
+| service | a scheduled task / unit / agent **for this folder** exists, under `SERVICE_NAME` (default `litnode`) |
 | delegate, enrolled (Nodes page / `/health`) | `NodeStake.delegateOf(nodeId)` is the funded hot key; MatchBook lists the key in its pool |
 
 ## Do not

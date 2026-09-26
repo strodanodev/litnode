@@ -5,6 +5,24 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **`npm run host -- init --service-name <name>`** sets `SERVICE_NAME`, and
+  `init` refuses a name outside 1-64 of `A-Z a-z 0-9 . _ -` instead of
+  letting it fall back to `litnode` and find the first node's task.
+
+### Changed
+- **SDK docs reviewed against 0.11.17** (docs/SDK.md, the arcade's
+  `#/build`, HOST-A-NODE, PUBLISHERS, the four skills): publisher services
+  (a studio's whole backend on the node, `/svc`), the four-operator rule
+  for ranked going on chain (casual-only below it, `commitSkipped`), match
+  receipts at `#/match/<matchId>`, one sign-in for titles in the arcade
+  (`cabinet:air*`), `SERVICE_NAME` for a second node on one machine, the
+  advisory lite guardian, and the rewards treasury (which pays nothing
+  yet). The `#/build` SDK tab now matches docs/SDK.md word for word; it
+  had fallen behind on the shell's `cabinet:air` rows, the missing-
+  placement guard, `/submit` and `GAUNTLET_GATEWAY_PORT`. PUBLISHERS lists
+  Pickle Brawl's court as live on the desktop node.
+
 ## [0.11.17] — 2026-09-26 — ranked says when it will play casual-only; one sign-in in the arcade; rewards treasury
 
 ### Added

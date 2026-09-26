@@ -39,7 +39,7 @@ function flow(steps, { perRow = 4, w = 232, h = 62, gx = 26, gy = 40 } = {}) {
   return `<svg class="diagram" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img"><defs><marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L8 4 L0 8 z" fill="var(--edge2)"/></marker></defs>${svg}</svg>`;
 }
 // Layers: stacked bands with a label and what lives there.
-function layers(bands, { w = 700, h = 44, gap = 6 } = {}) {
+function layers(bands, { w = 980, h = 44, gap = 6 } = {}) {
   const H = bands.length * (h + gap) + 4;
   let svg = '';
   bands.forEach((b, i) => {
@@ -76,6 +76,8 @@ ${flow([
 ])}
 ${legend()}
 ${p('Nothing on the ladder comes from anyone\'s word. A match is a signed input log (or, for games that cannot be replayed, a signed report from your own court). The host node re-runs it, three witness nodes under other operators re-run it too, and the result is only <b>official</b> once the chain says they agreed. A witness that reaches a different answer files a dispute, and nine more nodes are drawn to settle it.')}
+${p('<b>Ranked needs four operators.</b> Going on chain takes a host and three witnesses under four different operators, each with a fresh bonded node carrying the title. With fewer online, a ranked match still plays but stays casual-only, off the official ladder, and Find match says so before you queue.')}
+${p('<b>Every match has a receipt.</b> Open <span class="mono">#/match/&lt;matchId&gt;</span> (the receipt link in Your record, or a recent final on the Nodes page) to see the result and each on-chain step, linked to the explorer and re-checked from your own browser.')}
 <h4>2. Who holds which key</h4>
 ${layers([
   { t: 'Player key', s: 'An ed25519 key in the browser. Signs queue entries and the end of every match. Can be bound to a wallet once.', k: 'player' },
@@ -94,8 +96,8 @@ ${flow([
 ], { perRow: 3 })}
 ${flow([
   { t: 'B. Run it on the node', s: 'no hosting anywhere else', k: 'you' },
-  { t: 'node spawns your server', s: 'per match, seats the players', k: 'node' },
-  { t: 'your server reports', s: 'over loopback; placed: true', k: 'node' },
+  { t: 'node runs your servers', s: 'a court per match, API + matchmaker', k: 'node' },
+  { t: 'your court reports', s: 'over loopback; placed: true', k: 'node' },
 ], { perRow: 3 })}
 ${flow([
   { t: 'C. Build from scratch', s: 'one deterministic file', k: 'you' },
@@ -126,14 +128,14 @@ ${p('Every step is one command, and the Nodes page shows the same checklist live
 `;
 
 const sdk = () => `
-${p(`This is the SDK contract as of litnode <span class="mono">${esc(CABINET_VERSION)}</span>. The words are the same as ${a(doc('docs/SDK.md'), 'docs/SDK.md')} in the repository; the code is the proof. Everything is Apache-2.0.`)}
+${p(`This is the SDK contract as of litnode <span class="mono">${esc(CABINET_VERSION)}</span>. The words are the same as ${a(doc('docs/SDK.md'), 'docs/SDK.md')} in the repository; the code is the proof. Everything is Apache-2.0. Commands are bash; in PowerShell write <span class="mono">$env:NAME="value"</span>.`)}
 <h4>Prerequisites</h4>
 ${t([
   ['Node.js 20+', 'the node and every tool; a game engine of your own may need 22+'],
-  ['the repository', `<span class="mono">git clone ${REPO}</span> then <span class="mono">npm install</span> once`],
+  ['the repository', `<span class="mono">git clone ${REPO}</span> then <span class="mono">npm install</span> once (esbuild for conformance and bundling, ethers for the chain tools)`],
   ['cloudflared', 'public reachability with no router or certificate; on PATH'],
   ['a wallet with test tokens', 'tLITVM to bond (faucet in the arcade), a little zkLTC for the hot key (Caldera faucet)'],
-  ['an agent, optionally', '<span class="mono">host</span>, <span class="mono">bridge</span> and <span class="mono">fleet</span> answer in JSON with <span class="mono">--json</span>; the skills in <span class="mono">.claude/skills</span> walk each path'],
+  ['an agent, optionally', '<span class="mono">host</span>, <span class="mono">bridge</span> and <span class="mono">fleet</span> answer in JSON with <span class="mono">--json</span> and never prompt; the skills in <span class="mono">.claude/skills</span> walk each path'],
 ])}
 <h4>1. Which kind of title</h4>
 ${cmd('npm run bridge -- assess --input-log yes|no --deterministic yes|no --engine-open yes|no')}
@@ -146,15 +148,18 @@ ${cmd('npm run create-title -- my-game.v1 "My Game"\nnpm run conformance -- titl
 ${p('Replayable: <span class="mono">init / step / done / serialize / view / scores</span> and a manifest with <span class="mono">display</span>. Attested: <span class="mono">validate(report)</span> and <span class="mono">scores(report, participants, teams)</span>. Integers or <span class="mono">seededRandom</span>; never the clock, the network or storage. The conformance suite is the gate every node runs before loading you.')}
 <h4>3. Claim it</h4>
 ${cmd('export PUBLISHER_KEY=0x...                  # the wallet that holds the title; bond the host from this same wallet (step 5)\nnpm run publish:title -- register rulesets/my-game.v1.js\nnpm run publish:title -- set-build rulesets/my-game.v1.js   # a retune, active after the delay\nnpm run publish:title -- status rulesets/my-game.v1.js')}
-${p('A title is an ERC-721 on TitleRegistry: whoever holds it is the publisher. Nodes load a build from the chain\'s word. The arcade lists a registered title only while a bonded node from the same wallet hosts it; registered but unhosted is not listed and nothing is lost.')}
+${p('A title is an ERC-721 on TitleRegistry: whoever holds it is the publisher, and a hand-over is a transfer. Nodes load a build from the chain\'s word. The arcade lists a registered title only while a bonded node from the same wallet hosts it; registered but unhosted is not listed and nothing is lost. Claim as soon as the bundle passes conformance: names are first come, and until you claim, no other node loads your build, so nobody can witness your matches. Register the exact file your node loads. A node bonded from your AIR wallet can claim from the Publisher panel instead.')}
 <h4>4A. Bring your backend</h4>
 ${cmd('npm run bridge -- key --kind attested --ruleset my-game.v1     # prints COURTS=my-game.v1:<publicKey> for the node operator\nexport BRIDGE_TOKEN=<random, 16+ chars>\nnpm run bridge -- serve --port 8480 --node auto --ruleset my-game.v1 --kind attested\n# or, with no server change:\nnpm run bridge -- watch --adapter jsonl --source ./results.jsonl --node auto --ruleset my-game.v1 --kind attested\nnpm run bridge -- check <matchId> --node auto --ruleset my-game.v1')}
-${p('Your server POSTs the unsigned submission to the bridge at match end; the bridge signs and forwards it. <span class="mono">--node auto</span> finds the live node through NodeDirectory on chain. Attested shape: <span class="mono">{ kind, matchId, rulesetId, mode, participants, teams, report }</span>. Replayable: <span class="mono">{ matchId, rulesetId, buildHash, mode, participants, entries: [{k, inputs}], signatures? }</span>.')}
-<h4>4B. Run your match server on the node</h4>
-${cmd('{ "command": "${node}", "args": ["node_modules/tsx/dist/cli.mjs", "services/court/src/court.ts"], "cwd": "/your/checkout",\n  "env": { "PORT": "${port}", "COURT_TICKET_SECRET": "${secret}", "COURT_PUBLIC_URL": "${publicUrl}",\n           "LITNODE_SEATS": "${seats}", "LITNODE_URL": "${nodeUrl}", "COURT_IDENTITY": "/path/court-key.json" },\n  "portRange": [7777, 7787], "readyMs": 120000, "ttlMs": 900000, "settledGraceMs": 5000 }\n# node.env:  GAUNTLETS=my-game.v1=./gauntlets/my-game.json   RELAY_PORT=8478')}
-${p('The node spawns your process for each match it hosts, mints one HMAC join ticket per placed player (<span class="mono">{ sub, matchId, team, slot, mode, exp }</span>), serves them at <span class="mono">https://&lt;wsAddr host&gt;/&lt;room&gt;/ticket?player=&lt;key&gt;</span>, proxies <span class="mono">wss://&lt;wsAddr&gt;/&lt;room&gt;</span> to it, and ends it a few seconds after the match settles. Your client reads <span class="mono">?ws&amp;room&amp;player&amp;match</span> from the arcade launch, fetches its ticket, joins.')}
+${p('Your server POSTs the unsigned submission to the bridge\'s <span class="mono">/submit</span> at match end with <span class="mono">authorization: Bearer $BRIDGE_TOKEN</span>; the bridge signs and forwards it. <span class="mono">--node auto</span> finds the live node through NodeDirectory on chain and follows it when the tunnel moves. Attested shape: <span class="mono">{ kind, matchId, rulesetId, mode, participants, teams, report }</span>. Replayable: <span class="mono">{ matchId, rulesetId, buildHash, mode, participants, entries: [{k, inputs}], signatures? }</span>.')}
+<h4>4B. Run your servers on the node</h4>
+${p('Two shapes, and a studio can use both: a <b>gauntlet</b> is one process per placed match; <b>publisher services</b> are long-lived (an accounts API, a matchmaker, a pool of courts).')}
+${cmd('{ "command": "${node}", "args": ["node_modules/tsx/dist/cli.mjs", "services/court/src/court.ts"], "cwd": "/your/checkout",\n  "env": { "PORT": "${port}", "COURT_TICKET_SECRET": "${secret}", "COURT_PUBLIC_URL": "${publicUrl}",\n           "LITNODE_SEATS": "${seats}", "LITNODE_URL": "${nodeUrl}", "COURT_IDENTITY": "/path/court-key.json" },\n  "portRange": [7777, 7787], "readyMs": 120000, "ttlMs": 900000, "settledGraceMs": 5000 }\n# node.env:  GAUNTLETS=my-game.v1=./gauntlets/my-game.json   RELAY_PORT=8478\n#            (a node that already fronts a title relay on RELAY_PORT sets GAUNTLET_GATEWAY_PORT=8478 instead)')}
+${p('The node spawns your court for each match it hosts, mints one HMAC join ticket per placed player (<span class="mono">{ sub, matchId, team, slot, mode, exp }</span>), serves them at <span class="mono">https://&lt;wsAddr host&gt;/&lt;room&gt;/ticket?player=&lt;key&gt;</span>, proxies <span class="mono">wss://&lt;wsAddr&gt;/&lt;room&gt;</span> to it, and ends it a few seconds after the match settles. A node running a title\'s gauntlet is drawn first to host it.')}
+${cmd('{ "prefix": "my-game", "cwd": "/your/runtime-checkout", "envFiles": ["/your/checkout/services/api/.env"], "portRange": [8790, 8819],\n  "services": {\n    "api":        { "command": "${node}", "args": ["node_modules/tsx/dist/cli.mjs", "services/api/src/server.ts"], "env": { "PORT": "${port}" } },\n    "matchmaker": { "command": "${node}", "args": ["node_modules/tsx/dist/cli.mjs", "services/matchmaker/src/server.ts"],\n                    "env": { "PORT": "${port}", "API_URL": "${local:api}", "COURT_URLS": "${public:court-1}" } } } }\n# node.env:  SERVICES=/abs/path/my-game.services.json')}
+${p('The node supervises each service, restarts it with backoff and when the tunnel\'s hostname changes, and publishes it at <span class="mono">https://&lt;wsAddr host&gt;/svc/&lt;prefix&gt;.&lt;name&gt;/…</span> (WebSocket too). <span class="mono">GET /svc</span> lists what runs. Secrets stay in your <span class="mono">envFiles</span>; operator keys are never passed. The client finds the node at runtime through NodeDirectory, then <span class="mono">/svc</span>. Pickle Brawl\'s API, matchmaker and two courts run this way on the desktop node.')}
 <h4>4C. Build from scratch</h4>
-${cmd("import title from './my-game.v1.mjs';\nimport { connectShell, createSim, createRecorder, matchSeed, externalAgents, settle } from './litnode/sdk/client.js';\nconst shell = await connectShell();              // cabinet:init → { player, node, match, chain }\nconst m = shell.match;                           // matchId, hostAddr, participants, mode, buildHash, wsAddr\nconst sim = createSim(title, { seed: matchSeed(m), participants: m.participants, ctx: { agents: externalAgents(m.participants) } });\nconst rec = createRecorder({ matchId: m.matchId, participants: m.participants, rulesetId: 'my-game.v1', buildHash: m.buildHash, mode: m.mode });\n// each tick:  sim.step(inputs); rec.record(inputs); render(sim.view());\n// at the end: await settle({ nodeUrl: m.hostAddr, recorder: rec, signers: { [me]: shell, [them]: theirSig } });   // me = shell.player.id; theirSig over your transport")}
+${cmd("import title from './my-game.v1.mjs';\nimport { connectShell, createSim, createRecorder, matchSeed, externalAgents, settle } from './litnode/sdk/client.js';   // the litnode checkout (no npm package yet)\nconst shell = await connectShell();              // cabinet:init → { player, node, match, chain }\nconst m = shell.match;                           // matchId, hostAddr, participants, mode, buildHash, wsAddr\nif (!m) throw new Error('opened with Play, not from a placed match: nothing to settle');\nconst sim = createSim(title, { seed: matchSeed(m), participants: m.participants, ctx: { agents: externalAgents(m.participants) } });\nconst rec = createRecorder({ matchId: m.matchId, participants: m.participants, rulesetId: 'my-game.v1', buildHash: m.buildHash, mode: m.mode });\n// each tick:  sim.step(inputs); rec.record(inputs); render(sim.view());\n// at the end: await settle({ nodeUrl: m.hostAddr, recorder: rec, signers: { [shell.player.id]: shell, [them]: theirSig } });   // theirSig: the other player's, over your transport")}
 ${p('The client imports the same file the node replays. The arcade shell signs the ledger head for the player (<span class="mono">cabinet:sign</span>), so the key never enters your game. Transport between players is yours.')}
 <h4>The arcade shell protocol</h4>
 ${t([
@@ -164,14 +169,19 @@ ${t([
   ['shell → game', '<span class="mono">cabinet:signed { matchId, player, sig }</span>', 'or { error }'],
   ['game → shell', '<span class="mono">cabinet:played { matchId }</span>', 'the placed match was played; the arcade closes the title'],
   ['game → shell', '<span class="mono">cabinet:exit</span>', 'back to the launcher'],
+  ['game → shell', '<span class="mono">cabinet:air { id, token? }</span> · <span class="mono">cabinet:air-login { id }</span> · <span class="mono">cabinet:air-logout { id }</span>', 'one sign-in: the arcade\'s AIR session, a fresh token, its sign-in dialog, sign-out. Answered only for titles listed with <span class="mono">login: \'arcade\'</span>, at their own origin'],
+  ['shell → game', '<span class="mono">cabinet:air { re?, signedIn, user, token?, error? }</span>', 'the answer (re = request id), or a push when the session changes'],
 ], ['direction', 'message', 'meaning'])}
-${p(`Drop-in helper: ${a(doc('cabinet/sdk-client.js'), 'cabinet/sdk-client.js')} (init and exit only, a no-op outside the arcade; to sign, use connectShell from sdk/client.js). Launch URL for a placed match: <span class="mono">?ws=&lt;relay&gt;&amp;room=LIT-…&amp;player=&lt;key&gt;&amp;match=&lt;id&gt;&amp;build=&lt;hash&gt;</span>.`)}
+${p(`Drop-in helper for init and exit only: ${a(doc('cabinet/sdk-client.js'), 'cabinet/sdk-client.js')} (a no-op outside the arcade); to sign, use <span class="mono">connectShell</span> from <span class="mono">sdk/client.js</span>. Launch URL for a placed match: <span class="mono">?ws=&lt;relay&gt;&amp;room=LIT-…&amp;player=&lt;key&gt;&amp;match=&lt;id&gt;&amp;build=&lt;hash&gt;</span>.`)}
+<h4>Check a match</h4>
+${cmd('npm run bridge -- check <matchId> --node auto --ruleset my-game.v1   # the node\'s verdict, in words\ncurl https://<node>/match/<matchId>/chain                             # its decoded MatchBook events')}
+${p('In a browser, <span class="mono">#/match/&lt;matchId&gt;</span> is the receipt: every transaction re-checked against the chain. Anyone can also run a lite guardian (<span class="mono">npm run guardian</span>): no stake, no gas, it spot-checks settled results and posts signed verdicts. Guardian reports are advisory and never change <span class="mono">official</span>.')}
 <h4>5. Run a node</h4>
-${cmd('npm run host -- init --operator my-studio --roles mesh,host,witness,settler --rulesets ./rulesets/my-game.v1.js --tunnel quick\nnpm run host -- doctor && npm run host -- start --detach\nexport OPERATOR_KEY=0x...                          # your wallet, this shell only\nnpm run host -- bond                            # 1 tLITVM on testnet\nnpm run delegate -- <nodeId> <announcer address> --fund 0.005   # the hot key the node sends with\nnpm run host -- publish --fund 0.02             # tunnel, proof of possession, announce on NodeDirectory\nnpm run enroll -- <nodeId>                      # the nine-seat escalation pool\nunset OPERATOR_KEY\nnpm run host -- install-service && npm run host -- verify')}
-${p('Or do the same from the Nodes page with a wallet: Bond this node, name the delegate, enroll, and a live setup checklist read from the node\'s signed <span class="mono">/fleet</span>. <span class="mono">npm run fleet</span> is the same document in a terminal; <span class="mono">npm run fleet -- relay</span> walks a title\'s path from the outside.')}
+${cmd('npm run host -- init --operator my-studio --roles mesh,host,witness,settler --rulesets ./rulesets/my-game.v1.js --tunnel quick\nnpm run host -- doctor && npm run host -- start --detach\nexport OPERATOR_KEY=0x...                       # your wallet (the PUBLISHER_KEY wallet), this shell only\nnpm run host -- bond                            # 1 tLITVM on testnet\nnpm run delegate -- <nodeId> <announcer address> --fund 0.005   # the hot key the node sends with\nnpm run host -- publish --fund 0.02             # tunnel, proof of possession, announce on NodeDirectory\nnpm run enroll -- <nodeId>                      # the nine-seat escalation pool\nunset OPERATOR_KEY\nnpm run host -- install-service && npm run host -- verify')}
+${p('A second node on the same machine sets its own start-at-logon name with <span class="mono">init --service-name litnode-2</span>, so it installs beside the first. Or do all of it from the Nodes page with a wallet: Bond this node, name the delegate, top up the hot key, enroll, and a live setup checklist read from the node\'s signed <span class="mono">/fleet</span>. <span class="mono">npm run fleet</span> is the same document in a terminal; <span class="mono">npm run fleet -- relay</span> walks a title\'s path from the outside.')}
 <h4>6. What settles, exactly</h4>
 ${t([
-  ['commit', 'host\'s hot key, at placement', 'the match and its three drawn witnesses, under other operators'],
+  ['commit', 'host\'s hot key, at placement', 'the match and its three drawn witnesses, under other operators; skipped (casual-only) when fewer than three can be seated'],
   ['settle', 'host, when the record lands', 'result hash, ledger sha256, build, participants, scores'],
   ['attest ×3', 'each witness, inside the window', 'the hash it reached itself; a different hash is a dispute'],
   ['finalize', 'anyone, after the window', 'two agree and none dissent → final; otherwise escalated'],
@@ -181,10 +191,11 @@ ${t([
 ${p('Ladders are a fold over these events in block order, so every node and the arcade derive the same tables from RPC alone. Elo stays off chain. Windows and slash sizes live in the contract and are read at start.')}
 <h4>7. Said plainly</h4>
 ${ul([
-  'Testnet contracts, unaudited. No fees, rewards or credits reconcile on chain yet; the per-match fee split is phase 3.',
+  'Testnet contracts, unaudited. No fees, rewards or credits reconcile on chain yet. NodeStake\'s treasury is now a dedicated rewards treasury, but no contract pays anyone from it; the per-match fee split is phase 3.',
+  'Ranked is casual-only until four operators with fresh bonded nodes carry the title. One studio\'s node cannot make a result official on its own.',
   'The character registry is deployed and empty: every match hydrates external, zero-stat agents until one is forged.',
   'An attested title cannot become official by configuration; the path is on your side (seeded randomness, integer math, an input log).',
-  'One-time secrets never pass through a flag or a file in the repo: keys are read from the shell, once.',
+  'Keys are read from the shell, once. No flag or file in the repository takes one.',
   `The full list of known gaps: ${a(doc('SPEC.md#4-known-gaps-and-honest-zeroes'), 'SPEC.md section 4')}.`,
 ])}
 <h4>Where things are</h4>
@@ -192,11 +203,13 @@ ${t([
   [a(doc('docs/SDK.md'), 'docs/SDK.md'), 'this page, in the repository'],
   [a(doc('docs/PUBLISHERS.md'), 'docs/PUBLISHERS.md'), 'the map: paths, vocabulary, the seven developer steps'],
   [a(doc('docs/HOST-YOUR-TITLE.md'), 'docs/HOST-YOUR-TITLE.md'), 'the title contract and the rules of recognition'],
-  [a(doc('docs/BRING-YOUR-BACKEND.md'), 'docs/BRING-YOUR-BACKEND.md'), 'bridge, gauntlet loops, node discovery'],
+  [a(doc('docs/BRING-YOUR-BACKEND.md'), 'docs/BRING-YOUR-BACKEND.md'), 'bridge, gauntlet loops, publisher services, node discovery'],
   [a(doc('docs/BUILD-FROM-SCRATCH.md'), 'docs/BUILD-FROM-SCRATCH.md'), 'the client SDK and the shell protocol'],
   [a(doc('docs/HOST-A-NODE.md'), 'docs/HOST-A-NODE.md'), 'the node harness, stage by stage'],
   [a(doc('docs/PUBLISHER-BONDS.md'), 'docs/PUBLISHER-BONDS.md'), 'titles as tokens, host grants, escalation seats'],
-  [a(doc('docs/UNIVERSAL-LOGIN.md'), 'docs/UNIVERSAL-LOGIN.md'), 'sign in with AIR, proxy wallets, one profile'],
+  [a(doc('docs/UNIVERSAL-LOGIN.md'), 'docs/UNIVERSAL-LOGIN.md'), 'sign in with AIR, one sign-in for titles in the arcade'],
+  [a(doc('docs/FLEET-TELEMETRY.md'), 'docs/FLEET-TELEMETRY.md'), 'the signed /fleet document; guardian reports'],
+  [a(doc('gauntlets'), 'gauntlets/'), 'per-match and long-lived server configs (Pickle Brawl\'s are live)'],
   [a(doc('.claude/skills'), '.claude/skills'), 'host-a-node, migrate-a-title, build-a-title, host-a-title'],
 ])}
 `;
