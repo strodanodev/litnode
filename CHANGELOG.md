@@ -5,7 +5,17 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.11.18] — 2026-09-27 — advisory lite guardian; reward points from the chain; host init --service-name
+
 ### Added
+- **Advisory lite guardian.** `npm run guardian` (`tools/guardian.mjs`, now in
+  the zips) spot-checks settled results with no stake, gas or chain key: the
+  host's signature, the result commitment, and that the served log reaches the
+  claimed head (`protocol/guardian.js`). It posts a signed verdict to
+  `POST /guardian`; nodes count reports per guardian key (30/min), list them on
+  `GET /guardian` and in `/fleet`'s `guardian` block, and log an
+  `inconsistent` verdict as an event for witnesses to re-check. Advisory only:
+  a report never changes `verification` or `official`.
 - **`npm run host -- init --service-name <name>`** sets `SERVICE_NAME`, and
   `init` refuses a name outside 1-64 of `A-Z a-z 0-9 . _ -` instead of
   letting it fall back to `litnode` and find the first node's task.
