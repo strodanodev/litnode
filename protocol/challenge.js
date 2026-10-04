@@ -28,5 +28,19 @@ export async function checkChallenge(answer, { expectNodeId, nonce, expectDigest
   return (await verify(WHOAMI_TAG, body, sig, expectNodeId)) ? { ok: true } : { ok: false, reason: 'signature' };
 }
 
+/** A seat claim (node/gauntlet.js). A placed match's join ticket is a bearer
+ *  credential for that player's seat, and match ids and participants are
+ *  public, so naming a player is not enough: the host issues a one-time
+ *  nonce and hands the ticket only against the player key's signature over
+ *  { matchId, room, player, nonce }. The arcade shell signs it for a title it
+ *  launched (cabinet:sign-seat); a title holding the player key signs itself.
+ *
+ *  GET <wsAddr>/<room>/ticket?player=<key>                   → 401 { challenge }
+ *  GET <wsAddr>/<room>/ticket?player=<key>&nonce=<n>&sig=<s> → 200 { ticket, ws, … } */
+export const SEAT_TAG = 'seat';
+export const seatBody = ({ matchId, room, player, nonce }) => ({ matchId, room, player, nonce });
+export const signSeat = (claim, privateKey) => sign(SEAT_TAG, seatBody(claim), privateKey);
+export const verifySeat = (claim, sig) => verify(SEAT_TAG, seatBody(claim), sig, claim.player);
+
 /** A random nonce as hex, from whatever crypto the runtime has (browser or Node). */
 export const newNonce = () => Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');

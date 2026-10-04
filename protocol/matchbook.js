@@ -150,7 +150,10 @@ export function chainDeltas(decodedLogs, { rulesets = {} } = {}) {
  *  a derive() result. `pending` folds settled-but-undecided results ON TOP
  *  of the official set so a player sees where they would stand. */
 export function foldChain(decodedLogs, rulesetId, manifest, { rulesets = {} } = {}) {
-  const all = chainDeltas(decodedLogs, { rulesets }).filter((d) => d.rulesetId === rulesetId);
+  // An attested title's FINAL results rank (its ladder is `pending`, which folds everything settled) but are never
+  // official: the chain finalized a court's report, not a result anyone re-ran (protocol/result.js isOfficial).
+  const attested = manifest?.kind === 'attested';
+  const all = chainDeltas(decodedLogs, { rulesets }).filter((d) => d.rulesetId === rulesetId).map((d) => (attested ? { ...d, official: false } : d));
   const official = all.filter((d) => d.official);
   // The cursor is the last block READ, not the last block folded: a resume must not re-read a void or a foreign ruleset's blocks.
   const blocks = decodedLogs.filter(Boolean).map((e) => e.block);

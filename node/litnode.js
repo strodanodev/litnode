@@ -864,9 +864,14 @@ export async function createNode({
         if (!earlier) return; // ours stands; theirs is a re-pairing of placed players
         if (rival.commitTx || rival.committing) { log(`placement ${d.matchId.slice(0, 12)} from ${d.computedBy.slice(0, 8)} is earlier than ${rival.descriptor.matchId.slice(0, 12)}, but ours is on chain — it stands`); return; }
         matchBook.delete(rival.descriptor.matchId); // theirs came first: it stands, ours goes (a commit already sent expires on its own)
+        gauntlet?.stop(rival.descriptor.matchId, 'replaced by an earlier placement');
         log(`placement ${d.matchId.slice(0, 12)} from ${d.computedBy.slice(0, 8)} replaces our later ${rival.descriptor.matchId.slice(0, 12)} for the same players`);
       }
-      matchBook.set(d.matchId, { descriptor: { ...d, disputes: undefined }, envelope: env, disputes: [], commitTx: null }); commitIfHost(d.matchId); return;
+      matchBook.set(d.matchId, { descriptor: { ...d, disputes: undefined }, envelope: env, disputes: [], commitTx: null });
+      // An adopted placement that names this node as host is ours to serve exactly like one we computed: start
+      // the title's match server, or the players reach a host with no room (only computed ones used to).
+      gauntlet?.onPlaced({ ...d, participants: d.participants, mode: d.mode ?? null });
+      commitIfHost(d.matchId); return;
     }
     if (mine.descriptor.host !== d.host && !mine.disputes.some((x) => x.by === d.computedBy)) {
       mine.disputes.push({ by: d.computedBy, host: d.host, snapshotRoot: d.snapshotRoot });
@@ -918,7 +923,9 @@ export async function createNode({
   // one screen. The local delta keeps its fields; `chain` says what the log says and `official` follows it.
   const withChain = (deltas) => (mbook ? deltas.map((d) => {
     const st = mbook.statusOf(matchIdBytes32(d.matchId));
-    return { ...d, chain: st, ...(st === 'none' ? {} : { official: st === 'final', verification: st === 'final' ? 'verified' : st === 'void' ? 'disputed' : d.verification }) };
+    // Final on chain is official only for a result the players signed (protocol/result.js isOfficial): an attested
+    // title's court report can finalize, and still never counts as official.
+    return { ...d, chain: st, ...(st === 'none' ? {} : { official: st === 'final' && d.attestation === 'players', verification: st === 'final' ? 'verified' : st === 'void' ? 'disputed' : d.verification }) };
   }) : deltas);
   /** The operator's whole view in one document, from memory: this node, its chain, the mesh as it hears it, every
    *  link it measures, the rooms it holds, who is queued, the titles on offer, the last events. GET /fleet. */

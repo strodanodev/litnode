@@ -10,7 +10,8 @@ import { createLog, chainHead, ledgerBody, signLedger, verifyLedger } from '../p
 import { placement, acceptsHost } from '../protocol/placement.js';
 import { pair, bucketOf, isClosed, isStale, BUCKET_MS, QUEUE_TTL_MS } from '../protocol/pairing.js';
 import { beaconFromBlocks, localBeacon } from '../protocol/beacon.js';
-import { snapshot, verifyHeartbeats, HEARTBEAT_TAG, epochOf } from '../protocol/snapshot.js';
+import { snapshot, snapshotRoot, verifyHeartbeats, HEARTBEAT_TAG, epochOf } from '../protocol/snapshot.js';
+import { isOfficial, verification } from '../protocol/result.js';
 import { buildTree, proofFor, verifyProof, leafOf, anchorCalldata, anchorSelector } from '../protocol/epoch.js';
 import { derive } from '../protocol/derive.js';
 import { verifyHydration } from '../protocol/hydration.js';
@@ -261,4 +262,26 @@ test('canonical is key-order independent', () => {
   assert.equal(h('t', { b: 1, a: 2 }), h('t', { a: 2, b: 1 }));
   assert.equal(h('x', 'abc').length, 64);
   assert.equal(h('x', 'abc'), createHash('sha256').update('x\0abc').digest('hex'));
+});
+
+test('snapshot root commits what placement orders hosts by: relay yes/no and gauntlet titles, not the relay URL', () => {
+  const base = { nodeId: 'a'.repeat(64), operator: 'x', roles: ['host'], region: 'r', standing: 1, buildHashes: {}, epoch: 0 };
+  const rootOf = (p) => snapshotRoot({ peers: [p], manifests: {} });
+  const plain = rootOf(base);
+  const relay = rootOf({ ...base, wsAddr: 'wss://one.trycloudflare.com' });
+  assert.notEqual(relay, plain, 'gaining a relay changes the eligible set as placement sees it');
+  assert.equal(rootOf({ ...base, wsAddr: 'wss://two.trycloudflare.com' }), relay, 'a new tunnel hostname does not');
+  const g1 = rootOf({ ...base, gauntlets: ['b.v1', 'a.v1'] });
+  assert.notEqual(g1, plain);
+  assert.equal(rootOf({ ...base, gauntlets: ['a.v1', 'b.v1'] }), g1, 'gauntlet order does not matter');
+  assert.equal(rootOf({ ...base, gauntlets: [] }), plain, 'no gauntlets hashes like before');
+});
+
+test('official: only a verified result the players signed; an attested (court) result never is', () => {
+  const d = { mode: 'ranked', cosigners: ['w'], disputes: [] };
+  assert.equal(isOfficial({ ...d, attestation: 'players' }), true);
+  assert.equal(isOfficial({ ...d, attestation: 'attested' }), false, 'a court report can be verified, never official');
+  assert.equal(verification({ ...d, attestation: 'attested' }), 'verified');
+  assert.equal(isOfficial({ ...d, attestation: 'relay' }), false);
+  assert.equal(isOfficial({ ...d, attestation: 'players', cosigners: [] }), false, 'not witnessed');
 });

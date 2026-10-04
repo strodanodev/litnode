@@ -46,5 +46,10 @@ export function verification(d, { registry = false } = {}) {
   return 'verified';
 }
 
-/** Official standings take verified results only. */
-export const isOfficial = (d, opts) => verification(d, opts) === 'verified';
+/** Official standings take verified results that the PLAYERS signed: a
+ *  replayable log both players attested and a witness re-ran. An attested
+ *  result (a court's signed report) can be verified — an authorized court
+ *  signed it and a witness checked it against the rules — but the node
+ *  trusts the court for the outcome, so it ranks on the title's ladder and is
+ *  never OFFICIAL (docs/BRING-YOUR-BACKEND.md). */
+export const isOfficial = (d, opts) => d.attestation === 'players' && verification(d, opts) === 'verified';

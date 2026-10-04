@@ -198,10 +198,12 @@ matchmaker, a pool of courts.
 node's `node.env` (a node that already fronts another title's relay on `RELAY_PORT`
 sets `GAUNTLET_GATEWAY_PORT=8478` instead). `${node}` is the node's own runtime. The node spawns your process for each match it hosts,
 mints one HMAC join ticket per placed player (`{ sub, matchId, team, slot,
-mode, exp }`), serves them at `https://<wsAddr host>/<room>/ticket?player=<key>`,
-proxies `wss://<wsAddr>/<room>` to it, and ends it a few seconds after the
-match settles. Your client reads `?ws&room&player&match` from the arcade
-launch, fetches its ticket, joins. A node that runs a title's gauntlet
+mode, exp }`), serves them at `https://<wsAddr host>/<room>/ticket?player=<key>`
+against the signature of the player key over a one-time challenge, proxies
+`wss://<wsAddr>/<room>` to it, and ends it a few seconds after the match
+settles. Your client reads `?ws&room&player&match` from the arcade launch,
+asks for its ticket, has the shell sign the challenge (`cabinet:sign-seat`),
+fetches the ticket, joins. A node that runs a title's gauntlet
 advertises it, and placement draws that node first to host the title.
 Section 6a of BRING-YOUR-BACKEND.md.
 
@@ -252,6 +254,8 @@ your game. Transport between players is yours. [BUILD-FROM-SCRATCH.md](BUILD-FRO
 | shell → game | `cabinet:init { player, node, game, chain, match? }` | identity, the node, the contract set, the placement |
 | game → shell | `cabinet:sign { body }` | the player's signature over `{ matchId, ticks, head, buildHash }`, only for the match launched |
 | shell → game | `cabinet:signed { matchId, player, sig }` | or `{ error }` |
+| game → shell | `cabinet:sign-seat { challenge }` | the signature of the player over a gauntlet seat challenge `{ matchId, room, player, nonce }`, only for the match launched, in its room |
+| shell → game | `cabinet:seat-signed { matchId, nonce, player, sig }` | or `{ error }` |
 | game → shell | `cabinet:played { matchId }` | the placed match was played; the arcade closes the title |
 | game → shell | `cabinet:exit` | back to the launcher |
 | game → shell | `cabinet:air { id, token? }` · `cabinet:air-login { id }` · `cabinet:air-logout { id }` | universal login: the arcade's AIR session, a fresh token, the arcade's sign-in dialog, sign-out. Answered only for titles the arcade lists with `login: 'arcade'`, at their own origin |

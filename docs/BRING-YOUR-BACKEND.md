@@ -166,8 +166,13 @@ a gauntlet config:
    claims `{ sub: <player key>, matchId, team, slot, mode, exp }`, which is
    what Pickle Brawl's court verifies at its gate);
 3. serves tickets and proxies WebSocket rooms on the relay port:
-   `GET https://<wsAddr host>/<room>/ticket?player=<key>` returns
-   `{ ticket, ws, mode, team, slot }`; `wss://<wsAddr>/<room>` reaches your
+   `GET https://<wsAddr host>/<room>/ticket?player=<key>` answers 401 with a
+   one-time `challenge` `{ matchId, room, player, nonce }`; the same URL with
+   `&nonce=<nonce>&sig=<sig>`, where `sig` is the player key's signature over
+   the challenge (`signSeat` in protocol/challenge.js; inside the arcade, ask
+   the shell with `cabinet:sign-seat`), returns `{ ticket, ws, mode, team, slot }`.
+   Naming a placed player is not enough: match ids and participants are
+   public. `wss://<wsAddr>/<room>` reaches your
    process. Rooms it does not know go to `GAUNTLET_UPSTREAM` (a title's own
    relay on the same machine), so one `wsAddr` serves every title;
 4. ends the process a few seconds after the match settles on this node

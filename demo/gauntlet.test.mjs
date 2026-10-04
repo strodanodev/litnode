@@ -16,6 +16,8 @@ import { createNode } from '../node/litnode.js';
 import { mintTicket, verifyTicket, seatsFor, loadGauntletConfigs, createGauntlets } from '../node/gauntlet.js';
 import { generateKeypair, seal } from '../protocol/keys.js';
 import { QUEUE_TAG, bucketOf, roomCodeFor } from '../protocol/pairing.js';
+import { signSeat } from '../protocol/challenge.js';
+import { PROTOCOL_VERSION } from '../protocol/version.js';
 
 const ROOT = process.cwd();
 const PB = join(ROOT, 'rulesets', 'pickle-brawl.v1.js');
@@ -86,8 +88,26 @@ test('gauntlet: placement on this node spawns the court; players fetch tickets a
   mark('tickets');
   // Tickets: one per placed player, from the gateway, by room.
   const gwUrl = `http://127.0.0.1:${gw}`;
-  const t1 = await (await fetch(`${gwUrl}/${room}/ticket?player=${p1.publicKey}`)).json();
-  const t2 = await (await fetch(`${gwUrl}/${room}/ticket?player=${p2.publicKey}`)).json();
+  // A ticket is a bearer credential for a seat: the gateway hands it only against the placed player's
+  // signature over a one-time nonce (protocol/challenge.js SEAT_TAG). Naming the player gets a challenge.
+  const ask = (kp) => fetch(`${gwUrl}/${room}/ticket?player=${kp.publicKey}`);
+  const claim = async (kp, signer = kp) => {
+    const r = await ask(kp);
+    assert.equal(r.status, 401, 'naming a placed player gets a challenge, not the ticket');
+    const { challenge } = await r.json();
+    assert.equal(challenge.matchId, match.matchId); assert.equal(challenge.room, room); assert.equal(challenge.player, kp.publicKey);
+    const sig = await signSeat(challenge, signer.privateKey);
+    return fetch(`${gwUrl}/${room}/ticket?player=${kp.publicKey}&nonce=${challenge.nonce}&sig=${sig}`);
+  };
+  const intruder = await generateKeypair();
+  assert.equal((await claim(p1, intruder)).status, 403, 'someone else\'s signature does not take p1\'s seat');
+  const { challenge: once } = await (await ask(p1)).json();
+  const onceSig = await signSeat(once, p1.privateKey);
+  assert.equal((await fetch(`${gwUrl}/${room}/ticket?player=${p1.publicKey}&nonce=${once.nonce}&sig=${onceSig}`)).status, 200);
+  assert.equal((await fetch(`${gwUrl}/${room}/ticket?player=${p1.publicKey}&nonce=${once.nonce}&sig=${onceSig}`)).status, 403, 'a nonce works once');
+  assert.equal((await fetch(`${gwUrl}/${room}/ticket?player=${p2.publicKey}&nonce=${'0'.repeat(32)}&sig=${onceSig}`)).status, 403, 'an unissued nonce is refused');
+  const t1 = await (await claim(p1)).json();
+  const t2 = await (await claim(p2)).json();
   // Seats follow the PLACEMENT's participant order, not who queued first.
   const teamOf = (kp) => match.participants.indexOf(kp.publicKey);
   assert.equal(t1.team, teamOf(p1)); assert.equal(t2.team, teamOf(p2)); assert.notEqual(t1.team, t2.team); assert.equal(t1.mode, 'singles'); assert.equal(t1.matchId, match.matchId);
@@ -198,4 +218,19 @@ test('gauntlet: GAUNTLET_GATEWAY_PORT puts the gateway on its own port, sends un
   const snap = await (await fetch(`${host.addr}/snapshot?envelopes=1`)).json();
   const mine = snap.envelopes.find((e) => e.body.nodeId === host.nodeId).body;
   assert.deepEqual(mine.gauntlets, ['pickle-brawl.v1'], 'the heartbeat says which titles this node runs');
+});
+
+test('gauntlet: a placement ADOPTED from a peer that names this node as host starts the court too', { timeout: 60_000 }, async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'litg-'));
+  const cfg = { command: process.execPath, args: [FAKE], cwd: ROOT, env: { PORT: '${port}', COURT_TICKET_SECRET: '${secret}', LITNODE_SEATS: '${seats}' }, portRange: [7890, 7899], readyMs: 20_000, ttlMs: 60_000, ticketTtlMs: 60_000 };
+  const host = await createNode({ dataDir: join(tmp, 'host'), offline: true, heartbeatMs: 200, operator: 'studio', roles: ['mesh', 'host', 'witness', 'settler'], rulesets: [PB], gauntlets: { 'pickle-brawl.v1': cfg }, gauntletPort: 0, relayPort: null });
+  t.after(async () => { await host.stop(); rmSync(tmp, { recursive: true, force: true }); });
+  // A peer computed this placement and gossips it; this node never queued the players, so it ADOPTS it.
+  const peer = await generateKeypair();
+  const [p1, p2] = await Promise.all([generateKeypair(), generateKeypair()]);
+  const matchId = createHash('sha256').update('adopted').digest('hex');
+  const d = { matchId, rulesetId: 'pickle-brawl.v1', mode: 'casual', bucket: bucketOf(Date.now()), participants: [p1.publicKey, p2.publicKey], protocol: PROTOCOL_VERSION, computedBy: peer.publicKey, computedAt: Date.now(), host: host.nodeId, witness: null, panel: [], order: [host.nodeId] };
+  const r = await fetch(`${host.addr}/gossip`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ matches: [await seal('match', d, peer)] }) });
+  assert.equal(r.status, 200);
+  assert.ok(await until(() => host.gauntlet.status().active.some((a) => a.matchId === matchId && a.state === 'up'), 30_000), `court up for the adopted placement: ${JSON.stringify(host.gauntlet.status())}`);
 });

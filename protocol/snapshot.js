@@ -55,12 +55,18 @@ export function resolveManifests(peers) {
 }
 
 /** The root commits to what placement reads — membership, roles, region,
- *  standing, builds, manifests — and NOT to heartbeat epochs or addresses,
- *  so two snapshots taken seconds apart with the same eligible set hash the
- *  same. That is what lets a client tell "the node lied" from "the set
- *  moved". */
+ *  standing, builds, manifests, and whether a node fronts a relay and which
+ *  titles it runs as gauntlets (placement orders hosts by both) — and NOT to
+ *  heartbeat epochs or addresses, so two snapshots taken seconds apart with
+ *  the same eligible set hash the same. That is what lets a client tell "the
+ *  node lied" from "the set moved". The relay is committed as a yes/no, not
+ *  its URL: a quick tunnel's hostname changes on every restart. */
 const registryView = (peers, manifests) => ({
-  peers: peers.map((p) => ({ nodeId: p.nodeId, operator: p.operator, roles: p.roles, region: p.region, standing: p.standing, buildHashes: p.buildHashes })),
+  peers: peers.map((p) => ({
+    nodeId: p.nodeId, operator: p.operator, roles: p.roles, region: p.region, standing: p.standing, buildHashes: p.buildHashes,
+    ...(p.wsAddr ? { relay: true } : {}),
+    ...(Array.isArray(p.gauntlets) && p.gauntlets.length ? { gauntlets: [...p.gauntlets].sort() } : {}),
+  })),
   manifests,
 });
 export const snapshotRoot = (s) => h('snapshot', registryView(s.peers, s.manifests));

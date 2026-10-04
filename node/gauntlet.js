@@ -35,6 +35,7 @@ import { createServer, request as httpRequest } from 'node:http';
 import { connect, createServer as createTcpServer } from 'node:net';
 import { existsSync, readFileSync } from 'node:fs';
 import { roomCodeFor } from '../protocol/pairing.js';
+import { newNonce, verifySeat, NONCE_RE } from '../protocol/challenge.js';
 
 export const OPERATOR_SECRETS = ['OPERATOR_KEY', 'DEPLOYER_KEY', 'PUBLISHER_KEY', 'ADMIN_KEY'];
 
@@ -174,13 +175,32 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
     if (!m) return json(res, 404, { error: 'unknown room' });
     const run = rooms.get(m[1]);
     if (!run) return json(res, 404, { error: 'no gauntlet for this room (not placed here, ended, or timed out)' });
-    if (m[2]) {
-      const player = url.searchParams.get('player') ?? '';
-      const t = run.tickets[player];
-      if (!t) return json(res, 403, { error: 'not a placed player of this match', seats: run.seats.map((s) => s.sub) });
-      return json(res, 200, { ticket: t.ticket, ws: publicWs(run.room), matchId: run.matchId, rulesetId: run.rulesetId, mode: run.mode, team: t.team, slot: t.slot, exp: t.exp, state: run.state });
-    }
+    if (m[2]) return void claimSeat(run, url).then(([code, body]) => json(res, code, body), (e) => json(res, 500, { error: e.message }));
     json(res, 200, { room: run.room, matchId: run.matchId, state: run.state, mode: run.mode, seats: run.seats.length, ws: publicWs(run.room) });
+  };
+  /** A seat's ticket, only to the placed player's key (protocol/challenge.js SEAT_TAG): the first ask gets a
+   *  one-time nonce (401), the second carries the player's signature over it. Match ids and participants are
+   *  public; before this, naming a placed player's key was enough to take their seat. */
+  const SEAT_CHALLENGE_MS = 60_000;
+  const claimSeat = async (run, url) => {
+    const player = url.searchParams.get('player') ?? '';
+    const t = run.tickets[player];
+    if (!t) return [403, { error: 'not a placed player of this match', seats: run.seats.map((s) => s.sub) }];
+    const nonce = url.searchParams.get('nonce'), sig = url.searchParams.get('sig');
+    const now = Date.now();
+    run.challenges ??= new Map();
+    for (const [n, c] of run.challenges) if (c.exp < now) run.challenges.delete(n);
+    if (!nonce || !sig) {
+      if (run.challenges.size >= 64) return [429, { error: 'too many open seat challenges for this match' }];
+      const fresh = newNonce();
+      run.challenges.set(fresh, { player, exp: now + SEAT_CHALLENGE_MS });
+      return [401, { error: 'sign the seat challenge with the player key', challenge: { matchId: run.matchId, room: run.room, player, nonce: fresh }, tag: 'seat', exp: now + SEAT_CHALLENGE_MS }];
+    }
+    const c = NONCE_RE.test(nonce) ? run.challenges.get(nonce) : null;
+    if (!c || c.player !== player) return [403, { error: 'unknown or expired seat challenge: ask again' }];
+    run.challenges.delete(nonce); // one use, whatever the outcome
+    if (!/^[0-9a-f]{128}$/.test(sig) || !(await verifySeat({ matchId: run.matchId, room: run.room, player, nonce }, sig).catch(() => false))) return [403, { error: 'seat signature does not verify for this player' }];
+    return [200, { ticket: t.ticket, ws: publicWs(run.room), matchId: run.matchId, rulesetId: run.rulesetId, mode: run.mode, team: t.team, slot: t.slot, exp: t.exp, state: run.state }];
   };
   /** Raw WebSocket proxy: replay the client's upgrade request to the target with the path
    *  rewritten to '/', then pipe bytes both ways. Protocol-agnostic. */

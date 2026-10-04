@@ -11,12 +11,36 @@ follows [Keep a Changelog](https://keepachangelog.com/).
   node's tunnel URL force an update or a rollback and a restart. A loopback
   socket that carries forwarding headers (`cf-connecting-ip`, `cf-ray`,
   `x-forwarded-for`, …) is now refused with 403.
+- **A gauntlet seat needs the player's signature.** `GET <wsAddr>/<room>/ticket?player=<key>`
+  used to hand the join ticket to anyone who named a placed player, and match ids
+  and participants are public. It now answers 401 with a one-time challenge
+  `{ matchId, room, player, nonce }`; the ticket comes back only with the player
+  key's signature over it (`signSeat`, protocol/challenge.js). The arcade signs it
+  for a title it launched: `cabinet:sign-seat` → `cabinet:seat-signed`, only for
+  the launched match, in its room, as its player. **Breaking** for a title that
+  fetched tickets by key alone.
 - **Gauntlet processes no longer inherit the node's keys.** `OPERATOR_KEY`,
   `DEPLOYER_KEY`, `PUBLISHER_KEY` and `ADMIN_KEY` are removed from a per-match
   server's environment, as publisher services already did (they now drop
   `ADMIN_KEY` too). A gauntlet config that needs a secret names it in `env`.
 
+### Changed
+- **One rule for OFFICIAL, in code and docs:** a result the players signed, that a
+  witness re-ran, final on chain. An attested title's results (a court's signed
+  report) still settle, finalize and rank on the title's ladder (`scope=pending`
+  / `all`) but are never official; the code used to count them, the docs said it
+  never did.
+- **The snapshot root commits relay and gauntlet capability.** Placement orders
+  hosts by "fronts a relay" and "runs this title's gauntlet", but the root did
+  not cover either, so two nodes could draw different hosts under the same root.
+  It now commits a relay yes/no (not the URL, which changes on every restart) and
+  the sorted gauntlet list. Roots differ from 0.11.18 nodes'; the arcade only
+  displays the comparison.
+
 ### Fixed
+- **An adopted placement starts its gauntlet.** A host that adopted a peer's
+  placement committed it but never started the title's match server; only
+  placements it computed did. One replaced by an earlier placement now stops it.
 - **One node per data directory.** A second launch on the same identity (an old
   portable build's scheduled task and the Control Plane, say) waits up to 30 s
   for a node that is still loading, then exits 73 ("already running") instead of

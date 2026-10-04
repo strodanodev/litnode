@@ -12,6 +12,7 @@
 import { loadPlayer as loadKeypair, createClient, IDENTITY_KEY } from './client.js';
 import { roomCodeFor } from './protocol/pairing.js';
 import { ledgerBody, signLedger } from './protocol/log.js';
+import { signSeat, NONCE_RE } from './protocol/challenge.js';
 import { applyDelta, sortDeltas } from './protocol/derive.js';
 import { NODE_URL, GAMES as CONFIG_GAMES } from './config.js';
 import { CHARACTERS, STYLES, ITEMS, ITEM_LINES, PETS, RARITY, INVENTORY_SAMPLE, portraitUrl } from './roster.js';
@@ -1151,6 +1152,17 @@ window.addEventListener('message', async (e) => {
     const body = ledgerBody({ matchId: b.matchId, ticks: b.ticks, head: b.head, buildHash: currentMatch.buildHash ?? b.buildHash ?? null });
     const sig = await signLedger(body, player.kp);
     frame.contentWindow.postMessage({ type: 'cabinet:signed', matchId: b.matchId, player: player.id, sig }, '*');
+  }
+  // The title claims this player's seat on the host's gateway (protocol/challenge.js SEAT_TAG): the host
+  // hands the join ticket only against the player key's signature over its one-time nonce. Signed only
+  // for the match this shell launched, in its room, as this player.
+  if (e.data.type === 'cabinet:sign-seat') {
+    const c = e.data.challenge ?? {};
+    const ok = currentMatch && player?.kp && c.matchId === currentMatch.matchId && c.room === roomCodeFor(currentMatch.matchId)
+      && c.player === player.id && typeof c.nonce === 'string' && NONCE_RE.test(c.nonce);
+    if (!ok) { frame.contentWindow.postMessage({ type: 'cabinet:seat-signed', matchId: c.matchId ?? null, error: 'not a seat in the match this shell launched' }, '*'); return; }
+    const sig = await signSeat(c, player.kp.privateKey);
+    frame.contentWindow.postMessage({ type: 'cabinet:seat-signed', matchId: c.matchId, nonce: c.nonce, player: player.id, sig }, '*');
   }
 });
 document.addEventListener('load', (e) => { if (e.target === frame) sendInit(); }, true);
