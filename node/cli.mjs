@@ -9,7 +9,7 @@
  *  On a terminal the node draws its dashboard (node/tui.js). Under a
  *  scheduled task, a pipe or LITNODE_PLAIN=1 it prints one line per event
  *  instead, so litnode.log reads the same as the screen. */
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createNode } from './litnode.js';
@@ -42,6 +42,28 @@ if (inst.state === 'running') {
 // task's End only stops cmd.exe; the node kept running and held the port).
 try { mkdirSync(dataDir, { recursive: true }); writeFileSync(pidFile, `${process.pid}\n`); } catch { /* read-only data dir: nothing to record */ }
 const dropPid = () => { try { if (Number(readFileSync(pidFile, 'utf8').trim()) === process.pid) rmSync(pidFile, { force: true }); } catch { /* gone already */ } };
+
+// Output nobody reads. The Control Plane runs the node with its stdout and stderr in pipes it reads into its
+// own log; when the Control Plane goes away (it quit, crashed, was killed) the node keeps running and its
+// next write fails with EPIPE. That error reached the keep-alive handler at the bottom, which logged it to the
+// same dead stream, which failed again: a loop that left the node answering GETs but never finishing a request
+// body — gossip, /queue and /ledger all hung (m16, 4 Oct 2026). So the first write error on either stream ends
+// console output for good, and the log continues in <dataDir>/litnode.log. A pipe that stays open but is no
+// longer read (its reader hung) backs up in memory instead; past 8 MB unwritten, the same.
+let fileLog = null;
+const detachOutput = (why) => {
+  if (fileLog) return;
+  fileLog = { write: () => true };
+  try { const f = createWriteStream(join(dataDir, 'litnode.log'), { flags: 'a' }); f.on('error', () => {}); fileLog = f; } catch { /* no data dir: drop the output */ }
+  for (const s of [process.stdout, process.stderr]) {
+    s.removeAllListeners('error');
+    s.on('error', () => {});
+    s.write = (chunk, enc, cb) => { fileLog.write(chunk); const done = typeof enc === 'function' ? enc : cb; if (typeof done === 'function') queueMicrotask(done); return true; };
+  }
+  fileLog.write(`[${new Date().toISOString()}] console output stopped (${why}): whatever read it is gone; the log continues here\n`);
+};
+for (const s of [process.stdout, process.stderr]) s.on('error', (e) => detachOutput(e?.code ?? String(e)));
+setInterval(() => { if ((process.stdout.writableLength ?? 0) > 8 * 1024 * 1024) detachOutput('stdout backed up'); }, 5000).unref();
 
 const interactive = process.stdout.isTTY && !env.LITNODE_PLAIN;
 const tui = interactive ? createTui({ chainId: deployed.chainId ?? null }) : null;
@@ -151,8 +173,10 @@ else console.log(`health: ${node.addr}/health   cabinet: ${node.addr}/`);
 // hostnames and blinds every peer for a directory cycle; logging it does
 // not. Same policy as the Agent Fighter relay. Registered only here, never
 // in createNode, so tests that spin up many nodes do not stack listeners.
-process.on('unhandledRejection', (reason) => console.error(`[fatal] unhandledRejection (kept alive):`, reason));
-process.on('uncaughtException', (err) => console.error(`[fatal] uncaughtException (kept alive):`, err));
+// A broken stdout/stderr is never logged to itself (see detachOutput): that is the loop that hung m16.
+const brokenOutput = (e) => ['EPIPE', 'EOF', 'ERR_STREAM_DESTROYED', 'ERR_STREAM_WRITE_AFTER_END'].includes(e?.code);
+process.on('unhandledRejection', (reason) => { if (brokenOutput(reason)) return detachOutput(reason.code); console.error(`[fatal] unhandledRejection (kept alive):`, reason); });
+process.on('uncaughtException', (err) => { if (brokenOutput(err)) return detachOutput(err.code); console.error(`[fatal] uncaughtException (kept alive):`, err); });
 
 const bail = async () => { if (tui) await tui.stop(); await node.stop(); dropPid(); process.exit(0); };
 process.on('SIGINT', bail);

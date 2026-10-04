@@ -164,6 +164,22 @@ export async function createNode({
     if (!QUIET.has(type)) { recent.push(ev); if (recent.length > RECENT_MAX) recent.shift(); }
     try { onEvent(ev); } catch { /* observer's problem */ }
   };
+  // Event-loop stalls. A node that cannot answer for seconds looks dead to its peers and to Cloudflare
+  // (502/530/524), and the cause is rarely visible from outside: the desktop froze for up to 34 s while the
+  // machine idled (4 Oct 2026). A 250 ms timer that fires late measures how long the loop was blocked; past a
+  // second it is logged with the events just before it, and counted on /health and /fleet.
+  const STALL_MS = 1000, STALL_TICK = 250;
+  const stalls = { count: 0, maxMs: 0, last: null };
+  let stallAt = performance.now();
+  const stallTimer = setInterval(() => {
+    const now = performance.now(), lag = Math.round(now - stallAt - STALL_TICK);
+    stallAt = now;
+    if (lag < STALL_MS) return;
+    const after = recent.slice(-3).map((e) => e.type).join(', ') || 'nothing logged';
+    stalls.count++; stalls.maxMs = Math.max(stalls.maxMs, lag); stalls.last = { at: new Date().toISOString(), ms: lag, after };
+    log(`event loop stalled ${lag} ms (after: ${after})`);
+  }, STALL_TICK);
+  stallTimer.unref?.();
   mkdirSync(dataDir, { recursive: true });
   mkdirSync(join(dataDir, 'rulesets'), { recursive: true });
   if (!offline) installDoh({ log }); // once per process: quick-tunnel names — ours and our peers' — resolve through Cloudflare's DoH
@@ -962,7 +978,7 @@ export async function createNode({
     const mbs = mbook ? mbook.status() : null;
     return {
       at: new Date(now).toISOString(), nodeId, version, protocol: PROTOCOL_VERSION, cabinet: CABINET_VERSION,
-      self: { nodeId, operator, roles, region, version, addr, lanAddr, wsAddr, startedAt: new Date(startedAt).toISOString(), uptimeMs: now - startedAt,
+      self: { nodeId, operator, roles, region, version, addr, lanAddr, wsAddr, startedAt: new Date(startedAt).toISOString(), uptimeMs: now - startedAt, stalls,
         bonded: stakes?.[nodeId]?.active ?? null, wallet: stakes?.[nodeId]?.operator ?? null, eligible: eligible.has(nodeId), bond: myBond ? { eligible: myBond.eligible, delegate: myBond.delegate, amount: myBond.amount.toString() } : null,
         tunnel: tunnels.node?.status() ?? null, relay: relayFront ? relayStatus() : null, upnp: upnpCtl?.status() ?? null, update: (({ available, latest, checkedAt, lastError, registry, channel, canRollback, applying, date }) => ({ available, latest, checkedAt: checkedAt ?? null, lastError: lastError ?? null, registry, channel, canRollback, applying: !!applying, date: date ?? null }))(updater.status()),
         inbound: { peers: [...inbound.values()].filter((t) => now - t < 30_000).length, reachable: peersKnown.size ? [...inbound.values()].some((t) => now - t < 30_000) : null }, sandbox: sandbox.status() },
@@ -1004,7 +1020,7 @@ export async function createNode({
           cabinet: { version: CABINET_VERSION }, // the copy this node serves at /; a cabinet loaded from elsewhere compares its own
           relay: relayFront ? relayStatus() : null, // the relay tunnel as a WebSocket client sees it: verified before it is advertised
           wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, upnp: upnpCtl?.status() ?? null, gauntlet: gauntlet?.status() ?? null, guardian: (({ matches, reports, flagged }) => ({ matches, reports, flagged: flagged.length }))(guardianSummary()),
-          directory: nodeDirectory ? { contract: nodeDirectory, seeds: chainSeeds.length, announcer: announcer?.status() ?? null } : null, startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt,
+          directory: nodeDirectory ? { contract: nodeDirectory, seeds: chainSeeds.length, announcer: announcer?.status() ?? null } : null, startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt, stalls,
           // reachable: a peer has pushed gossip to us in the last 30 s. null = no peers known, so nothing to conclude.
           inbound: { peers: [...inbound.values()].filter((t) => Date.now() - t < 30_000).length, lastAt: inbound.size ? new Date(Math.max(...inbound.values())).toISOString() : null, reachable: peersKnown.size ? [...inbound.values()].some((t) => Date.now() - t < 30_000) : null } });
       }
@@ -1362,6 +1378,6 @@ export async function createNode({
     rulesets: () => buildHashes(), peers: () => heartbeats, inbound, operator, roles, region, startedAt,
     version, updater, restart, tunnels, upnp: upnpCtl, get wsAddr() { return wsAddr; }, get announcer() { return announcer; }, seeds: () => chainSeeds, seedChecks, admitSeed, sandbox, refused, incompatible, protocol: PROTOCOL_VERSION, peersKnown,
     get gauntlet() { return gauntlet; },
-    async stop() { clearInterval(timer); clearInterval(updateTimer); clearInterval(directoryTimer); clearTimeout(announceRetry); clearInterval(relayTimer); await publisherServices?.stop(); await gauntlet?.stopAll(); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); server.closeAllConnections?.(); await new Promise((r) => server.close(r)); },
+    async stop() { clearInterval(stallTimer); clearInterval(timer); clearInterval(updateTimer); clearInterval(directoryTimer); clearTimeout(announceRetry); clearInterval(relayTimer); await publisherServices?.stop(); await gauntlet?.stopAll(); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); server.closeAllConnections?.(); await new Promise((r) => server.close(r)); },
   };
 }

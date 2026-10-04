@@ -5,6 +5,28 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.11.20] — 2026-10-05 — a node outlives its Control Plane; event-loop stalls are reported
+
+### Fixed
+- **A node whose launcher dies keeps working.** The Control Plane runs the node
+  with its output in pipes; when the Control Plane went away (quit, crash, kill)
+  the node's next log line failed with EPIPE, the keep-alive handler logged that
+  error to the same dead pipe, and the loop left the node answering GETs but never
+  finishing a request body: gossip, `/queue`, `/ledger`, `/cosign` all hung, and
+  peers saw it as unreachable (m16, 4 Oct 2026; reproduced with plain Node in
+  twenty lines). Now the first write error on stdout or stderr ends console output
+  for good and the log continues in `<dataDir>/litnode.log`; a pipe left open but
+  unread is treated the same past 8 MB. `demo/orphan.test.mjs` kills the launcher
+  and checks request bodies still arrive (it fails on 0.11.19).
+
+### Added
+- **Event-loop stalls are measured.** A node that cannot answer for seconds looks
+  dead to peers and to Cloudflare (502/530/524). A 250 ms timer now notices any
+  stall over a second, logs `event loop stalled <ms> (after: <last events>)`, and
+  reports `stalls { count, maxMs, last }` on `/health` and `/fleet.self`. The
+  desktop froze for up to 34 s on 4 Oct 2026 while the machine idled; this is how
+  we find out why.
+
 ## [0.11.19] — 2026-10-05 — Agent Fighter runs per match on the node that hosts it; seats need the player's signature; one node per data directory; /update refuses tunnel callers
 
 ### Added
