@@ -5,9 +5,19 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-## [0.11.20] — 2026-10-05 — a node outlives its Control Plane; event-loop stalls are reported
+## [0.11.20] — 2026-10-05 — a node outlives its Control Plane; restarts run the current build; event-loop stalls are reported
 
 ### Fixed
+- **After a self-update, a restart runs the new build, not the old one.** The update
+  keeps the replaced code in `.previous/` for rollback, launchers included. The
+  Control Plane 0.1.12 searches its install for `start-node.cmd` depth-first and took
+  `.previousstart-node.cmd`: its next start ran the PREVIOUS build, with no bundled
+  runtime beside it, so on Node from PATH (m16 came back on 0.11.18 under Node 25) or
+  not at all on a machine without Node ("Node.js 20+ is required"). Launchers are
+  now parked in `.previous` as `<name>.rollback` and renamed back by `rollback()`; a
+  `.previous` an older updater left is healed when the node starts; a node that
+  finds itself running from `.previous` says so and refuses to self-update (it would
+  nest `.previous.previous`).
 - **A node whose launcher dies keeps working.** The Control Plane runs the node
   with its output in pipes; when the Control Plane went away (quit, crash, kill)
   the node's next log line failed with EPIPE, the keep-alive handler logged that

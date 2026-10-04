@@ -15,8 +15,8 @@
  *  overwritten on Windows, so a new runtime lands in runtime.new/ and
  *  start-node.cmd swaps it on relaunch. Zero dependencies. */
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { opened } from '../protocol/keys.js';
 import { PROTOCOL_VERSION } from '../protocol/version.js';
@@ -33,6 +33,21 @@ export const CODE = ['node', 'protocol', 'sdk', 'cabinet', 'rulesets', 'tools', 
 
 /** Never copied from a zip, whatever it ships: an operator's state and the
  *  things the updater manages separately. */
+/** The rollback copy keeps launchers under another name. A launcher that searches the install for
+ *  start-node.cmd (the Control Plane 0.1.12 walks runtime depth-first and takes the first it finds) found
+ *  .previousstart-node.cmd: after any self-update, its next start ran the PREVIOUS build, with no bundled
+ *  runtime beside it, so on Node from PATH, or not at all on a machine without Node (m16 and testers, 4 Oct
+ *  2026). Parked as <name>.rollback, rollback() gives them their names back. */
+const LAUNCHER = /.(cmd|bat|ps1|sh)$/i;
+export const parked = (item) => (LAUNCHER.test(item) ? `${item}.rollback` : item);
+/** Rename launchers an older updater left in .previous under their own names. Returns how many. */
+export function parkLaunchers(root) {
+  const prev = join(root, '.previous');
+  if (!existsSync(prev)) return 0;
+  let n = 0;
+  for (const name of readdirSync(prev)) if (LAUNCHER.test(name)) { renameSync(join(prev, name), join(prev, parked(name))); n++; }
+  return n;
+}
 export const PROTECTED = new Set(['data', 'runtime', 'node_modules', 'node.env', 'litnode.log', 'af-watch.log', 'litnode-relay.log']);
 
 /** A release replaces contracts/ as code, but an install can hold a NEWER
@@ -133,6 +148,10 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
     return resolvedUrl;
   };
   const keysFile = dataDir ? join(dataDir, 'release-keys.json') : null;
+  // Heal an install an older updater left with launchable copies in .previous, and say so when THIS process is
+  // such a copy (started from .previous): it is the previous build, run by mistake.
+  try { const n = parkLaunchers(root); if (n) log(`update: renamed ${n} launcher(s) in .previous so no launcher starts the rollback copy`); } catch (e) { log(`update: could not park .previous launchers: ${e.message}`); }
+  if (basename(root) === '.previous') log('WARNING: this node runs from a .previous folder, the rollback copy of an earlier build. Start the install one level up (Control Plane 0.1.12 picks this copy after a self-update).');
   const persisted = keysFile && existsSync(keysFile) ? JSON.parse(readFileSync(keysFile, 'utf8')) : { accepted: [], retired: [] };
   const acceptedKeys = () => [pubkey, ...persisted.accepted].filter((k) => !persisted.retired.includes(k));
   const saveKeys = () => { if (keysFile) writeFileSync(keysFile, JSON.stringify(persisted, null, 2) + '\n'); };
@@ -183,6 +202,7 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
     // ago may have been revoked since, and "active" is a clock question.
     const g = await gate();
     if (!g.ok) throw new Error(`release registry: ${g.reason} — refused`);
+    if (basename(root) === '.previous') throw new Error('this node runs from .previous, the rollback copy of an earlier build: start the install one level up and update from there');
     applying = true;
     try {
       const want = latest.files[s.file];
@@ -212,7 +232,7 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
       // keep what we replace, so rollback() needs no network
       const prev = join(root, '.previous');
       rmSync(prev, { recursive: true, force: true }); mkdirSync(prev, { recursive: true });
-      for (const item of items) if (existsSync(join(root, item))) cpSync(join(root, item), join(prev, item), { recursive: true });
+      for (const item of items) if (existsSync(join(root, item))) cpSync(join(root, item), join(prev, parked(item)), { recursive: true });
       writeFileSync(join(prev, 'VERSION'), `${version}\n`);
       writeFileSync(join(prev, 'ITEMS.json'), JSON.stringify(items));
       for (const item of items) {
@@ -248,7 +268,8 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
     const recorded = existsSync(join(prev, 'ITEMS.json'));
     const items = recorded ? JSON.parse(readFileSync(join(prev, 'ITEMS.json'), 'utf8')) : CODE;
     for (const item of items) {
-      if (!existsSync(join(prev, item))) {
+      const from = existsSync(join(prev, parked(item))) ? parked(item) : item; // a rollback copy from before 0.11.20 kept the name
+      if (!existsSync(join(prev, from))) {
         // Recorded as replaced but absent before the update: the update ADDED
         // it, so rolling back removes it. (Legacy .previous without a record
         // cannot tell "added" from "unshipped": leave it.)
@@ -256,7 +277,7 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
         continue;
       }
       rmSync(join(root, item), { recursive: true, force: true });
-      cpSync(join(prev, item), join(root, item), { recursive: true });
+      cpSync(join(prev, from), join(root, item), { recursive: true });
       changed.push(item);
     }
     const kept = keepNewerContracts(stash, root);

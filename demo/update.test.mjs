@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { generateKeypair, seal } from '../protocol/keys.js';
-import { createUpdater, RELEASE_TAG, newer, pickFile } from '../node/update.js';
+import { createUpdater, RELEASE_TAG, newer, pickFile, parkLaunchers } from '../node/update.js';
 import { createNode } from '../node/litnode.js';
 
 const tar = process.platform === 'win32' ? 'C:\\Windows\\System32\\tar.exe' : 'tar';
@@ -27,11 +27,13 @@ function fixture() {
   writeFileSync(join(root, 'node', 'stale.txt'), 'should be removed with the directory');
   writeFileSync(join(root, 'data', 'n', 'identity.json'), '{"secret":true}');
   writeFileSync(join(root, 'node.env'), 'OPERATOR=me');
+  writeFileSync(join(root, 'start-node.cmd'), 'rem old launcher');
   const build = join(tmp, 'build', 'litnode-portable-2026-01-01'); rmSync(join(tmp, 'build'), { recursive: true, force: true });
   mkdirSync(join(build, 'node'), { recursive: true });
   writeFileSync(join(build, 'package.json'), JSON.stringify({ version: '0.2.0' }));
   writeFileSync(join(build, 'node', 'marker.txt'), 'new');
   writeFileSync(join(build, 'node.env.example'), 'EXAMPLE=1');
+  writeFileSync(join(build, 'start-node.cmd'), 'rem new launcher');
   writeFileSync(join(build, 'data-should-not-ship.txt'), 'x'); // not in CODE: never copied
   const zipName = 'litnode-portable-2026-01-01.zip';
   execFileSync(tar, ['-a', '-cf', join(tmp, 'build', zipName), '-C', join(tmp, 'build'), 'litnode-portable-2026-01-01']);
@@ -147,6 +149,27 @@ test('update: unsigned or wrongly signed manifests are refused; a good one appli
   assert.equal(rb.to, '0.1.0');
   assert.equal(readFileSync(join(root, 'node', 'marker.txt'), 'utf8'), 'old');
   assert.equal(readFileSync(join(root, 'data', 'n', 'identity.json'), 'utf8'), '{"secret":true}', 'data/ untouched by rollback too');
+});
+
+test('update: the rollback copy holds no launchable start-node.cmd; rollback restores it; an older .previous is healed', async () => {
+  const releaseKey = await generateKeypair();
+  const { root, zipName, zip } = fixture();
+  const body = { version: '0.2.0', date: '2026-01-01T00:00:00Z', notes: 'x', files: { [zipName]: { sha256: sha(zip), size: zip.length } } };
+  const u = createUpdater({ root, version: '0.1.0', releaseUrl: RELEASE, pubkey: releaseKey.publicKey, fetchImpl: serve(await seal(RELEASE_TAG, body, releaseKey), zipName, zip) });
+  await u.apply();
+  assert.equal(readFileSync(join(root, 'start-node.cmd'), 'utf8'), 'rem new launcher');
+  // A launcher that searches the install for start-node.cmd (Control Plane 0.1.12) must not find the old build.
+  assert.ok(!existsSync(join(root, '.previous', 'start-node.cmd')), 'no launchable copy of the previous build');
+  assert.equal(readFileSync(join(root, '.previous', 'start-node.cmd.rollback'), 'utf8'), 'rem old launcher');
+  u.rollback();
+  assert.equal(readFileSync(join(root, 'start-node.cmd'), 'utf8'), 'rem old launcher', 'rollback gives it its name back');
+  // An install an older updater left with .previousstart-node.cmd is healed when the updater starts.
+  writeFileSync(join(root, '.previous', 'start-node.cmd'), 'rem left by 0.11.19');
+  rmSync(join(root, '.previous', 'start-node.cmd.rollback'), { force: true });
+  assert.equal(parkLaunchers(root), 1);
+  createUpdater({ root, version: '0.1.0', releaseUrl: RELEASE, pubkey: releaseKey.publicKey, fetchImpl: serve({}, zipName, zip) });
+  assert.ok(!existsSync(join(root, '.previous', 'start-node.cmd')));
+  assert.equal(readFileSync(join(root, '.previous', 'start-node.cmd.rollback'), 'utf8'), 'rem left by 0.11.19');
 });
 
 test('update: channels, protocol floor and release-key rotation', async () => {
