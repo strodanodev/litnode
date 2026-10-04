@@ -481,3 +481,46 @@ body.dash-locked .content .panel.soon:hover { opacity: 1; filter: none; }
 .aw-pick.on { border-color: var(--ga); color: var(--fg); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ga) 40%, transparent); }
 .aw-lib { margin-top: 22px; }
 @media (max-width: 760px) { .aw-screen { min-height: 200px; max-height: none; } .aw-bar .btn.sm { padding: 5px 8px; } }
+
+/* ── download: the Control Plane CTA (download.js) ─────────────────────── */
+@keyframes dl-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(247,177,122,.45), 0 0 20px rgba(242,141,106,.22), inset 0 0 0 1px rgba(255,226,196,.35); }
+  50%      { box-shadow: 0 0 16px rgba(247,177,122,.9), 0 0 38px rgba(242,141,106,.5), inset 0 0 0 1px rgba(255,236,214,.7); }
+}
+.dl-ico { width: 14px; height: 14px; flex: none; }
+.dl-btn { display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .16em; white-space: nowrap; color: var(--ink); background: linear-gradient(90deg, var(--peach), var(--peach2)); animation: dl-glow 2.4s ease-in-out infinite; transition: filter .15s ease, transform .15s ease; }
+.dl-btn:hover, .dl-btn.active { filter: brightness(1.1); color: var(--ink); }
+.dl-btn:active { transform: translateY(1px); }
+.dl-btn:focus-visible, .dl-cta:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+.dl-cta { display: inline-flex; align-items: center; justify-content: center; gap: 10px; padding: 12px 22px; font-family: var(--mono); font-size: 13px; font-weight: 700; letter-spacing: .18em; white-space: nowrap; color: var(--ink); background: linear-gradient(90deg, var(--peach), var(--peach2)); animation: dl-glow 2.4s ease-in-out infinite; transition: filter .15s ease, transform .15s ease; }
+.dl-cta:hover { filter: brightness(1.1); color: var(--ink); }
+.dl-cta:active { transform: translateY(1px); }
+.dl-cta .dl-ico { width: 16px; height: 16px; }
+.dl-cta.big { padding: 15px 28px; font-size: 14px; }
+.dl-eyebrow { display: block; font-family: var(--mono); font-size: 10px; letter-spacing: .22em; text-transform: uppercase; color: var(--peach); margin-bottom: 6px; }
+.dl-meta { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; color: var(--dim); line-height: 1.6; overflow-wrap: anywhere; }
+.dl-banner { display: flex; align-items: center; gap: 24px; margin: 0 0 16px; padding: 18px 22px; border: 1px solid rgba(247,177,122,.45); background: linear-gradient(100deg, rgba(247,177,122,.14), rgba(9,13,22,.35) 55%), var(--glass); backdrop-filter: blur(8px); box-shadow: 0 12px 34px rgba(0,0,0,.35); }
+.dl-banner-txt { flex: 1; min-width: 0; }
+.dl-banner h2 { font-size: 20px; margin: 0 0 4px; color: var(--fg); }
+.dl-banner p { margin: 0; color: var(--fg2); font-size: 13px; line-height: 1.5; max-width: 62ch; }
+.dl-banner-cta { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.dl-hero h2 { font-size: 26px; margin: 0 0 8px; color: var(--fg); }
+.dl-hero p { margin: 0 0 18px; color: var(--fg2); line-height: 1.6; max-width: 70ch; }
+.dl-ver { font-family: var(--mono); font-size: 13px; color: var(--peach); letter-spacing: .08em; vertical-align: middle; }
+.dl-row { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin-bottom: 14px; }
+.dl-sha { font-size: 11px; margin-bottom: 10px; overflow-wrap: anywhere; }
+.dl-sha code { font-family: var(--mono); font-size: 11px; color: var(--fg2); }
+.dl-alt { font-size: 12px; line-height: 1.6; }
+.dl-list { margin: 0; padding-left: 18px; color: var(--fg2); line-height: 1.75; }
+.view[data-view="download"] code { font-family: var(--mono); font-size: .92em; color: var(--fg); overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .dl-btn { padding: 6px 9px; font-size: 10px; letter-spacing: .1em; gap: 6px; }
+  .dl-banner { flex-direction: column; align-items: stretch; gap: 12px; padding: 14px 16px; }
+  .dl-banner p { display: none; }
+  .dl-banner h2 { font-size: 17px; }
+  .dl-banner-cta { align-items: stretch; }
+  .dl-banner-cta .dl-meta { text-align: center; }
+  .dl-hero h2 { font-size: 21px; }
+}
+@media (max-width: 400px) { .dl-btn span { display: none; } .dl-btn { padding: 7px 8px; } }
+@media (prefers-reduced-motion: reduce) { .dl-btn, .dl-cta { animation: none; box-shadow: 0 0 12px rgba(247,177,122,.6); } }

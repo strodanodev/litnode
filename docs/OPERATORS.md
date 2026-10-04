@@ -54,8 +54,12 @@ Network details, for adding LiteForge to your wallet:
 
 Pick one.
 
-**A. Windows, point and click: LITNODE Control Plane.** The pilot team
-sends the installer link with your invitation. Install it and open it:
+**A. Windows, point and click: LITNODE Control Plane.** Download it from
+**[arcade.litvm.games/#/download](https://arcade.litvm.games/#/download)**
+(the page lists the installer's SHA-256 and the install steps). It is a
+per-user `.msi`, no administrator needed. It is not code-signed yet, so
+Windows SmartScreen may warn: check the checksum, then **More info → Run
+anyway**. Open it:
 it unpacks a node with its own runtime, keeps it running from the system
 tray, and has buttons for restart, update and opening the arcade.
 Continue at step 3.

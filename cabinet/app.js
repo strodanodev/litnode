@@ -29,6 +29,7 @@ import { CHAIN } from './config.js';
 import { CABINET_VERSION } from './version.js';
 import { CONTRACTS } from './contracts.js';
 import { readFleet, describeEvent, checklist as fleetChecklist, ago } from './fleet.js';
+import { arcadeBanner, downloadPage } from './download.js';
 import { renderBuild } from './build.js';
 import { loadReceipt, renderReceipt } from './receipt.js';
 
@@ -570,6 +571,7 @@ function renderArcadeWindow() {
 function renderGames() {
   const v = view('games');
   if (!$('aw')) v.innerHTML = `<div class="page-h" id="games-h"></div>
+    ${arcadeBanner()}
     <section class="aw" id="aw" aria-label="arcade window">
       <div class="aw-bar" id="aw-bar"></div>
       <div class="aw-screen" id="aw-screen"><iframe id="aw-frame" title="arcade window" allow="fullscreen *; gamepad *; autoplay *; pointer-lock *; xr-spatial-tracking *; clipboard-write *"></iframe></div>
@@ -1034,6 +1036,15 @@ function renderMatch(matchId, { refresh = false } = {}) {
     .finally(() => { Rcpt.loading = false; if (route.name === 'match' && route.matchId === matchId) draw(); });
 }
 
+// The Control Plane download (download.js): built once per visit; render() runs on every node poll.
+function renderDownload() {
+  const v = view('download');
+  if (v.dataset.built) return;
+  v.innerHTML = downloadPage({ panel, esc });
+  v.dataset.built = '1';
+  for (const c of v.querySelectorAll('[data-copy-now]')) c.addEventListener('click', () => { navigator.clipboard?.writeText(c.dataset.copyNow).then(() => { const t = c.textContent; c.textContent = 'copied ✓'; setTimeout(() => { c.textContent = t; }, 1200); }).catch(() => {}); });
+}
+
 // ═══════════════════════════════════════════════ router ══
 let route = { name: 'games' };
 function parseRoute() {
@@ -1043,7 +1054,7 @@ function parseRoute() {
   const mr = h.match(/^#\/match\/([\w:.-]{1,128})/);
   if (mr) return { name: 'match', matchId: mr[1] };
   const name = (h.match(/^#\/(\w+)/)?.[1]) ?? 'games';
-  return ['home', 'games', 'leaderboards', 'characters', 'inventory', 'node', 'build'].includes(name) ? { name } : { name: 'games' };
+  return ['home', 'games', 'leaderboards', 'characters', 'inventory', 'node', 'build', 'download'].includes(name) ? { name } : { name: 'games' };
 }
 function render() {
   renderWorking();
@@ -1057,6 +1068,7 @@ function render() {
     case 'node': renderNode(); break;
     case 'build': renderBuild(view('build')); break;
     case 'match': renderMatch(route.matchId); break;
+    case 'download': renderDownload(); break;
   }
 }
 function navigate() {
@@ -1064,6 +1076,7 @@ function navigate() {
   if (route.name !== 'games' && inWindow()) exit();
   for (const s of document.querySelectorAll('.view')) s.hidden = s.dataset.view !== route.name;
   for (const a of document.querySelectorAll('#nav a')) a.classList.toggle('active', a.dataset.view === route.name || (route.name === 'game' && a.dataset.view === 'games'));
+  $('dl-btn')?.classList.toggle('active', route.name === 'download');
   if (route.name !== 'game') viewing = null;
   render();
   if (route.name === 'games' && !current) autoloadArcade();

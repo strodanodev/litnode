@@ -14,6 +14,14 @@ follows [Keep a Changelog](https://keepachangelog.com/).
   drop stale steps (the deployer bonding every node, an always-on relay to host Agent Fighter,
   the Google Drive header link).
 
+### Added
+- **Download the LITNODE Control Plane from the arcade.** A glowing **DOWNLOAD** button in the header and a
+  **DOWNLOAD NOW** banner on the Arcade page lead to `#/download`: the installer (0.1.12, a GitHub release asset
+  under tag `control-plane-v0.1.12`, not marked Latest so nodes never take it as an update), its SHA-256 with a
+  copy button, five install steps (checksum, per-user MSI, SmartScreen, the first-run guide, bonding), what the
+  app does and what to know. `cabinet/download.js` holds the build's facts in one object. The glow stops under
+  `prefers-reduced-motion`; on a phone the header button is an icon.
+
 ### Changed
 - **`node.env.example` is neutral**: `OPERATOR=my-node`, `DATA_DIR` and `REGION` commented with
   examples, the retired v1 NodeStake address and this studio's paths gone, and a `GAUNTLETS`

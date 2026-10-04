@@ -79,8 +79,8 @@ and ranked play goes on chain once four operators are online.
 need, install, bond with your own wallet, go public, keep it running,
 troubleshooting. About 30 minutes, free testnet tokens. The short version:
 
-1. **Install.** On Windows, the LITNODE Control Plane app (installer link
-   from the pilot team; pilot builds: https://drive.google.com/drive/folders/1UqaDCnkWRmNmUrOPlT3Icc7uViJVN5gR?usp=sharing),
+1. **Install.** On Windows, the LITNODE Control Plane app
+   (**[download](https://arcade.litvm.games/#/download)**: installer, checksum, install steps),
    or any OS from [GitHub Releases](https://github.com/strodanodev/litnode/releases/latest):
    `litnode-operator-v<version>-win-x64.zip` carries its own runtime;
    the plain zip needs [Node.js 20+](https://nodejs.org).
