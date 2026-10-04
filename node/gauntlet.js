@@ -36,6 +36,8 @@ import { connect, createServer as createTcpServer } from 'node:net';
 import { existsSync, readFileSync } from 'node:fs';
 import { roomCodeFor } from '../protocol/pairing.js';
 
+export const OPERATOR_SECRETS = ['OPERATOR_KEY', 'DEPLOYER_KEY', 'PUBLISHER_KEY', 'ADMIN_KEY'];
+
 const ROOM_RE = /^\/(LIT-[0-9A-F]{32})(\/ticket)?\/?$/;
 
 /** PB-compatible join ticket: base64url(claims JSON) '.' base64url(HMAC-SHA256(payload, secret)). */
@@ -99,7 +101,11 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
     try {
       run.port = await allocPort(cfg.portRange);
       const vars = { port: run.port, secret, publicUrl: publicWs(room), seats: JSON.stringify(seats), matchId, room, nodeUrl, mode, placedMode: placedMode ?? 'casual', rulesetId, node: process.execPath };
-      const env = { ...process.env, ...Object.fromEntries(Object.entries(cfg.env).map(([k, v]) => [k, fill(v, vars)])), GAUNTLET_MATCH_ID: matchId, GAUNTLET_ROOM: room, GAUNTLET_PORT: String(run.port), GAUNTLET_SECRET: secret, GAUNTLET_SEATS: vars.seats, GAUNTLET_PUBLIC_URL: vars.publicUrl, GAUNTLET_NODE_URL: nodeUrl, GAUNTLET_MODE: mode, GAUNTLET_PLACED_MODE: vars.placedMode };
+      // The node's own keys never reach a title's process (same rule as
+      // publisher services); a config that needs a secret names it in `env`.
+      const inherited = { ...process.env };
+      for (const k of OPERATOR_SECRETS) delete inherited[k];
+      const env = { ...inherited, ...Object.fromEntries(Object.entries(cfg.env).map(([k, v]) => [k, fill(v, vars)])), GAUNTLET_MATCH_ID: matchId, GAUNTLET_ROOM: room, GAUNTLET_PORT: String(run.port), GAUNTLET_SECRET: secret, GAUNTLET_SEATS: vars.seats, GAUNTLET_PUBLIC_URL: vars.publicUrl, GAUNTLET_NODE_URL: nodeUrl, GAUNTLET_MODE: mode, GAUNTLET_PLACED_MODE: vars.placedMode };
       const child = spawnImpl(fill(cfg.command, vars), cfg.args.map((a) => fill(a, vars)), { cwd: cfg.cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
       run.child = child; run.pid = child.pid ?? null;
       const tail = (d) => { const line = String(d).trim().split('\n').pop(); if (line) run.lastLine = line.slice(0, 200); };

@@ -9,7 +9,7 @@
  *  On a terminal the node draws its dashboard (node/tui.js). Under a
  *  scheduled task, a pipe or LITNODE_PLAIN=1 it prints one line per event
  *  instead, so litnode.log reads the same as the screen. */
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createNode } from './litnode.js';
@@ -17,12 +17,31 @@ import { createTui, formatEvent } from './tui.js';
 import { lanAddress } from './upnp.js';
 import { loadGauntletConfigs } from './gauntlet.js';
 import { loadServiceBundles } from './publisher-services.js';
+import { checkInstance, describePortHolder, ALREADY_RUNNING_EXIT, PORT_BUSY_EXIT } from './port.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const deployedPath = join(root, 'contracts', 'deployed.testnet.json');
 const deployed = existsSync(deployedPath) ? JSON.parse(readFileSync(deployedPath, 'utf8')) : {};
 const env = process.env;
 const list = (v) => (v ? v.split(',').map((s) => s.trim()).filter(Boolean) : []);
+const dataDir = env.DATA_DIR ?? join(root, 'data', env.OPERATOR ?? 'node');
+const port = Number(env.PORT ?? 7801);
+const pidFile = join(dataDir, 'node.pid');
+const ownId = (() => { try { return JSON.parse(readFileSync(join(dataDir, 'identity.json'), 'utf8')).publicKey ?? null; } catch { return null; } })();
+
+// One node per data directory (node/port.js): two launchers on one identity
+// (a leftover scheduled task and the Control Plane, say) must not both run.
+const inst = await checkInstance({ pidFile, port, nodeId: ownId, log: (m) => console.log(m) });
+if (inst.state === 'running') {
+  console.log(`this node (${inst.health.nodeId.slice(0, 8)}…, operator ${inst.health.operator ?? '?'}) is already running as PID ${inst.pid} on :${port}; not starting a second copy`);
+  process.exit(ALREADY_RUNNING_EXIT);
+}
+// Record the PID beside the identity BEFORE loading, so a second launcher
+// sees this node while it is still starting, and restart-node.cmd /
+// stop-node.cmd can end THIS process rather than its wrapper (a scheduled
+// task's End only stops cmd.exe; the node kept running and held the port).
+try { mkdirSync(dataDir, { recursive: true }); writeFileSync(pidFile, `${process.pid}\n`); } catch { /* read-only data dir: nothing to record */ }
+const dropPid = () => { try { if (Number(readFileSync(pidFile, 'utf8').trim()) === process.pid) rmSync(pidFile, { force: true }); } catch { /* gone already */ } };
 
 const interactive = process.stdout.isTTY && !env.LITNODE_PLAIN;
 const tui = interactive ? createTui({ chainId: deployed.chainId ?? null }) : null;
@@ -31,9 +50,11 @@ const stamp = () => `[${new Date().toISOString().slice(11, 19)}]`;
 const QUIET = new Set(['gossip.in', 'gossip.out', 'block', 'log']); // per-tick noise; the dashboard shows these, a log file should not
 const plainEvent = (ev) => { if (!QUIET.has(ev.type)) console.log(`${stamp()} ${formatEvent(ev, false)}`); };
 
-const node = await createNode({
-  dataDir: env.DATA_DIR ?? join(root, 'data', env.OPERATOR ?? 'node'),
-  port: Number(env.PORT ?? 7801),
+let node;
+try {
+node = await createNode({
+  dataDir,
+  port,
   host: env.HOST ?? '127.0.0.1',
   // Listening on every interface with nothing set: advertise the LAN IPv4
   // (what start-node.cmd computed for the zips), never 0.0.0.0. A tunnel
@@ -110,6 +131,19 @@ const node = await createNode({
   log: tui ? tui.log : (m) => console.log(`${stamp()} ${m}`),
   onEvent: tui ? tui.event : plainEvent,
 });
+} catch (e) {
+  if (tui) await tui.stop();
+  dropPid();
+  if (e?.code !== 'EADDRINUSE' && e?.code !== 'EACCES') throw e;
+  const busy = e.port ?? port;
+  if (e.code === 'EACCES') {
+    console.error(`cannot listen on :${busy} (EACCES). Hyper-V, WSL and Docker reserve port ranges at boot, and the ranges can move after a restart:\n  netsh interface ipv4 show excludedportrange protocol=tcp\n  set PORT to a number outside them`);
+    process.exit(PORT_BUSY_EXIT);
+  }
+  const who = await describePortHolder(busy, { nodeId: ownId });
+  console.error(`cannot listen on :${busy} (EADDRINUSE)\n${who.text}`);
+  process.exit(who.kind === 'self' ? ALREADY_RUNNING_EXIT : PORT_BUSY_EXIT);
+}
 if (tui) tui.attach(node);
 else console.log(`health: ${node.addr}/health   cabinet: ${node.addr}/`);
 // Last-resort safety net: a rejection nobody caught (a poll that failed, a
@@ -120,11 +154,6 @@ else console.log(`health: ${node.addr}/health   cabinet: ${node.addr}/`);
 process.on('unhandledRejection', (reason) => console.error(`[fatal] unhandledRejection (kept alive):`, reason));
 process.on('uncaughtException', (err) => console.error(`[fatal] uncaughtException (kept alive):`, err));
 
-// Record the PID beside the identity, so restart-node.cmd / stop-node.cmd can
-// end THIS process rather than the wrapper (a scheduled task's End only
-// stops cmd.exe; the node kept running and held the port).
-const pidFile = join(env.DATA_DIR ?? join(root, 'data', env.OPERATOR ?? 'node'), 'node.pid');
-try { writeFileSync(pidFile, `${process.pid}\n`); } catch { /* read-only data dir: nothing to record */ }
-const bail = async () => { if (tui) await tui.stop(); await node.stop(); try { rmSync(pidFile, { force: true }); } catch {} process.exit(0); };
+const bail = async () => { if (tui) await tui.stop(); await node.stop(); dropPid(); process.exit(0); };
 process.on('SIGINT', bail);
 process.on('SIGTERM', bail);

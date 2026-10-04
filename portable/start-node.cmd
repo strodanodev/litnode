@@ -50,7 +50,10 @@ echo  If peers must reach this machine and /health says reachable: false, run al
 echo.
 :run
 %NODE% node\cli.mjs
-if "%errorlevel%"=="75" (
+set "NODE_EXIT=%errorlevel%"
+if "%NODE_EXIT%"=="73" echo  this node is already running under another launcher; see the line above
+if "%NODE_EXIT%"=="74" echo  the port is taken; the lines above name who holds it
+if "%NODE_EXIT%"=="75" (
   rem The node updated itself (or update.cmd ran) and asked to be relaunched.
   if exist "runtime.new\node.exe" (
     rmdir /s /q runtime 2>nul
@@ -70,3 +73,4 @@ if "%errorlevel%"=="75" (
   goto run
 )
 if not "%LITNODE_NOPAUSE%"=="1" pause
+exit /b %NODE_EXIT%

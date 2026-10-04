@@ -204,7 +204,12 @@ export async function createNode({
       catch (e) { log(`repair failed: ${e.message} — unzip the current release over this folder and restart`); }
     })();
   }
-  const isLoopback = (req) => /^(::1|127\.\d+\.\d+\.\d+|::ffff:127\.\d+\.\d+\.\d+)$/.test(req.socket.remoteAddress ?? '');
+  // This machine only. cloudflared (and any local reverse proxy) connects
+  // from 127.0.0.1 too, so a loopback socket that carries forwarding headers
+  // is a public caller relayed through the tunnel, not the operator.
+  const FORWARDED = ['cf-connecting-ip', 'cf-ray', 'cdn-loop', 'x-forwarded-for', 'x-forwarded-host', 'x-real-ip', 'forwarded'];
+  const isLoopback = (req) => /^(::1|127\.\d+\.\d+\.\d+|::ffff:127\.\d+\.\d+\.\d+)$/.test(req.socket.remoteAddress ?? '')
+    && !FORWARDED.some((h) => h in req.headers);
   const restart = () => { log('restarting to run the new build'); emit('restart', {}); setTimeout(() => { if (onRestart) onRestart(); else process.exit(RESTART_EXIT); }, 300); };
 
   // ---------------------------------------------------------------- identity
@@ -1252,7 +1257,9 @@ export async function createNode({
     } catch (e) { json(res, 500, { error: e.message }); }
   });
 
-  await new Promise((r) => server.listen(port, host, r));
+  // A taken port rejects (err.code EADDRINUSE, err.port) instead of throwing
+  // an unhandled 'error' event; node/cli.mjs names who holds it.
+  await new Promise((res, rej) => { server.once('error', rej); server.listen(port, host, () => { server.off('error', rej); res(); }); });
   const actualPort = server.address().port;
   addr ??= `http://${host}:${actualPort}`;
   lanAddr = addr;

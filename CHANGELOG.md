@@ -5,6 +5,34 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Security
+- **`POST /update` no longer obeys public callers relayed through the tunnel.**
+  cloudflared connects from `127.0.0.1`, so the loopback check let anyone with a
+  node's tunnel URL force an update or a rollback and a restart. A loopback
+  socket that carries forwarding headers (`cf-connecting-ip`, `cf-ray`,
+  `x-forwarded-for`, …) is now refused with 403.
+- **Gauntlet processes no longer inherit the node's keys.** `OPERATOR_KEY`,
+  `DEPLOYER_KEY`, `PUBLISHER_KEY` and `ADMIN_KEY` are removed from a per-match
+  server's environment, as publisher services already did (they now drop
+  `ADMIN_KEY` too). A gauntlet config that needs a secret names it in `env`.
+
+### Fixed
+- **One node per data directory.** A second launch on the same identity (an old
+  portable build's scheduled task and the Control Plane, say) waits up to 30 s
+  for a node that is still loading, then exits 73 ("already running") instead of
+  racing it for the port. `node.pid` is written before loading, not after.
+- **A taken port says who holds it.** `EADDRINUSE` no longer ends in a stack
+  trace: the node names the holder (another litnode by nodeId, operator and
+  version, or another program by PID and path), any `litnode*` scheduled task
+  that starts it at boot, and exits 74. `EACCES` points at Windows' reserved
+  port ranges. `run-node.cmd` and `sdk/host/supervisor.mjs` wait 60 s after 73
+  or 74 rather than relaunching every 5 s; `start-node.cmd` now returns the
+  node's exit code.
+
+### Docs
+- **docs/STANDBY-HOST.md**: Agent Fighter's relay and Pickle Brawl's services on
+  a second machine (m16), and how clients pick one live host in a fixed order.
+
 ## [0.11.18] — 2026-09-27 — advisory lite guardian; reward points from the chain; host init --service-name
 
 ### Added

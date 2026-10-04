@@ -9,6 +9,13 @@ set LITNODE_NOPAUSE=1
 set LITNODE_PLAIN=1
 :again
 call start-node.cmd >> "%~dp0litnode.log" 2>&1
-echo [%date% %time%] node exited (%errorlevel%); restarting in 5 s >> "%~dp0litnode.log"
-timeout /t 5 /nobreak >nul
+set "CODE=%errorlevel%"
+rem 73: this node already runs under another launcher; 74: the port is taken.
+rem Retrying every 5 s only fills the log: wait a minute, then take over if
+rem the other one has gone.
+set WAIT=5
+if "%CODE%"=="73" set WAIT=60
+if "%CODE%"=="74" set WAIT=60
+echo [%date% %time%] node exited (%CODE%); restarting in %WAIT% s >> "%~dp0litnode.log"
+timeout /t %WAIT% /nobreak >nul
 goto again

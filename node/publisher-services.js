@@ -108,7 +108,7 @@ export function createServices({ bundles = [], nodeUrl, publicBase = () => null,
     const cwd = c.cwd ? (isAbsolute(c.cwd) || /^[A-Za-z]:/.test(c.cwd) ? c.cwd : join(svc.bundle.cwd, c.cwd)) : svc.bundle.cwd;
     const own = Object.fromEntries(Object.entries(c.env).map(([k, v]) => [k, fill(v, svc, gwPort)]));
     const env = { ...process.env, ...svc.files, ...own, LITNODE_SERVICE: svc.full, LITNODE_NODE_URL: nodeUrl };
-    delete env.OPERATOR_KEY; delete env.DEPLOYER_KEY; delete env.PUBLISHER_KEY;
+    delete env.OPERATOR_KEY; delete env.DEPLOYER_KEY; delete env.PUBLISHER_KEY; delete env.ADMIN_KEY;
     svc.state = 'starting'; svc.lastError = null;
     const child = spawnImpl(fill(c.command, svc, gwPort), c.args.map((a) => fill(a, svc, gwPort)), { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     svc.child = child; svc.pid = child.pid ?? null;

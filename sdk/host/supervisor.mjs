@@ -12,6 +12,7 @@ import { existsSync, openSync, rmSync, writeFileSync, closeSync } from 'node:fs'
 import { join } from 'node:path';
 import { readEnv, effectiveConfig, daemonEnv, ROOT, home } from './index.mjs';
 import { RESTART_EXIT } from '../../node/update.js';
+import { ALREADY_RUNNING_EXIT, PORT_BUSY_EXIT } from '../../node/port.js';
 
 const env = readEnv() ?? {};
 const cfg = effectiveConfig(env);
@@ -44,8 +45,12 @@ for (;;) {
   const code = await runOnce();
   if (stopping || existsSync(stopFile)) { log(`node exited (${code}); stopping`); break; }
   if (code === RESTART_EXIT) { log('node asked for a restart (update applied); relaunching'); continue; }
-  log(`node exited (${code}); restarting in 5 s`);
-  await new Promise((r) => setTimeout(r, 5000));
+  // 73: this identity already runs under another launcher; 74: something
+  // else holds the port (litnode.log names it). Retrying every 5 s only
+  // fills the log, so wait a minute: if the other one goes away, we take over.
+  const waitS = code === ALREADY_RUNNING_EXIT || code === PORT_BUSY_EXIT ? 60 : 5;
+  log(`node exited (${code}${code === ALREADY_RUNNING_EXIT ? ': already running elsewhere' : code === PORT_BUSY_EXIT ? ': port taken' : ''}); restarting in ${waitS} s`);
+  await new Promise((r) => setTimeout(r, waitS * 1000));
   if (stopping || existsSync(stopFile)) break;
 }
 rmSync(pidFile, { force: true });
