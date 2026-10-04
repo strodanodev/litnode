@@ -152,20 +152,26 @@ Generate a new key, add its public half to `RELAY_KEYS` / `COURTS` /
 remove the old one. Results already settled keep the key they were settled
 with in `relay.id` / `attestor`; nothing is rewritten.
 
-## 6. Bringing up a second operator
+## 6. Bringing up another operator
 
-1. Install from a release zip on a machine with its own line (not the
-   publisher's LAN), `ROLES=mesh,host,witness,settler`, its own `OPERATOR`.
-2. Bond its key from **that operator's own wallet** (`npm run bond` with
-   their key in their shell). Two nodes bonded by the same wallet cannot
-   witness each other.
-3. If it should be a seed, `TUNNEL=quick` or a real address, and a delegated
-   announcer. Readers will challenge `/whoami` before using it.
-4. Run a title relay on it if it should host gameplay (Agent Fighter:
-   `run-af-relay.cmd`), `RELAY_PORT` so its `wsAddr` is advertised, and
-   `RELAY_KEYS` for its watcher.
-5. Check from the first operator's node: `/peers` shows it fresh, bonded,
-   protocol-compatible; a placed match draws it; its co-signatures arrive.
+The operator's own steps are [OPERATORS.md](OPERATORS.md). From the
+pilot team's side:
 
-Until step 4 exists on a second operator, the mesh has one gameplay relay
-and the publisher-independence claim is not demonstrated (SPEC §4).
+1. They install on a machine with its own line (not the publisher's LAN),
+   `ROLES=mesh,host,witness,settler`, a unique `OPERATOR`.
+2. They bond from **their own wallet** (the Nodes page's Operator panel,
+   or `npm run host -- bond` with their key in their shell). Two nodes
+   bonded by the same wallet are one operator and cannot witness each
+   other.
+3. For a seed: `TUNNEL=quick` or a real address, and a delegated, funded
+   announcer. Readers challenge `/whoami` before using it.
+4. To host gameplay without the publisher: `GAUNTLETS=agent-fighter.v1=…`
+   and `GAUNTLET_GATEWAY_PORT=8478` (OPERATORS.md step 6). The node runs
+   Agent Fighter's match server per hosted match, with no database and no
+   publisher key.
+5. Check from your node: `/peers` shows it fresh, bonded and
+   protocol-compatible; `npm run fleet` shows its telemetry; a placed
+   match draws it; its attestations land on MatchBook.
+
+Ranked results go on chain only once four operators (four wallets) have
+fresh bonded nodes: a host and three witnesses.

@@ -5,6 +5,24 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Docs
+- **docs/OPERATORS.md: one operator guide for the testnet pilot.** Requirements, the three
+  install paths, wallet bonding from the Nodes page (both faucets), going public, hosting Agent
+  Fighter matches per match, updates, a troubleshooting table (exit codes 73/74, reserved ports,
+  the Control Plane's Restart and `node.env` rewrite) and what pilot operators report. README,
+  both zip READMEs, RUNBOOK §6, HOST-A-NODE, SDK.md and the `host-a-node` skill point to it and
+  drop stale steps (the deployer bonding every node, an always-on relay to host Agent Fighter,
+  the Google Drive header link).
+
+### Changed
+- **`node.env.example` is neutral**: `OPERATOR=my-node`, `DATA_DIR` and `REGION` commented with
+  examples, the retired v1 NodeStake address and this studio's paths gone, and a `GAUNTLETS`
+  block for Agent Fighter.
+- **The zips carry `gauntlets/agent-fighter.json`** (a template with a placeholder `cwd`), so an
+  operator can host Agent Fighter matches without a source checkout of litnode.
+- **Nodes page, "Run a node"**: what to have first (a fresh wallet with zkLTC, `cloudflared`), the
+  `node.env` lines, the four-operator rule, and a link to the guide.
+
 ## [0.11.21] — 2026-10-05 — player progression from the chain (/progress)
 
 ### Added

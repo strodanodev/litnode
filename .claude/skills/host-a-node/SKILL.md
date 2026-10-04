@@ -8,7 +8,9 @@ description: Connect, publish and host a LIT GAMES arcade node (litnode) on any 
 You are taking a machine from "checkout or unzipped release" to a bonded,
 reachable, announced litnode, using `npm run host -- <command>`. Read
 `docs/HOST-A-NODE.md` once; it is the contract (commands, JSON shapes,
-exit codes, what each stage proves). Every command is non-interactive and
+exit codes, what each stage proves). For a human operator, the
+step-by-step page with wallet bonding from the Nodes page and a
+troubleshooting table is `docs/OPERATORS.md`; point them there. Every command is non-interactive and
 idempotent, so re-running is always safe.
 
 ## Ground rules
@@ -68,7 +70,8 @@ idempotent, so re-running is always safe.
    `npm run delegate -- <nodeId> <announcer address> --fund 0.005` names
    the node's own announcer as its delegate (the key it sends commit,
    settle, attest and finalize with; gas only, never the bond) and
-   `npm run enroll -- <nodeId>` joins the nine-seat pool. Both take
+   `npm run enroll -- <nodeId>` joins the nine-seat pool (optional: the
+   node enrolls itself once its hot key is delegated and funded). Both take
    `OPERATOR_KEY` from the shell. `/health.matchBook` and `/health.bond`
    (`eligible`, `delegate`) say where the node stands; a bond younger than
    `eligibilityAge` is not drawn to witness yet. The arcade's Nodes page
@@ -97,6 +100,24 @@ already runs a title relay on `RELAY_PORT` (Agent Fighter), `--gauntlet-gateway-
 then advertises the title in its heartbeat and placement draws it first for
 that title. `status` shows `/health.gauntlet`. The config and the title's side are in
 `docs/BRING-YOUR-BACKEND.md` section 6a and the `migrate-a-title` skill.
+
+**Agent Fighter, per match, no publisher secrets.** Copy
+`gauntlets/agent-fighter.json` OUTSIDE the install folder (updates replace
+`gauntlets/`), set its `cwd` to an Agent Fighter checkout with `npm ci` done,
+then `init --gauntlets agent-fighter.v1=<that copy> --gauntlet-gateway-port 8478
+--tunnel quick` and `restart`. No `--courts`: Agent Fighter is replayable and
+its results are signed by both players. `/health.gauntlet.titles` lists
+`agent-fighter.v1` and `wsAddr` is the gateway's public URL.
+
+## When the node will not start
+
+The node's exit code says why. **73**: this identity already runs under
+another launcher (a scheduled task, the Control Plane, a second `start`);
+use that one. **74**: another process holds the port; `litnode.log` names it
+(another litnode by nodeId and path, or a program by PID) and any `litnode*`
+boot task that starts it. `EACCES` on the port: a Windows reserved range
+(`netsh interface ipv4 show excludedportrange protocol=tcp`). The
+supervisor waits 60 s after 73 or 74 instead of looping.
 
 ## Running a studio's whole backend (publisher services)
 

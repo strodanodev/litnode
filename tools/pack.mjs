@@ -76,6 +76,10 @@ for (const kind of kinds) {
   for (const f of ['deployed.testnet.json', 'deploy.testnet.json']) if (existsSync(join(root, 'contracts', f))) cpSync(join(root, 'contracts', f), join(stage, 'contracts', f));
   mkdirSync(join(stage, 'tools'), { recursive: true });
   for (const f of ['start-node.cmd', 'allow-firewall.cmd', 'update.cmd', 'node.env.example']) cpSync(join(root, 'portable', f), join(stage, f));
+  // The Agent Fighter gauntlet template, so an operator can host its matches from a zip (docs/OPERATORS.md step 6).
+  // Only this one: the other configs in gauntlets/ describe the publisher's own machine.
+  mkdirSync(join(stage, 'gauntlets'), { recursive: true });
+  cpSync(join(root, 'gauntlets', 'agent-fighter.json'), join(stage, 'gauntlets', 'agent-fighter.json'));
   cpSync(join(root, 'tools', 'update.mjs'), join(stage, 'tools', 'update.mjs'));
   cpSync(join(root, 'tools', 'guardian.mjs'), join(stage, 'tools', 'guardian.mjs'));
   if (runtime) {

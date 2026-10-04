@@ -287,7 +287,7 @@ export OPERATOR_KEY=0x...                       # your wallet (the PUBLISHER_KEY
 npm run host -- bond                            # 1 tLITVM on testnet
 npm run delegate -- <nodeId> <announcer address> --fund 0.005   # the hot key the node sends with
 npm run host -- publish --fund 0.02             # tunnel, proof of possession, announce on NodeDirectory
-npm run enroll -- <nodeId>                      # the nine-seat escalation pool
+npm run enroll -- <nodeId>                      # optional: the node enrolls itself in the nine-seat pool once its hot key is funded
 unset OPERATOR_KEY
 npm run host -- install-service && npm run host -- verify
 ```
@@ -342,6 +342,7 @@ and slash sizes live in the contract and are read at start.
 | `docs/HOST-YOUR-TITLE.md` | the title contract and the rules of recognition |
 | `docs/BRING-YOUR-BACKEND.md` | bridge, gauntlet loops, node discovery |
 | `docs/BUILD-FROM-SCRATCH.md` | the client SDK and the shell protocol |
+| `docs/OPERATORS.md` | run a node as an operator: install, wallet bonding, troubleshooting |
 | `docs/HOST-A-NODE.md` | the node harness, stage by stage |
 | `docs/PUBLISHER-BONDS.md` | titles as tokens, host grants, escalation seats |
 | `docs/UNIVERSAL-LOGIN.md` | sign in with AIR, proxy wallets, one profile |

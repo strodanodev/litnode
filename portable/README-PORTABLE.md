@@ -9,8 +9,8 @@ LIT GAMES cabinet at `http://localhost:7801/`.
 ## On each machine
 
 1. Unzip this folder anywhere. Double-click `start-node.cmd`.
-2. Answer two prompts: an operator name (`laptop`, `rog-ally`) and the seed
-   URL of a node that is already running (blank on the first machine).
+2. Answer two prompts: a name for your node (`alice-laptop`), and a seed
+   URL — leave it blank: the node finds the mesh on chain.
 3. The dashboard opens in the terminal: peers, titles, live gossip with real
    signatures, placements, settlements. Keys: `q` quit, `g` show every
    gossip envelope, `l` log, `p` pause. `http://localhost:7801/` is the
@@ -36,11 +36,17 @@ is refused. Your `data` folder, `node.env` and log are never touched.
 ## Bond the node (once per machine)
 
 A node that is not bonded gossips and hydrates rulesets but is excluded from
-placement and cannot co-sign; its health shows `bonded: false`. From the
-laptop that holds the deployer key:
+placement and cannot co-sign; its health shows `bonded: false`. Open
+**http://localhost:7801/#/node** and use the **Operator** panel with your
+own browser wallet on litVM LiteForge: faucet tLITVM, bond, set the hot key,
+then fund it with a little zkLTC (free at liteforge.hub.caldera.xyz). The
+Setup checklist on that page shows what is left. The full operator guide:
+https://github.com/strodanodev/litnode/blob/master/docs/OPERATORS.md
 
-    set DEPLOYER_KEY=0x...
-    node tools/bond-node.mjs <nodeId printed by the other machine>
+From a terminal instead (needs `npm install ethers` in this folder once):
+
+    set DEPLOYER_KEY=0x...        your operator wallet, this shell only
+    node tools/bond-node.mjs <nodeId>
 
 Testnet minimum is 1 tLITVM (contracts/deploy.testnet.json). Health flips to
 `bonded: true` within about ten seconds.

@@ -7,6 +7,10 @@ for an agent acting on their behalf. The daemon is unchanged
 effective configuration, and judges every stage by what the node and the
 chain say, never by what it did last.
 
+New operator? Start with [OPERATORS.md](OPERATORS.md), the step-by-step
+guide (wallet bonding from the Nodes page, troubleshooting); this page is
+the harness reference.
+
 Code: `sdk/host/index.mjs` (library), `sdk/host/cli.mjs` (commands),
 `sdk/host/supervisor.mjs` (keeps a detached node alive). Tests:
 `demo/host.test.mjs`. Agent procedure: `.claude/skills/host-a-node/SKILL.md`.
@@ -145,7 +149,9 @@ and refusing it as foreign.
 `start --detach` and every service run `sdk/host/supervisor.mjs`: it runs
 `node/cli.mjs` in plain mode with `node.env` (plus the computed
 `PUBLIC_ADDR`, minus any key) and appends to `litnode.log`; relaunches at
-once on exit 75 (an applied signed update) and after 5 s on anything else;
+once on exit 75 (an applied signed update), after 60 s on exit 73 (this
+identity already runs under another launcher) or 74 (another process holds
+the port; the log names it), and after 5 s on anything else;
 ends cleanly on SIGTERM or a `supervisor.stop` file. PIDs:
 `DATA_DIR/supervisor.pid` and `DATA_DIR/node.pid`. It is the cross-platform
 `run-node.cmd`.

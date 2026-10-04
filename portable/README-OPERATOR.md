@@ -6,50 +6,67 @@ terminals, and the chain tooling (bond other nodes, import studio ledgers,
 anchor the hour's root). Nothing here is a different program: **every node
 runs the same daemon; roles are configuration.**
 
+**Start here:** the operator guide,
+https://github.com/strodanodev/litnode/blob/master/docs/OPERATORS.md —
+requirements, install, bonding with your own wallet, going public, the
+Agent Fighter match server, updates and troubleshooting. This file is the
+short version for this folder.
+
 ## Roles, and who runs what
 
 | Node | Bond | Roles | Runs where | Why |
 |---|---|---|---|---|
-| Operator (publisher) | yes, its own wallet | mesh, host, witness, settler | a desktop or VPS that stays up | seeds the mesh, keeps every ledger and build, settles and anchors |
-| Volunteer / guild | yes, its own wallet | mesh, witness (+ host) | anyone's machine | verifies other operators' matches; hosts when drawn |
-| Relay / court | via its operator | host | beside a game's own server | Agent Fighter relay, Pickle Brawl court |
+| Operator | yes, its own wallet | mesh, host, witness, settler | a desktop or VPS that stays up | hosts and witnesses matches, keeps every ledger and build, settles and anchors |
+| Volunteer / witness | yes, its own wallet | mesh, witness | anyone's machine, even without a public address | verifies other operators' matches |
+| Game match server | runs on its host node | — | the node drawn to host (`GAUNTLETS=`) | Agent Fighter's per-match server; no database, no publisher key |
 | Player | none | — | the browser | not a node: signs queue entries and ledgers, talks to nodes over HTTPS/WSS |
 
 A witness must be bonded from a **different wallet** than the host it
-witnesses. Two nodes from one wallet are one operator.
+witnesses. Two nodes from one wallet are one operator. A ranked match
+goes on chain only with a host and three witnesses under four different
+wallets.
 
-## Set up
+## Set up (Windows)
 
-Every step below also exists as one non-interactive command —
-`node sdk/host/cli.mjs init|doctor|start --detach|bond|publish|install-service|verify`
-(`docs/HOST-A-NODE.md` in the source repository) — which is what an
-agent, a Linux or macOS machine, or a script should use. The steps here
-are the Windows double-click path.
+Every step also exists as one non-interactive command —
+`runtime
+ode.exe sdkhostcli.mjs init|doctor|start --detach|bond|publish|install-service|verify`
+(or `npm run host -- …` with Node.js installed) — which is what an
+agent, a Linux or macOS machine, or a script should use.
 
-1. Unzip. The `-win-x64` zip carries its runtime in `runtime/`; the plain
-   zip needs Node.js 20+ (`winget install OpenJS.NodeJS.LTS`).
-2. Copy `node.env.example` to `node.env`, set `OPERATOR`, `SEEDS`, and
-   `PUBLIC_ADDR` if this machine has a public address.
+1. Unzip somewhere you will keep. The `-win-x64` zip carries its runtime
+   in `runtime/`; the plain zip needs Node.js 20+
+   (`winget install OpenJS.NodeJS.LTS`). For a public address install
+   `cloudflared` too (`winget install Cloudflare.cloudflared`).
+2. Copy `node.env.example` to `node.env`; set a unique `OPERATOR`, your
+   `REGION`, and `TUNNEL=quick`. Leave `SEEDS` empty: the node finds the
+   mesh on chain.
 3. **Start it interactively first**: `start-node.cmd`. This generates the
    identity, shows the dashboard, and — because it is an interactive
    program listening on every interface — triggers Windows' own firewall
    prompt, which a scheduled task never gets. Click Allow, or run
-   `allow-firewall.cmd` once instead. Note the `nodeId`; confirm
-   `http://localhost:7801/health` shows `inbound.reachable: true` once a
-   peer is pointed at you.
-4. Bond it (see below), then from an **admin** prompt: `install-task.cmd`.
-   The node now starts at logon and restarts if it dies, writing one line
-   per event to `litnode.log` (no dashboard: there is no terminal).
+   `allow-firewall.cmd` once instead.
+4. Open **http://localhost:7801/#/node** and bond from the **Operator**
+   panel with your own browser wallet on litVM LiteForge: faucet tLITVM,
+   bond (1 tLITVM), set the hot key, delegate and fund the announcer, top
+   up the hot key with zkLTC. The **Setup checklist** on that page ticks
+   off each step.
+5. Stop the dashboard (`q`), then from an **admin** prompt:
+   `install-task.cmd`. The node now starts at logon and restarts if it
+   stops, writing one line per event to `litnode.log`.
 
 An operator behind a Cloudflare tunnel needs no firewall rule at all — the
 tunnel dials out. The rule is for LAN meshes and port-forwarded hosts.
+
+If the node exits with code 74, `litnode.log` names what holds its port;
+code 73 means this node already runs under another launcher.
 
 ## Chain tooling (needs `npm install` in this folder once — pulls ethers)
 
 Every command reads the signing key from the environment of the shell you
 run it in, and nowhere else. Never write a private key into a file here.
 
-    set DEPLOYER_KEY=0x...
+    set DEPLOYER_KEY=0x...                         your operator wallet (the harness takes OPERATOR_KEY)
     node tools/bond-node.mjs <nodeId>              bond a node (yours or another machine's)
     node tools/af-import-ledger.mjs <matchId> --post http://127.0.0.1:7801
                                                    settle an Agent Fighter relay match
@@ -63,16 +80,20 @@ run it in, and nowhere else. Never write a private key into a file here.
 
 ## Production shape
 
-- **Seeds** are two or three operator nodes with stable public addresses,
-  set as NODE_URL in cabinet/config.js. Everything else discovers through them.
+- **Seeds** are bonded nodes with a public address and a delegated, funded
+  announcer: they publish themselves on NodeDirectory, and fresh installs
+  and the hosted arcade find the mesh there. A named tunnel keeps a
+  seed's address stable across restarts.
 - **Operators** stay up. A node that lapses ages out of the draw in ~6 s and
   back in when it returns; nothing it settled is lost, because deltas and
   builds are kept on disk and served by hash.
 - **Public reachability** is one line: `TUNNEL=quick` in `node.env` and the
   node runs its own Cloudflare tunnel, advertises the public https URL in
   its heartbeat and falls back to the LAN address if it drops. Add
-  `RELAY_PORT=8477` and it fronts the Agent Fighter relay on this machine
-  too (`npm run server` in the AF checkout) and advertises it as `wsAddr`.
+  `GAUNTLETS=agent-fighter.v1=<your copy of gauntlets/agent-fighter.json>`
+  and `GAUNTLET_GATEWAY_PORT=8478` and it runs Agent Fighter's match server
+  for each match it hosts and advertises the gateway as `wsAddr` (copy the
+  template outside this folder: updates replace `gauntlets/`).
   A quick tunnel's hostname changes every run — fine for everything that
   learns addresses by gossip, not for the `SEEDS=` a new node types in or
   the hosted cabinet's default. For a stable name, once on this machine:
