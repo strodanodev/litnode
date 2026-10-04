@@ -5,6 +5,8 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.11.19] — 2026-10-05 — one node per data directory; seats need the player's signature; /update refuses tunnel callers
+
 ### Security
 - **`POST /update` no longer obeys public callers relayed through the tunnel.**
   cloudflared connects from `127.0.0.1`, so the loopback check let anyone with a
