@@ -5,6 +5,8 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.11.21] — 2026-10-05 — player progression from the chain (/progress)
+
 ### Added
 - **Player progression from the chain** (M2 of the Agent Fighter MVP). `GET /progress?ruleset=&player=`
   answers XP, level, record, streak and rating for a player key, folded by `protocol/progression.js`
