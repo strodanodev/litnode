@@ -1,0 +1,12 @@
+{
+  "$comment": "Agent Fighter as a gauntlet title (node/gauntlet.js): for every match this node hosts, it runs the title's own match server for that match alone (packages/server/src/gauntlet-server.ts), with no database and no publisher key: players are the placed keys, seated by the node's tickets; the seed is the placement's; the server posts the signed log to this node's /ledger and exits. In node.env: GAUNTLETS=agent-fighter.v1=<absolute path to this file> and GAUNTLET_GATEWAY_PORT=8478 (the relay tunnel fronts the gateway; a node that still runs the always-on relay keeps RELAY_PORT=8477 behind it). cwd is an Agent Fighter checkout on the engine the live client plays (npm ci at its root); nothing in its .env is read. Machine-specific: copy and edit the paths.",
+  "command": "${node}",
+  "args": ["node_modules/tsx/dist/cli.mjs", "packages/server/src/gauntlet-server.ts"],
+  "cwd": "E:/NPC/AGENT FIGHTER/agent-fighter",
+  "env": {},
+  "portRange": [7820, 7859],
+  "readyMs": 60000,
+  "ttlMs": 900000,
+  "ticketTtlMs": 900000,
+  "settledGraceMs": 3000
+}

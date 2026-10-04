@@ -18,6 +18,7 @@ import { generateKeypair, seal } from '../protocol/keys.js';
 import { QUEUE_TAG, bucketOf, roomCodeFor } from '../protocol/pairing.js';
 import { signSeat } from '../protocol/challenge.js';
 import { PROTOCOL_VERSION } from '../protocol/version.js';
+import { seedFor } from '../protocol/placement.js';
 
 const ROOT = process.cwd();
 const PB = join(ROOT, 'rulesets', 'pickle-brawl.v1.js');
@@ -233,4 +234,20 @@ test('gauntlet: a placement ADOPTED from a peer that names this node as host sta
   const r = await fetch(`${host.addr}/gossip`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ matches: [await seal('match', d, peer)] }) });
   assert.equal(r.status, 200);
   assert.ok(await until(() => host.gauntlet.status().active.some((a) => a.matchId === matchId && a.state === 'up'), 30_000), `court up for the adopted placement: ${JSON.stringify(host.gauntlet.status())}`);
+});
+
+test('gauntlet: the process gets the placement\'s seed H(beacon, matchId), the build and the ruleset, never picks its own', async (t) => {
+  const seen = [];
+  const fakeSpawn = (cmd, args, opts) => { seen.push(opts.env); const child = { pid: 1, stdout: null, stderr: null, on: (ev, fn) => { if (ev === 'exit') child.exit = fn; }, kill: () => child.exit?.(0) }; return child; };
+  const base = { command: 'x', args: [], cwd: ROOT, env: {}, portRange: [7890, 7899], readyMs: 50, ttlMs: 60_000, ticketTtlMs: 60_000 };
+  const g = createGauntlets({ configs: { 'agent-fighter.v1': base }, port: 0, nodeUrl: 'http://127.0.0.1:1', log: () => {}, spawnImpl: fakeSpawn, nodeId: 'H' });
+  await g.listen();
+  t.after(() => g.stopAll());
+  const matchId = 'ab'.repeat(32);
+  g.onPlaced({ matchId, rulesetId: 'agent-fighter.v1', participants: ['p', 'q'], host: 'H', beacon: 'beacon-1', buildHash: 'b'.repeat(64), mode: 'ranked' });
+  assert.ok(await until(() => seen.length === 1, 5000), 'spawned');
+  assert.equal(seen[0].GAUNTLET_SEED, seedFor('beacon-1', matchId));
+  assert.equal(seen[0].GAUNTLET_BUILD, 'b'.repeat(64));
+  assert.equal(seen[0].GAUNTLET_RULESET, 'agent-fighter.v1');
+  assert.equal(seen[0].GAUNTLET_PLACED_MODE, 'ranked');
 });

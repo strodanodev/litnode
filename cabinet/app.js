@@ -11,7 +11,7 @@
  *             that arrives with the Agent Fighter sync. Labelled "sample". */
 import { loadPlayer as loadKeypair, createClient, IDENTITY_KEY } from './client.js';
 import { roomCodeFor } from './protocol/pairing.js';
-import { ledgerBody, signLedger } from './protocol/log.js';
+import { chainHead, ledgerBody, signLedger } from './protocol/log.js';
 import { signSeat, NONCE_RE } from './protocol/challenge.js';
 import { applyDelta, sortDeltas } from './protocol/derive.js';
 import { NODE_URL, GAMES as CONFIG_GAMES } from './config.js';
@@ -1145,7 +1145,16 @@ window.addEventListener('message', async (e) => {
   // shell launched, with the build it launched — a title cannot get a
   // signature over some other match or some other ruleset.
   if (e.data.type === 'cabinet:sign') {
-    const b = e.data.body ?? {};
+    const b = { ...(e.data.body ?? {}) };
+    // With the title's OWN input log (`entries`, what it recorded while playing), the shell computes the head
+    // itself and signs that, never a head the host handed the title: a host that edited the log gets no
+    // signature. A head sent beside the log must agree with it.
+    if (Array.isArray(e.data.entries)) {
+      let head = null;
+      try { head = chainHead(e.data.entries); } catch { /* a gap or a reorder: not a log */ }
+      if (!head || (b.head != null && b.head !== head)) { frame.contentWindow.postMessage({ type: 'cabinet:signed', matchId: b.matchId ?? null, error: head ? 'the host\'s head does not match the log this game recorded' : 'the log has a gap or a reorder' }, '*'); return; }
+      b.head = head; b.ticks = e.data.entries.length;
+    }
     const ok = currentMatch && player?.kp && b.matchId === currentMatch.matchId && (!currentMatch.buildHash || b.buildHash === currentMatch.buildHash)
       && typeof b.head === 'string' && Number.isInteger(b.ticks) && b.ticks > 0;
     if (!ok) { frame.contentWindow.postMessage({ type: 'cabinet:signed', matchId: b.matchId ?? null, error: 'not the match this shell launched' }, '*'); return; }

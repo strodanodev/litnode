@@ -162,8 +162,17 @@ goes on to the relay. Without it the gateway would try to take the relay's
 port and the node would not start; `npm run host -- doctor` says so.
 `npm run host -- init --gauntlets <id>=<json> --gauntlet-gateway-port 8478
 --courts <id>:<key>` writes all three. `/health.gauntlet` shows titles and
-live processes. The example config is
-`gauntlets/pickle-brawl.json`.
+live processes. The example configs are `gauntlets/pickle-brawl.json` and
+`gauntlets/agent-fighter.json`.
+
+**Agent Fighter.** `GAUNTLETS=agent-fighter.v1=<path>/gauntlets/agent-fighter.json`
+(edit its `cwd` to an Agent Fighter checkout with `npm ci` done) plus a gateway
+port runs Agent Fighter's own match server once per match this node hosts, with
+no database and no publisher key: it never reads the checkout's `.env`. The
+players are the placed keys, seated by the node's tickets after they sign the
+gateway's challenge; the seed is the placement's; the server posts the log with
+both players' signatures to this node and exits. Any bonded node set up this way
+can host Agent Fighter; it does not need the publisher's relay.
 
 ## Services: running a studio's backend on this node
 

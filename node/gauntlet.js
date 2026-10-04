@@ -36,6 +36,8 @@ import { connect, createServer as createTcpServer } from 'node:net';
 import { existsSync, readFileSync } from 'node:fs';
 import { roomCodeFor } from '../protocol/pairing.js';
 import { newNonce, verifySeat, NONCE_RE } from '../protocol/challenge.js';
+import { seedFor } from '../protocol/placement.js';
+import { h } from '../protocol/canonical.js';
 
 export const OPERATOR_SECRETS = ['OPERATOR_KEY', 'DEPLOYER_KEY', 'PUBLISHER_KEY', 'ADMIN_KEY'];
 
@@ -91,7 +93,7 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
   const allocPort = async ([lo, hi]) => { for (let p = lo; p <= hi; p++) if (!used.has(p) && (await portFree(p))) { used.add(p); return p; } throw new Error(`no free port in ${lo}-${hi}`); };
 
   /** Start a gauntlet for a placement this node hosts. Idempotent per matchId. */
-  const start = async ({ matchId, rulesetId, participants, mode: placedMode = null }) => {
+  const start = async ({ matchId, rulesetId, participants, mode: placedMode = null, beacon = null, buildHash = null }) => {
     const cfg = configs[rulesetId];
     if (!cfg || active.has(matchId)) return active.get(matchId) ?? null;
     const room = roomCodeFor(matchId);
@@ -101,12 +103,15 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
     active.set(matchId, run); rooms.set(room, run);
     try {
       run.port = await allocPort(cfg.portRange);
-      const vars = { port: run.port, secret, publicUrl: publicWs(room), seats: JSON.stringify(seats), matchId, room, nodeUrl, mode, placedMode: placedMode ?? 'casual', rulesetId, node: process.execPath };
+      // The match seed is the placement's, H(beacon, matchId): the one a witness replays with, so the server
+      // never picks it (node/settle.js bind). No beacon (a direct start): the seed settle uses for unplaced matches.
+      const seed = beacon != null ? seedFor(beacon, matchId) : h('seed', matchId);
+      const vars = { port: run.port, secret, publicUrl: publicWs(room), seats: JSON.stringify(seats), matchId, room, nodeUrl, mode, placedMode: placedMode ?? 'casual', rulesetId, node: process.execPath, seed, buildHash: buildHash ?? '' };
       // The node's own keys never reach a title's process (same rule as
       // publisher services); a config that needs a secret names it in `env`.
       const inherited = { ...process.env };
       for (const k of OPERATOR_SECRETS) delete inherited[k];
-      const env = { ...inherited, ...Object.fromEntries(Object.entries(cfg.env).map(([k, v]) => [k, fill(v, vars)])), GAUNTLET_MATCH_ID: matchId, GAUNTLET_ROOM: room, GAUNTLET_PORT: String(run.port), GAUNTLET_SECRET: secret, GAUNTLET_SEATS: vars.seats, GAUNTLET_PUBLIC_URL: vars.publicUrl, GAUNTLET_NODE_URL: nodeUrl, GAUNTLET_MODE: mode, GAUNTLET_PLACED_MODE: vars.placedMode };
+      const env = { ...inherited, ...Object.fromEntries(Object.entries(cfg.env).map(([k, v]) => [k, fill(v, vars)])), GAUNTLET_MATCH_ID: matchId, GAUNTLET_ROOM: room, GAUNTLET_PORT: String(run.port), GAUNTLET_SECRET: secret, GAUNTLET_SEATS: vars.seats, GAUNTLET_PUBLIC_URL: vars.publicUrl, GAUNTLET_NODE_URL: nodeUrl, GAUNTLET_MODE: mode, GAUNTLET_PLACED_MODE: vars.placedMode, GAUNTLET_SEED: seed, GAUNTLET_BUILD: vars.buildHash, GAUNTLET_RULESET: rulesetId };
       const child = spawnImpl(fill(cfg.command, vars), cfg.args.map((a) => fill(a, vars)), { cwd: cfg.cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
       run.child = child; run.pid = child.pid ?? null;
       const tail = (d) => { const line = String(d).trim().split('\n').pop(); if (line) run.lastLine = line.slice(0, 200); };
@@ -258,7 +263,7 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
   const status = () => ({ port: actualPort, upstream, titles: Object.keys(configs), services: services?.status() ?? [], active: [...active.values()].map((r) => ({ matchId: r.matchId, rulesetId: r.rulesetId, room: r.room, state: r.state, mode: r.mode, seats: r.seats.length, port: r.port, pid: r.pid, since: new Date(r.startedAt).toISOString(), lastError: r.lastError, exitCode: r.exitCode })) });
 
   /** Hooks the node calls. A placement is ours when it names this node as host. */
-  const onPlaced = (d) => { if (configs[d.rulesetId] && (!nodeId || d.host === nodeId)) start({ matchId: d.matchId, rulesetId: d.rulesetId, participants: d.participants, mode: d.mode ?? null }).catch(() => {}); };
+  const onPlaced = (d) => { if (configs[d.rulesetId] && (!nodeId || d.host === nodeId)) start({ matchId: d.matchId, rulesetId: d.rulesetId, participants: d.participants, mode: d.mode ?? null, beacon: d.beacon ?? null, buildHash: d.buildHash ?? null }).catch(() => {}); };
   // The settlement answer is still on its way back to the court when this
   // fires; give the process a moment to receive it and tell its players
   // before it is ended (settledGraceMs, default 3 s).

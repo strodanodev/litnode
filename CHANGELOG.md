@@ -5,7 +5,25 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-## [0.11.19] — 2026-10-05 — one node per data directory; seats need the player's signature; /update refuses tunnel callers
+## [0.11.19] — 2026-10-05 — Agent Fighter runs per match on the node that hosts it; seats need the player's signature; one node per data directory; /update refuses tunnel callers
+
+### Added
+- **Agent Fighter as a gauntlet title** (`gauntlets/agent-fighter.json`). A node
+  with `GAUNTLETS=agent-fighter.v1=<that file>` and a gateway port runs Agent
+  Fighter's own match server (`packages/server/src/gauntlet-server.ts` in the
+  Agent Fighter repo) for each match it hosts, and nothing else: no database, no
+  AIR, no publisher key. Players are the placed keys, seated by the node's
+  tickets; the seed is the placement's; the server posts the log with both
+  players' signatures to its node and exits. Placement already draws a node that
+  runs a title's gauntlet first. End to end in `demo/af-gauntlet.test.mjs`
+  (two nodes, two players, settled as `players`, witnessed, official).
+- **The match server gets the placement's seed.** Every gauntlet process now
+  receives `GAUNTLET_SEED` = H(beacon, matchId), the seed witnesses replay with,
+  plus `GAUNTLET_BUILD` and `GAUNTLET_RULESET`.
+- **The arcade signs the head it computed.** `cabinet:sign` takes the title's own
+  input log (`entries`): the shell computes the head itself and signs that, and
+  refuses when a head sent beside the log disagrees. A host that edited the log
+  gets no signature.
 
 ### Security
 - **`POST /update` no longer obeys public callers relayed through the tunnel.**
