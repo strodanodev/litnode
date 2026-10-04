@@ -35,7 +35,7 @@ record ranked results on chain. Every node runs the same program.
 | A machine that stays on | Windows 10/11, macOS or Linux. A laptop is fine for testing; keep it awake while it runs |
 | A **new** browser wallet | MetaMask or similar, used only for this pilot. Never use a wallet that holds real funds |
 | zkLTC for gas | Free at [liteforge.hub.caldera.xyz](https://liteforge.hub.caldera.xyz). 0.05 covers your bond and many matches |
-| `cloudflared` | Only to be publicly reachable (recommended). Windows: `winget install Cloudflare.cloudflared`; macOS: `brew install cloudflared`; Linux: [Cloudflare's packages](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) |
+| `cloudflared` | Zip and source installs only, to be publicly reachable (the Control Plane sets it up itself). Windows: `winget install Cloudflare.cloudflared`; macOS: `brew install cloudflared`; Linux: [Cloudflare's packages](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) |
 | Node.js 20+ | Only for the plain zip, a source checkout, or hosting Agent Fighter matches. The Windows `-win-x64` zip and the Control Plane carry their own |
 | A synced clock | A node more than ~4 s off is ignored. Windows: Settings › Time › Sync now |
 
@@ -52,27 +52,38 @@ Network details, for adding LiteForge to your wallet:
 
 ## 1. Install
 
-Pick one.
+**On Windows, use the LITNODE Control Plane.** It is the supported way to
+run a node: one installer, no terminal, no Node.js or `cloudflared` to
+install yourself. The release zips and the source checkout (B and C
+below) are for macOS, Linux, headless servers and developers.
 
-**A. Windows, point and click: LITNODE Control Plane.** Download it from
-**[arcade.litvm.games/#/download](https://arcade.litvm.games/#/download)**
-(the page lists the installer's SHA-256 and the install steps). It is a
-per-user `.msi`, no administrator needed. It is not code-signed yet, so
-Windows SmartScreen may warn: check the checksum, then **More info → Run
-anyway**. Open it:
-it unpacks a node with its own runtime, keeps it running from the system
-tray, and has buttons for restart, update and opening the arcade.
-Continue at step 3.
+**A. Windows: LITNODE Control Plane (recommended).**
 
-**B. Any OS: the release zip.** Download from
+1. Download it from
+   **[arcade.litvm.games/#/download](https://arcade.litvm.games/#/download)**.
+   The page lists the installer's SHA-256; check it in PowerShell with
+   `Get-FileHash .LITNODE-Control-Setup-*.msi`.
+2. Run the `.msi`. It installs for your Windows user only (no
+   administrator needed, about 1 GB free). It is not code-signed yet, so
+   SmartScreen may warn about an unknown publisher: once the checksum
+   matched, **More info → Run anyway**.
+3. The **first-run guide** asks for a name, the port (7801), your region
+   and reachability. Choose **Quick Tunnel** to be publicly reachable (it
+   downloads and verifies `cloudflared` itself) and leave the manual seed
+   blank: the node finds the mesh on chain. The node then starts and keeps
+   running from the system tray, with buttons for restart, update and
+   opening the arcade.
+4. The guide ends on your node's page, `http://127.0.0.1:7801/#/node`.
+   **Continue at step 4 (Bond)**: steps 2 and 3 below are for the zip and
+   source installs.
+
+**B. macOS, Linux or a headless server: the release zip.** Download from
 [GitHub Releases](https://github.com/strodanodev/litnode/releases/latest):
-
-- `litnode-operator-v<version>-win-x64.zip`: Windows, carries its own
-  Node.js runtime, plus the scheduled-task scripts.
-- `litnode-operator-v<version>.zip`: macOS and Linux (needs Node.js 20+).
-
+`litnode-operator-v<version>.zip` (needs Node.js 20+). A
+`litnode-operator-v<version>-win-x64.zip` with its own runtime and
+scheduled-task scripts also exists for Windows servers without a desktop.
 Releases are signed, and registered on chain before a node will apply
-them. Unzip anywhere you can keep, for example `C:\litvm\litnode`.
+them. Unzip anywhere you can keep.
 
 **C. From source** (to read or change the code):
 
@@ -81,7 +92,7 @@ git clone https://github.com/strodanodev/litnode.git
 cd litnode && npm install
 ```
 
-## 2. Configure
+## 2. Configure (zip and source)
 
 Copy `node.env.example` to `node.env` in the same folder and edit three
 lines:
@@ -102,13 +113,12 @@ npm run host -- init --operator alice-laptop --region eu-west --tunnel quick
 npm run host -- doctor      # checks runtime, port, RPC, clock, cloudflared
 ```
 
-The Control Plane writes its own `node.env` on every start: use its
-**Configure** screen for the name, port and public tunnel, and Windows
-user variables for anything it has no setting for (Troubleshooting).
+(Control Plane: its **Configure** screen changes the name, port and
+tunnel later. It rewrites `node.env` on every start, so anything it has
+no setting for goes in a Windows user variable; see Troubleshooting.)
 
-## 3. Start, and open your node's page
+## 3. Start, and open your node's page (zip and source)
 
-- **Control Plane:** it starts the node on launch.
 - **Windows zip:** double-click `start-node.cmd`. The first start shows
   Windows' firewall prompt; **Allow** it (or run `allow-firewall.cmd` once).
 - **Harness:** `npm run host -- start --detach`.
@@ -149,7 +159,8 @@ unset OPERATOR_KEY             # PowerShell: Remove-Item Env:OPERATOR_KEY
 
 ## 5. Be reachable
 
-With `TUNNEL=quick` and `cloudflared` installed, the node opens its own
+With **Quick Tunnel** chosen in the Control Plane (or `TUNNEL=quick` and
+`cloudflared` on PATH for a zip or source install), the node opens its own
 Cloudflare tunnel, checks that the public URL answers as itself, and
 publishes it on chain. On the checklist: **Public address verified** and
 **Announced on NodeDirectory** turn green within a few minutes. No

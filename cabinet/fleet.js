@@ -70,7 +70,7 @@ export function checklist(f, { cabinetContracts = null } = {}) {
   const tunnelUp = s.tunnel ? s.tunnel.state === 'up' : /^https:\/\//.test(s.addr ?? '');
   steps.push({ key: 'public', label: 'Public address verified', state: s.tunnel ? (s.tunnel.state === 'up' ? 'ok' : s.tunnel.state === 'verifying' ? 'warn' : 'todo') : /^https:\/\//.test(s.addr ?? '') ? 'ok' : 'na',
     // cloudflared logs a transient origin error and carries on: the last error matters only while the tunnel is not up
-    detail: s.tunnel ? `${s.tunnel.mode} tunnel ${s.tunnel.state}${s.tunnel.url ? ` · ${s.tunnel.url}` : ''}${s.tunnel.lastError && s.tunnel.state !== 'up' ? ` · ${s.tunnel.lastError.slice(0, 120)}` : ''}` : /^https:\/\//.test(s.addr ?? '') ? s.addr : `LAN only (${s.addr}) — fine for a witness; a seed sets TUNNEL=quick in node.env` });
+    detail: s.tunnel ? `${s.tunnel.mode} tunnel ${s.tunnel.state}${s.tunnel.url ? ` · ${s.tunnel.url}` : ''}${s.tunnel.lastError && s.tunnel.state !== 'up' ? ` · ${s.tunnel.lastError.slice(0, 120)}` : ''}` : /^https:\/\//.test(s.addr ?? '') ? s.addr : `LAN only (${s.addr}) — fine for a witness; to be public, choose Quick Tunnel in the Control Plane's setup (or TUNNEL=quick in node.env)` });
   if (s.relay) steps.push({ key: 'relay', label: 'Relay answers through its tunnel', state: s.relay.state === 'up' ? 'ok' : s.relay.state === 'verifying' ? 'warn' : s.relay.state === 'off' ? 'na' : 'todo',
     detail: `${s.relay.state}${s.relay.ms != null ? ` · ${s.relay.ms} ms` : ''}${s.relay.url ? ` · ${s.relay.url}` : ''}${s.relay.lastError ? ` · ${s.relay.lastError}` : ''}` });
   const entry = ann?.entry ?? null;
