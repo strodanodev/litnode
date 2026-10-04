@@ -146,6 +146,14 @@ export function chainDeltas(decodedLogs, { rulesets = {} } = {}) {
   return out;
 }
 
+/** The chain's results for ONE ruleset: `official` (FINAL) and `all` (settled, final or not, void excluded).
+ *  An attested title has no official results (protocol/result.js isOfficial). */
+export function chainResults(decodedLogs, rulesetId, manifest, { rulesets = {} } = {}) {
+  const attested = manifest?.kind === 'attested';
+  const all = chainDeltas(decodedLogs, { rulesets }).filter((d) => d.rulesetId === rulesetId).map((d) => (attested ? { ...d, official: false } : d));
+  return { all, official: all.filter((d) => d.official) };
+}
+
 /** Ladder tables from the log for one ruleset: { official, pending }, each
  *  a derive() result. `pending` folds settled-but-undecided results ON TOP
  *  of the official set so a player sees where they would stand. */

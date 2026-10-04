@@ -14,6 +14,7 @@ import { roomCodeFor } from './protocol/pairing.js';
 import { chainHead, ledgerBody, signLedger } from './protocol/log.js';
 import { signSeat, NONCE_RE } from './protocol/challenge.js';
 import { applyDelta, sortDeltas } from './protocol/derive.js';
+import { levelOf as levelFromXp } from './protocol/progression.js';
 import { NODE_URL, GAMES as CONFIG_GAMES } from './config.js';
 import { CHARACTERS, STYLES, ITEMS, ITEM_LINES, PETS, RARITY, INVENTORY_SAMPLE, portraitUrl } from './roster.js';
 import { identicon, fileToAvatar } from './avatar.js';
@@ -123,7 +124,7 @@ $('avatar-file').addEventListener('change', async (e) => {
 });
 
 // ═══════════════════════════════════════════════ node state ══
-const S = { online: false, checked: false, health: null, boards: {}, stats: {}, deltas: {}, peers: [], snapshot: null, uptime: {}, stake: null, seeds: [], seedsAt: 0, viaSeed: null, titles: [], fleet: null, fleetError: null, fleetAt: 0 };
+const S = { online: false, checked: false, health: null, boards: {}, stats: {}, progress: {}, deltas: {}, peers: [], snapshot: null, uptime: {}, stake: null, seeds: [], seedsAt: 0, viaSeed: null, titles: [], fleet: null, fleetError: null, fleetAt: 0 };
 /** No local node → read NodeDirectory and try the seeds. Runs at most once a
  *  minute while a node answers; every 15 s while none does (a seed behind a
  *  quick tunnel re-announces a new hostname within seconds of a restart). */
@@ -151,9 +152,13 @@ async function pollNode() {
     for (const g of GAMES) {
       if (!g.rulesetId) continue;
       const rid = encodeURIComponent(g.rulesetId);
-      const [lb, st, ds] = await Promise.all([api(`/leaderboard?ruleset=${rid}`).catch(() => ({})), api(`/stats?ruleset=${rid}`).catch(() => ({})), wantDeltas ? api(`/deltas?ruleset=${rid}`).catch(() => null) : null]);
+      const [lb, st, ds, pg] = await Promise.all([api(`/leaderboard?ruleset=${rid}`).catch(() => ({})), api(`/stats?ruleset=${rid}`).catch(() => ({})), wantDeltas ? api(`/deltas?ruleset=${rid}`).catch(() => null) : null,
+        player?.id ? api(`/progress?ruleset=${rid}&player=${player.id}`).catch(() => null) : null]);
       S.boards[g.rulesetId] = lb.leaderboard ?? [];
       S.stats[g.rulesetId] = st && !st.error ? st : {};
+      // XP, level and streak, folded by the node from results final on chain (protocol/progression.js); a node
+      // older than 0.11.21 has no /progress and the profile falls back to its own estimate.
+      S.progress[g.rulesetId] = pg && !pg.error && typeof pg.level === 'number' ? pg : null;
       if (ds) S.deltas[g.rulesetId] = ds.deltas ?? [];
     }
     S.peers = (await api('/peers').catch(() => ({}))).peers ?? [];
@@ -177,9 +182,18 @@ async function pollNode() {
 }
 
 // ═══════════════════════════════════════════════ derived profile ══
-/** AF's real XP rules: win 60 / loss 20 / draw 30; xp_for_next(level) = 80 + level·45; cap 40. */
-const xpForNext = (level) => 80 + level * 45;
-function levelOf(xp) { let level = 1; while (level < 40 && xp >= xpForNext(level)) { xp -= xpForNext(level); level++; } return { level, xp, next: xpForNext(level) }; }
+/** AF's real XP rules (protocol/progression.js, the node's own fold): win 60 / loss 20 / draw 30;
+ *  xp_for_next(level) = 80 + level·45; cap 40. */
+function levelOf(xp) { const l = levelFromXp(xp); return { level: l.level, xp: l.xp, next: l.xpForNext ?? l.xp }; }
+/** The node's progression line for a title, as the profile shows it (level, XP into it, XP to the next). */
+const progressLine = (rid) => { const p = rid ? S.progress[rid] : null; return p ? { level: p.level, xp: p.xp, next: p.xpForNext ?? p.xp, streak: p.streak, p } : null; };
+/** A title's level bar for "Your record": the node's progression, with the win streak when there is one. */
+const recordXp = (rid) => {
+  const P = progressLine(rid);
+  if (!P) return '';
+  const streak = P.streak > 1 ? ` · ${P.streak} WIN STREAK` : '';
+  return `<div class="xp" style="margin:0 0 12px" title="folded by the node from results final on chain"><div class="row"><span>LEVEL ${P.level}${streak}</span><span>${P.p.xpForNext ? `${P.xp} / ${P.next} XP` : `${P.xp} XP · MAX LEVEL`}</span></div><div class="bar"><i style="width:${P.p.xpForNext ? pct(P.xp, P.next) : 100}%"></i></div></div>`;
+};
 
 function myTotals() {
   const t = { matches: 0, wins: 0, ticks: 0 };
@@ -402,8 +416,8 @@ async function signInWithWallet() {
 }
 function profilePanel() {
   const t = myTotals();
-  const xpRaw = t.wins * 60 + (t.matches - t.wins) * 20;
-  const L = levelOf(xpRaw);
+  // The node's fold of results final on chain; an old node without /progress: the estimate from /stats.
+  const L = progressLine(PRIMARY.rulesetId) ?? levelOf(t.wins * 60 + (t.matches - t.wins) * 20);
   const row = PRIMARY.rulesetId ? myBoardRow(PRIMARY.rulesetId) : null;
   const rank = row ? `#${row.rank}` : '—';
   const rating = row ? row.rating : 1200;
@@ -599,7 +613,7 @@ function renderGame(g) {
       <div class="col">
         ${panel('Leaderboard', g.rulesetId ? boardTable(g.rulesetId, 10) : '<div class="empty">This title is not on the mesh yet — its ruleset lands with the node sync.</div>', g.rulesetId ? moreLink('#/leaderboards') : '')}
         <div style="height:16px"></div>
-        ${panel('Your record', me || hist.length ? `<div class="stats4" style="margin:0 0 12px"><div class="stat"><div class="k">Rank</div><div class="v">${me ? `#${me.rank}` : '—'}</div></div><div class="stat"><div class="k">Rating</div><div class="v">${me?.rating ?? 1200}</div></div><div class="stat"><div class="k">Matches</div><div class="v">${S.stats[g.rulesetId]?.[player.id]?.matches ?? 0}</div></div><div class="stat"><div class="k">Wins</div><div class="v">${S.stats[g.rulesetId]?.[player.id]?.wins ?? 0}</div></div></div>
+        ${panel('Your record', me || hist.length || progressLine(g.rulesetId) ? `${recordXp(g.rulesetId)}<div class="stats4" style="margin:0 0 12px"><div class="stat"><div class="k">Rank</div><div class="v">${me ? `#${me.rank}` : '—'}</div></div><div class="stat"><div class="k">Rating</div><div class="v">${me?.rating ?? 1200}</div></div><div class="stat"><div class="k">Matches</div><div class="v">${S.stats[g.rulesetId]?.[player.id]?.matches ?? 0}</div></div><div class="stat"><div class="k">Wins</div><div class="v">${S.stats[g.rulesetId]?.[player.id]?.wins ?? 0}</div></div></div>
           <table><thead><tr><th>Result</th><th>Opponent</th><th class="num">Length</th><th class="num">Rating</th><th>When</th></tr></thead><tbody>${hist.map((h) => `<tr><td class="res ${h.res[0]}">${h.res.toUpperCase()}</td><td>${h.opp.map((o) => short(o, 10)).join(', ') || '—'}</td><td class="num">${Math.floor(h.ticks / 3600)}:${String(Math.floor((h.ticks / 60) % 60)).padStart(2, '0')}</td><td class="num">${h.rating}</td><td class="dim">${h.when ? new Date(h.when).toLocaleDateString() : '—'} ${verifyTag(h)} <a class="link rcpt-link" href="#/match/${esc(h.matchId)}" title="the match's transactions on the Liteforge explorer">receipt ›</a></td></tr>`).join('') || '<tr><td colspan="5" class="dim">No matches yet.</td></tr>'}</tbody></table>` : `<div class="empty">${S.online ? 'No settled matches under your key yet. Play one — it shows up here once the mesh settles it.' : 'Start a node to load your record.'}</div>`)}
       </div>
     </div>`;

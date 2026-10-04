@@ -43,6 +43,7 @@ import { createSandbox } from './sandbox.js';
 import { RELEASE_PUBKEY } from './update.js';
 import { titleVerdict } from '../protocol/title.js';
 import { PROTOCOL_VERSION } from '../protocol/version.js';
+import { progression, progressOf } from '../protocol/progression.js';
 import { answerChallenge, checkChallenge, newNonce, NONCE_RE } from '../protocol/challenge.js';
 import { CABINET_VERSION } from '../cabinet/version.js';
 import { descriptorHash as descriptorHashOf } from './settle.js';
@@ -1238,6 +1239,23 @@ export async function createNode({
         if (!p) return json(res, 200, { player: pid, profiles: profileState(), owner: null, tokenId: null, active: null, name: null });
         const name = p.tokenId ? await chain.profileName(p.tokenId) : null;
         return json(res, 200, { player: pid, profiles: profileState(), owner: p.owner, tokenId: p.tokenId ? p.tokenId.toString() : null, active: p.tokenId ? p.active : null, name });
+      }
+      // Player progression (protocol/progression.js): XP, level, rating, record and streak, folded from results
+      // FINAL on chain, so every node answers the same and no publisher database is involved. ?player=<key> for
+      // one line, else the ranking (?limit, default 100). ?scope=pending adds settled results not yet final.
+      if (req.method === 'GET' && url.pathname === '/progress') {
+        const rid = url.searchParams.get('ruleset');
+        if (!rid) return json(res, 400, { error: 'ruleset= required' });
+        const manifest = loaded.get(rid)?.manifest ?? {};
+        const scope = url.searchParams.get('scope') === 'pending' ? 'pending' : 'official';
+        // Without MatchBook (a dev mesh): this node's own official results — ranked, placed, verified, the players'.
+        const f = mbook ? mbook.progress(rid, manifest, { scope })
+          : { ...progression(settlement.list(rid, { scope: 'official' }), manifest), scope, source: 'local', cursor: null, counts: null };
+        const head = { rulesetId: rid, scope: f.scope, source: f.source, cursor: f.cursor, counts: f.counts, version: f.version, digest: f.digest, rules: f.rules };
+        const player = url.searchParams.get('player');
+        if (player) return json(res, 200, { ...head, ...progressOf(f, player.toLowerCase()) });
+        const limit = Math.max(1, Math.min(500, Number(url.searchParams.get('limit')) || 100));
+        return json(res, 200, { ...head, players: f.ranking.length, ranking: f.ranking.slice(0, limit) });
       }
       if (req.method === 'GET' && ['/leaderboard', '/credits', '/stats'].includes(url.pathname)) {
         const rid = url.searchParams.get('ruleset');

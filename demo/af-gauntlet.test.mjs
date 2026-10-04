@@ -117,6 +117,17 @@ test('Agent Fighter gauntlet: placed, served per match, signed by both players, 
   assert.ok(delta.cosigners.includes(witness.nodeId));
   assert.equal(delta.verification, 'verified');
   assert.equal(delta.official, true, 'players signed, a witness re-ran it: official');
+  // Progression folds the official result: the winner +60 XP, the loser +20, the same rating as the ladder.
+  const prog = async (n, kp) => (await fetch(`${n.addr}/progress?ruleset=agent-fighter.v1&player=${kp.publicKey}`)).json();
+  const [g1, g2] = await Promise.all([prog(host, p1), prog(host, p2)]);
+  assert.equal(g1.source, 'local'); assert.equal(g1.scope, 'official');
+  assert.deepEqual([g1.matches, g2.matches], [1, 1]);
+  assert.deepEqual([g1.wins + g2.wins, g1.losses + g2.losses], [1, 1], 'one winner, one loser');
+  assert.deepEqual([g1.xpTotal, g2.xpTotal].sort((a, b) => a - b), [20, 60]);
+  const board = await (await fetch(`${host.addr}/progress?ruleset=agent-fighter.v1`)).json();
+  assert.equal(board.players, 2); assert.equal(board.ranking[0].wins, 1, 'the winner leads the board');
+  const lb = await (await fetch(`${host.addr}/leaderboard?ruleset=agent-fighter.v1`)).json();
+  assert.equal(lb.leaderboard.find((r) => r.player === p1.publicKey).rating, g1.rating, '/progress and /leaderboard agree');
   // The match server is gone once the match settled.
   assert.ok(await until(() => !host.gauntlet.status().active.some((a) => a.matchId === match.matchId && a.state === 'up'), 30_000), 'the per-match server ended');
 });

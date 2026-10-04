@@ -5,6 +5,18 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **Player progression from the chain** (M2 of the Agent Fighter MVP). `GET /progress?ruleset=&player=`
+  answers XP, level, record, streak and rating for a player key, folded by `protocol/progression.js`
+  from ranked results FINAL on chain: every node, and the arcade, compute the same numbers, with no
+  publisher database. Rules are the title's manifest `services.progression`, else Agent Fighter's live
+  curve (win 60 / draw 30 / loss 20 XP; the next level needs 80 + 45 × level; cap 40). Rating is the
+  title's leaderboard Elo, walked the same way as `/leaderboard`. Without a player: the ranking.
+  `scope=pending` previews settled results not yet final. Casual results do not count (they live only on
+  their host, and two keys farm them for free).
+- The arcade's profile and each title's "Your record" show level, XP and win streak from `/progress`
+  (an older node: the previous estimate from `/stats`).
+
 ## [0.11.20] — 2026-10-05 — a node outlives its Control Plane; restarts run the current build; event-loop stalls are reported
 
 ### Fixed

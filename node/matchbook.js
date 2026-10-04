@@ -38,6 +38,7 @@ import { join } from 'node:path';
 import { randomPrivateKey, addressOf } from '../protocol/evm.js';
 import { feeParams, signWithFee, effectivePrice, capFromEnv } from './fees.js';
 import * as mb from '../protocol/matchbook.js';
+import { progression } from '../protocol/progression.js';
 import { mayActForCall, decodeBool } from '../protocol/staking.js';
 import { descriptorHash as descriptorHashOf } from './settle.js';
 import { proposeCalldata, hourOf, freezeAt } from '../protocol/epoch.js';
@@ -468,11 +469,18 @@ export function createMatchBook({
     return { ...(scope === 'pending' ? f.pending : f.official), scope, cursor: { block: cursor }, counts: f.counts, source: 'chain' };
   };
 
+  /** Player progression (protocol/progression.js) folded from the chain: official = FINAL results only;
+   *  pending adds what is settled and not yet final, as a preview. The same numbers on every node. */
+  const progress = (rulesetId, manifest, { scope = 'official' } = {}) => {
+    const r = mb.chainResults(decoded, rulesetId, manifest, { rulesets: mb.rulesetKeys([...new Set([rulesetId, ...rulesetIds()])]) });
+    return { ...progression(scope === 'pending' ? r.all : r.official, manifest), scope, source: 'chain', cursor: { block: cursor }, counts: { official: r.official.length, pending: r.all.length - r.official.length } };
+  };
+
   const replayed = replayEvents();
   if (replayed) log(`matchbook: ${replayed} event(s) replayed from disk — ${duties.size} dut${duties.size === 1 ? 'y' : 'ies'} outstanding`);
 
   return {
-    address, commit, settle, poll, ladder, statusOf, epoch, propose, hints, absorbHints, ingestReceipt,
+    address, commit, settle, poll, ladder, progress, statusOf, epoch, propose, hints, absorbHints, ingestReceipt,
     // What this key sent, newest last (receipt outcome once read): the operator's ledger of settlement work.
     sent: (n = 50) => sentLog.slice(-n),
     // The last n decided matches this node holds events for, newest last — the dashboard's "recent" strip.

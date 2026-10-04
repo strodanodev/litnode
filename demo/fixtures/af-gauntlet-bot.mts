@@ -16,7 +16,7 @@ const nextLine = (): Promise<string> => new Promise((r) => { const l = lines.shi
 
 const r = await playOneMatch({
   url: env.BOT_WS, name: env.BOT_NAME, character: env.BOT_CHAR, skill: 60, aiSeed: Number(env.BOT_SEED),
-  charactersDir: env.BOT_CHARS, paceMs: 1, mode: 'friendly', room: env.BOT_ROOM, ticket: env.BOT_TICKET,
+  charactersDir: env.BOT_CHARS, paceMs: Number(env.BOT_PACE ?? 1), mode: 'friendly', room: env.BOT_ROOM, ticket: env.BOT_TICKET,
   signLedger: async (ledger: unknown, entries: unknown) => {
     process.stdout.write(`LEDGER ${JSON.stringify({ ledger, entries })}\n`);
     const l = await nextLine();

@@ -3,6 +3,7 @@
  *  emits them, and the fold over the log gives official / pending ladders
  *  with the same digest whatever order the logs arrive in.
  *    node --test demo/matchbook.test.mjs */
+import { progression } from '../protocol/progression.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -110,6 +111,14 @@ test('matchbook: event logs decode; the fold gives official and pending ladders,
   assert.equal(g.official.digest, f.official.digest); assert.equal(g.pending.digest, f.pending.digest);
   assert.deepEqual(f.cursor, { block: 107 }, 'cursor = last block read, void and all');
   assert.equal(mb.foldChain(dec, 'agent-fighter.v1', manifest, { rulesets }).counts.pending, 0);
+  // Progression folds the same chain results: official = final only; the rating is the ladder's.
+  const r = mb.chainResults(dec, 'tug.v1', manifest, { rulesets });
+  assert.deepEqual([r.official.length, r.all.length], [1, 2]);
+  const pf = progression(r.official, manifest);
+  assert.deepEqual([pf.players[K.p1].wins, pf.players[K.p1].xpTotal, pf.players[K.p2].losses, pf.players[K.p2].xpTotal], [1, 60, 1, 20]);
+  assert.equal(pf.players[K.p1].rating, f.official.rating[K.p1], 'progress and the official ladder walk the same Elo');
+  assert.equal(progression(mb.chainResults(shuffled, 'tug.v1', manifest, { rulesets }).official, manifest).digest, pf.digest, 'any node, any log order: the same digest');
+  assert.equal(mb.chainResults(dec, 'tug.v1', { ...manifest, kind: 'attested' }, { rulesets }).official.length, 0, 'an attested title has no official results');
   // An attested title's finalized result ranks on its ladder (pending folds it) but is never official.
   const att = mb.foldChain(dec, 'tug.v1', { ...manifest, kind: 'attested' }, { rulesets });
   assert.deepEqual(att.counts, { official: 0, pending: 2 });
