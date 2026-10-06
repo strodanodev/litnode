@@ -5,6 +5,15 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **Gas refunds from the treasury** (M3 of the Agent Fighter MVP, docs/GAS-REFUND.md). `contracts/GasRefund.sol`
+  pays back a FINAL ranked match's gas to the host (commit + settle + finalize) and to each witness whose vote
+  matched (attest), into each node's delegate, at 80 % of min(basefee, 10 gwei), once per match, at most
+  0.05 zkLTC per node per UTC day. Nodes claim for themselves: the host about 5 s after the match is final,
+  each seat only if it is still unclaimed (2 min × seat later); `/health.matchBook.refunds` reports it.
+  Allowances come from the 22 Sep receipts on Liteforge. `deploy-contracts.mjs --only GasRefund` adds it to
+  the live set; the treasury funds it with a plain transfer. Not deployed yet.
+
 ### Docs
 - **docs/OPERATORS.md: one operator guide for the testnet pilot.** Requirements, the three
   install paths, wallet bonding from the Nodes page (both faucets), going public, hosting Agent

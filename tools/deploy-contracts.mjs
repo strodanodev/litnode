@@ -26,6 +26,9 @@
  *            with transferOperator). The old file is archived as
  *            contracts/deployed.testnet.<timestamp>.json — the migration record.
  *  --quorum N  EpochAnchor v3 quorum in basis points of active bonded stake (default 5000).
+ *  --only GasRefund  add the treasury's gas-refund contract (contracts/GasRefund.sol) beside the live
+ *            MatchBook and NodeStake, with contracts/deploy.testnet.json → GasRefund; fund it afterwards
+ *            with a plain transfer from the treasury.
  *  --only TitleRegistry[,ReleaseRegistry,…]  add just those contracts to the
  *            existing deployment; NodeStake and everything keyed on it untouched.
  *
@@ -105,7 +108,7 @@ console.log(`deployer ${wallet.address} · ${ethers.formatEther(balance)} zkLTC 
 if (balance === 0n) { console.error('no zkLTC for gas — use the faucet first'); process.exit(1); }
 
 // ---------------------------------------------------------------- compile
-const files = ['TestLITVM.sol', 'NodeStake.sol', 'ERC6699Registry.sol', 'EpochAnchor.sol', 'PlayerProfile.sol', 'NodeBadge.sol', 'NodeDirectory.sol', 'ReleaseRegistry.sol', 'MatchBook.sol', 'TitleRegistry.sol'];
+const files = ['TestLITVM.sol', 'NodeStake.sol', 'ERC6699Registry.sol', 'EpochAnchor.sol', 'PlayerProfile.sol', 'NodeBadge.sol', 'NodeDirectory.sol', 'ReleaseRegistry.sol', 'MatchBook.sol', 'TitleRegistry.sol', 'GasRefund.sol'];
 const sources = Object.fromEntries(files.map((f) => [f, { content: readFileSync(join(root, 'contracts', f), 'utf8') }]));
 const compiled = JSON.parse(solc.compile(JSON.stringify({
   language: 'Solidity', sources,
@@ -130,6 +133,23 @@ const deploy = async (label, file, name, args = []) => {
   return c;
 };
 
+// ---------------------------------------------------------------- GasRefund: the treasury pays back ranked matches' gas
+// (contracts/GasRefund.sol). Allowances are what commit + settle + finalize and attest cost on Liteforge (receipts of the
+// 22 Sep ranked matches: ~279k + ~127k + ~38k, ~75k); claimGas covers the claim itself.
+const refundParams = () => {
+  const g = cfg.GasRefund ?? {};
+  return [BigInt(g.hostGas ?? 445000), BigInt(g.witnessGas ?? 77000), BigInt(g.claimGas ?? 260000), Number(g.refundBps ?? 8000),
+    ethers.parseUnits(String(g.maxPriceGwei ?? 10), 'gwei'), ethers.parseEther(String(g.dailyCapZkLTC ?? '0.05'))];
+};
+const deployRefund = async (adminAddr) => {
+  if (!deployed.MatchBook?.address || !deployed.NodeStake?.address) { console.error('GasRefund needs MatchBook and NodeStake in the deployment first'); process.exit(1); }
+  const owner = cfg.GasRefund?.admin && /^0x[0-9a-fA-F]{40}$/.test(cfg.GasRefund.admin) ? cfg.GasRefund.admin : adminAddr;
+  await deploy('GasRefund', 'GasRefund.sol', 'GasRefund', [deployed.MatchBook.address, deployed.NodeStake.address, refundParams(), owner]);
+  deployed.GasRefund.admin = owner;
+  deployed.GasRefund.params = { hostGas: Number(refundParams()[0]), witnessGas: Number(refundParams()[1]), claimGas: Number(refundParams()[2]), refundBps: refundParams()[3], maxPriceGwei: Number(cfg.GasRefund?.maxPriceGwei ?? 10), dailyCapZkLTC: String(cfg.GasRefund?.dailyCapZkLTC ?? '0.05') };
+  save();
+};
+
 // ---------------------------------------------------------------- --only: add contracts to an EXISTING deployment
 // --only TitleRegistry[,ReleaseRegistry,PlayerProfile,ERC6699Registry]: deploy just
 // those, each with its own constructor args, and leave NodeStake and everything
@@ -142,6 +162,7 @@ if (argv.includes('--only')) {
     ReleaseRegistry: () => deploy('ReleaseRegistry', 'ReleaseRegistry.sol', 'ReleaseRegistry', [admin, BigInt(cfg.ReleaseRegistry?.activationDelay ?? 60)]).then(() => { deployed.ReleaseRegistry.activationDelay = Number(cfg.ReleaseRegistry?.activationDelay ?? 60); deployed.ReleaseRegistry.admin = admin; }),
     PlayerProfile: () => deploy('PlayerProfile', 'PlayerProfile.sol', 'PlayerProfile'),
     ERC6699Registry: () => deploy('ERC6699Registry', 'ERC6699Registry.sol', 'ERC6699Registry', [admin]),
+    GasRefund: () => deployRefund(admin),
   };
   const bad = wanted.filter((w) => !standalone[w]);
   if (!wanted.length || bad.length) { console.error(`--only takes a comma list of: ${Object.keys(standalone).join(', ')}${bad.length ? ` (not ${bad.join(', ')} — those depend on NodeStake; run without --only or with --fresh)` : ''}`); process.exit(1); }
@@ -205,6 +226,7 @@ save();
 const mbc = cfg.MatchBook ?? {};
 const mbParams = { settleWindow: BigInt(mbc.settleWindowS ?? 60), attestWindow: BigInt(mbc.attestWindowS ?? 120), escalationWindow: BigInt(mbc.escalationWindowS ?? 300), drawDelay: BigInt(mbc.drawDelayBlocks ?? 2), hostSlashBps: Number(mbc.hostSlashBps ?? 1000), witnessSlashBps: Number(mbc.witnessSlashBps ?? 500) };
 const matchBook = await deploy('MatchBook', 'MatchBook.sol', 'MatchBook', [await stake.getAddress(), mbParams, admin]);
+await deployRefund(admin);
 Object.assign(deployed.MatchBook, { settleWindowS: Number(mbParams.settleWindow), attestWindowS: Number(mbParams.attestWindow), escalationWindowS: Number(mbParams.escalationWindow), drawDelayBlocks: Number(mbParams.drawDelay), hostSlashBps: mbParams.hostSlashBps, witnessSlashBps: mbParams.witnessSlashBps, admin });
 save();
 const matchBookAddr = await matchBook.getAddress();

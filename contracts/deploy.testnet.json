@@ -90,5 +90,15 @@
       "waivers": "matchIds whose lone dissent was a genuine report (e.g. a determinism bug), exempt from the lone-dissent forfeit."
     }
   },
-  "note": "Testnet-only values. One faucet pull (1000 tLITVM) funds 1000 node bonds at this minimum."
+  "note": "Testnet-only values. One faucet pull (1000 tLITVM) funds 1000 node bonds at this minimum.",
+  "GasRefund": {
+    "admin": "0x04be2b954346324ee54c4b4c0189df5bb577a378",
+    "hostGas": 445000,
+    "witnessGas": 77000,
+    "claimGas": 260000,
+    "refundBps": 8000,
+    "maxPriceGwei": 10,
+    "dailyCapZkLTC": "0.05",
+    "note": "contracts/GasRefund.sol: the treasury pays back a FINAL ranked match's gas to its host and agreeing witnesses, into their delegates, claimed by the nodes themselves. Gas allowances from the 22 Sep receipts on Liteforge (commit ~279k + settle ~127k + finalize ~38k; attest ~75k); claimGas covers the claim. 80 % so staged matches cost their stagers; at most 0.05 zkLTC per node per UTC day; refunded at min(basefee, 10 gwei). Fund it with a plain transfer from the treasury (0xeA09…2eF2). Admin = the admin wallet (setParams, pause, withdraw)."
+  }
 }

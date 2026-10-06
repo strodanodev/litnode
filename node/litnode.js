@@ -116,7 +116,7 @@ export async function createNode({
   // Unset → v0.2 local settlement, gossip-advertised deltas, never official
   // beyond this node's own view. `matchBookFromBlock`: where a fresh node
   // starts reading the log (the deploy block); `matchBookWindows` in seconds.
-  matchBook: matchBookAddr = null, matchBookFromBlock = 0, matchBookWindows = { attestWindow: 120, escalationWindow: 300 }, matchBookDrive = true,
+  matchBook: matchBookAddr = null, gasRefund = null, matchBookFromBlock = 0, matchBookWindows = { attestWindow: 120, escalationWindow: 300 }, matchBookDrive = true,
   // EpochAnchor v3: the settler proposes each frozen hour's root over the chain-finalized set from its delegate.
   epochAnchor = null,
   // ERC6699Registry (this project's proposed interface): characters for
@@ -387,7 +387,7 @@ export async function createNode({
     mbook = createMatchBook({
       dataDir, nodeId, contract: matchBookAddr, stakeContract: nodeStake, epochAnchor, chainId: chainId ?? 4441, rpc: chain.rpc, fromBlock: matchBookFromBlock, log, emit, settlement,
       hostAddr: (hostKey) => (hostKey === nodeId ? addr : heartbeats.get(hostKey)?.addr ?? null),
-      rulesetIds: () => [...loaded.keys()], hasRole: (r) => roles.includes(r), windows: matchBookWindows, drive: matchBookDrive, fetchImpl: globalThis.fetch, baseFee: chain.baseFeeWei,
+      rulesetIds: () => [...loaded.keys()], hasRole: (r) => roles.includes(r), windows: matchBookWindows, drive: matchBookDrive, fetchImpl: globalThis.fetch, baseFee: chain.baseFeeWei, gasRefund,
     });
   }
   const witnessed = new Set(); // matchIds this node already answered
@@ -986,7 +986,7 @@ export async function createNode({
       chain: { ...(({ rpc, head, headTs, lagS, rpcMs, rpcLastMs, rpcCalls, rpcFailures, rpcAt, lastError, offline }) => ({ rpc, head, headTs, lagS, rpcMs, rpcLastMs, rpcCalls, rpcFailures, rpcAt, lastError, offline }))(chain.status()),
         matchBook: mbs ? { contract: mbs.contract, delegate: mbs.delegate, delegated: mbs.delegated, funded: mbs.funded, enrolled: mbs.enrolled, purse: mbs.purse, cursor: mbs.cursor, scanRange: mbs.scanRange, events: mbs.events, sends: mbs.sends, lastTx: mbs.lastTx, lastError: mbs.lastError, hosting: mbs.hosting, seated: mbs.seated, windows: mbs.windows, sent: mbook.sent(50) } : null,
         // the addresses THIS process runs against, and the generation its deployed.testnet.json claimed — a cabinet compares with its own contracts.js
-        contracts: { generation: contractsGeneration, NodeStake: nodeStake, NodeDirectory: nodeDirectory, MatchBook: matchBookAddr, EpochAnchor: epochAnchor, ReleaseRegistry: releaseRegistry, TitleRegistry: titleRegistry, PlayerProfile: playerProfile, ERC6699Registry: erc6699 },
+        contracts: { generation: contractsGeneration, NodeStake: nodeStake, NodeDirectory: nodeDirectory, MatchBook: matchBookAddr, GasRefund: gasRefund, EpochAnchor: epochAnchor, ReleaseRegistry: releaseRegistry, TitleRegistry: titleRegistry, PlayerProfile: playerProfile, ERC6699Registry: erc6699 },
         announcer: announcer?.status() ? (({ address, delegated, funded, lastTx, lastError, entry }) => ({ address, delegated, funded, lastTx, lastError, entry: entry ? { url: entry.url, wsAddr: entry.wsAddr || null, updatedAt: entry.updatedAt ? new Date(entry.updatedAt * 1000).toISOString() : null } : null }))(announcer.status()) : null,
         recentBlocks: chain.recentBlocks(12) },
       mesh: { active: peers.filter((p) => p.fresh).length + 1, known: peers.length + 1, bonded: peers.filter((p) => p.bonded).length + (stakes?.[nodeId]?.active ? 1 : 0), eligible: s.peers.length, incompatible: incompatible.size,

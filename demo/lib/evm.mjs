@@ -46,7 +46,7 @@ export async function createEvm({ accounts = 24, startTime = 1_800_000_000, star
   const common = new Common({ chain: Mainnet, hardfork: Hardfork.Shanghai });
   // blockhash(n): deterministic and never zero for any block the test has "mined"
   const hashOf = (n) => hexToBytes(ethers.keccak256(ethers.toUtf8Bytes(`block-${n}`)));
-  let number = startBlock, timestamp = startTime;
+  let number = startBlock, timestamp = startTime, baseFee = 0n;
   const blockchain = { getBlock: async (n) => ({ hash: () => hashOf(Number(n)) }), putBlock: async () => {}, shallowCopy() { return this; } };
   const vm = await createVM({ common, blockchain });
   const arts = artifacts();
@@ -56,7 +56,7 @@ export async function createEvm({ accounts = 24, startTime = 1_800_000_000, star
     await vm.stateManager.putAccount(createAddressFromString(addressOf(i)), createAccount({ balance: 10n ** 24n, nonce: 0n }));
   }
   const allRaw = [];
-  const block = () => createBlock({ header: { number: BigInt(number), timestamp: BigInt(timestamp), gasLimit: 30_000_000n, baseFeePerGas: 0n } }, { common });
+  const block = () => createBlock({ header: { number: BigInt(number), timestamp: BigInt(timestamp), gasLimit: 30_000_000n, baseFeePerGas: baseFee } }, { common });
   const decodeRevert = (ret) => {
     const hex = bytesToHex(ret);
     if (hex.length < 10) return 'reverted';
@@ -82,10 +82,10 @@ export async function createEvm({ accounts = 24, startTime = 1_800_000_000, star
       ifaces.set(r.created.toLowerCase(), iface);
       return r.created.toLowerCase();
     },
-    /** A state-changing call from account `from`; returns { logs: decoded, gas }. */
-    send: async (from, to, fn, args = []) => {
+    /** A state-changing call from account `from`; returns { logs: decoded, gas }. opts.value sends native coin with it. */
+    send: async (from, to, fn, args = [], { value = 0n } = {}) => {
       const iface = ifaces.get(to);
-      const r = await run(from, to, iface.encodeFunctionData(fn, args));
+      const r = await run(from, to, iface.encodeFunctionData(fn, args), { value });
       const raw = r.logs.map(([addr, topics, data], li) => ({ address: bytesToHex(addr), topics: topics.map(bytesToHex), data: bytesToHex(data), blockNumber: '0x' + (number - 1).toString(16), logIndex: '0x' + li.toString(16) }));
       const logs = raw.map((l) => { try { const p = ifaces.get(l.address.toLowerCase())?.parseLog(l); return p ? { name: p.name, args: p.args } : null; } catch { return null; } }).filter(Boolean);
       allRaw.push(...raw);
@@ -100,6 +100,12 @@ export async function createEvm({ accounts = 24, startTime = 1_800_000_000, star
       number -= 1; timestamp -= 1; // a read does not mine
       return iface.decodeFunctionResult(fn, r.ret);
     },
+    /** A plain transfer of native coin (a contract's receive()). */
+    pay: async (from, to, value) => { await run(from, to, '0x', { value }); },
+    /** Native coin balance of an address, in wei. */
+    balance: async (addr) => (await vm.stateManager.getAccount(createAddressFromString(addr)))?.balance ?? 0n,
+    /** block.basefee for the blocks from now on (calls themselves are not charged). */
+    setBaseFee: (wei) => { baseFee = BigInt(wei); },
     warp: (seconds) => { timestamp += seconds; },
     mine: (n = 1) => { number += n; timestamp += n; },
     now: () => timestamp, blockNumber: () => number,

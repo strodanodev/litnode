@@ -65,6 +65,8 @@ const WINDOW_MARGIN_S = 5;           // clock skew between this node and the cha
 const SEAT_STAGGER_MS = 20_000;      // finalize / resolve / expire: host +0, seat i at +(i+1)×this
 const FEED_STAGGER_BLOCKS = 24;      // escalate: host +0, seat i at +(i+1)×this blocks after drawBlock
 const PARAMS_TTL_MS = 3600_000;      // the windows are read from the contract, not trusted from a file
+const REFUND_HOST_DELAY_MS = 5_000;   // the host claims a FINAL match's gas refund this long after the event
+const REFUND_STAGGER_MS = 120_000;    // seat i claims in its place, if still unclaimed, (i + 1) × this later
 
 export function createMatchBook({
   dataDir, nodeId, contract, stakeContract = null, epochAnchor = null, chainId, rpc, fromBlock = 0, log = () => {}, emit = () => {},
@@ -74,6 +76,9 @@ export function createMatchBook({
   settlement, hostAddr = () => null, rulesetIds = () => [], hasRole = () => true,
   windows: windowsIn = { attestWindow: 120, escalationWindow: 300 }, fetchImpl = globalThis.fetch,
   drive: driving = true, // false: this node never drives windows (tests: a host that settles and then does nothing)
+  // GasRefund (contracts/GasRefund.sol): after a match this node served goes FINAL, it claims the gas back from the
+  // treasury. null = no refund contract on this chain.
+  gasRefund = null,
 }) {
   const windows = { settleWindow: 1800, ...windowsIn };
   const keyPath = join(dataDir, 'announcer.json');
@@ -244,12 +249,40 @@ export function createMatchBook({
       if (e.event === 'Extended') Object.assign(d, { status: 'settled', settledAt: at, block: e.block, tried: {} }); // the contract reset the clock
       if (e.event === 'Escalating') Object.assign(d, { status: 'escalating', drawBlock: e.drawBlock, feedBy: e.feedBy, tried: {} });
       if (e.event === 'Escalated') Object.assign(d, { status: 'escalated', escalatedAt: at, block: e.block, tried: {} });
-      if (e.event === 'Finalized') { duties.delete(e.matchId); ledgers.delete(e.matchId); }
+      if (e.event === 'Finalized') { if (!replaying) noteFinal(e, d); duties.delete(e.matchId); ledgers.delete(e.matchId); }
       if (!replaying) saveDuties();
     }
     if (e.event === 'Escalated') escalation.set(e.matchId, { panel: e.panel, at: Date.now() });
     if (e.event === 'Finalized' && !replaying) emit('chain-final', { matchId: e.matchId, status: e.status, finalHash: e.finalHash });
   };
+  // ---------------------------------------------------------------- gas refunds
+  // A match this node hosted or sat on went FINAL: the treasury owes it the gas (contracts/GasRefund.sol). The host
+  // claims at once; each seat only if the match is still unclaimed REFUND_STAGGER_MS × (seat + 1) later, so a live
+  // host is not raced and a gone one is covered. One claim pays every seat; the claimer also gets its claim gas.
+  const refunds = new Map(); // chain key → { matchId, role, seat, due, tries, state: 'due'|'claimed'|'done' }
+  let refundsClaimed = 0, refundLast = null;
+  const noteFinal = (e, d) => {
+    if (!gasRefund || !d || e.status !== 'final' || refunds.has(e.matchId)) return;
+    refunds.set(e.matchId, { matchId: d.matchId, role: d.role, seat: d.seat, due: Date.now() + (d.role === 'host' ? REFUND_HOST_DELAY_MS : REFUND_STAGGER_MS * ((d.seat ?? 0) + 1)), tries: 0, state: 'due' });
+  };
+  const claimRefunds = async () => {
+    if (!gasRefund || delegated !== true || !funded) return;
+    const now = Date.now();
+    for (const [k, r] of refunds) {
+      if (r.state !== 'due' || now < r.due) continue;
+      if (r.tries >= 3) { r.state = 'done'; continue; }
+      r.tries++;
+      try {
+        const already = await call('eth_call', [{ to: gasRefund, data: mb.refundClaimedCall(k) }, 'latest']);
+        if (/[1-9a-f]/i.test(String(already).replace(/^0x/, ''))) { r.state = 'done'; continue; } // someone claimed it: every seat was paid
+      } catch { r.due = now + REFUND_STAGGER_MS; continue; }
+      const tx = await trySend(mb.refundClaimCalldata(k, nodeId), 'refund', r.matchId, gasRefund);
+      if (tx) { r.state = 'claimed'; refundsClaimed++; refundLast = { matchId: r.matchId, tx, at: new Date().toISOString() }; emit('refund-claimed', { matchId: r.matchId, tx, role: r.role }); }
+      else r.due = now + REFUND_STAGGER_MS; // unfunded contract, a hiccup: try again later (at most three times)
+    }
+    for (const [k, r] of refunds) if (r.state !== 'due' && now - r.due > 3600_000) refunds.delete(k);
+  };
+
   /** Replay what this node saw before, in order; then the persisted duties (their clocks are the true ones). */
   const replayEvents = () => {
     let lines = [];
@@ -454,6 +487,7 @@ export function createMatchBook({
         if (open) void witness(s);
       }
       await drive();
+      await claimRefunds();
       await stampBlocks();
       // the settler proposes every frozen hour it holds finalized matches for (the last three, in case a restart missed one)
       const h = hourOf(Date.now());
@@ -487,7 +521,7 @@ export function createMatchBook({
     recent: (n = 20) => decoded.filter((e) => e.event === 'Finalized').slice(-n).map((e) => ({ matchId: e.matchId, status: e.status, block: e.block, tx: e.tx ?? null, at: blockTs.get(e.block) ? new Date(blockTs.get(e.block) * 1000).toISOString() : null })),
     proof: (matchId) => { const key = mb.matchIdBytes32(matchId); const fin = decoded.find((e) => e.event === 'Finalized' && e.matchId === key); if (!fin) return null; const ts = blockTs.get(fin.block); if (ts == null) return null; return mb.chainProof(epoch(hourOf(ts * 1000)), key); },
     chainStatus: (matchId) => ({ matchId, key: mb.matchIdBytes32(matchId), status: statusOf(mb.matchIdBytes32(matchId)), panel: panels.get(mb.matchIdBytes32(matchId))?.panel ?? null, events: decoded.filter((e) => e.matchId === mb.matchIdBytes32(matchId)) }),
-    status: () => ({ contract, epochAnchor, delegate: address, delegated, funded, enrolled, purse: purse(), cursor, scanRange, scanMs, scanError, receipts: ingested.size, pendingReceipts: pendingReceipts.size, events: decoded.length, sends, lastTx, lastError, hosting: [...duties.values()].filter((d) => d.role === 'host').length, seated: [...duties.values()].filter((d) => d.role === 'seat').length, windows: { ...windows }, attested: attested.size, proposed: [...proposedHours] }),
+    status: () => ({ contract, epochAnchor, delegate: address, delegated, funded, enrolled, purse: purse(), cursor, scanRange, scanMs, scanError, receipts: ingested.size, pendingReceipts: pendingReceipts.size, events: decoded.length, sends, lastTx, lastError, hosting: [...duties.values()].filter((d) => d.role === 'host').length, seated: [...duties.values()].filter((d) => d.role === 'seat').length, windows: { ...windows }, attested: attested.size, proposed: [...proposedHours], refunds: gasRefund ? { contract: gasRefund, claimed: refundsClaimed, due: [...refunds.values()].filter((r) => r.state === 'due').length, last: refundLast } : null }),
   };
 }
 

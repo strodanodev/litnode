@@ -65,6 +65,11 @@ export const finalizeCalldata = (matchId) => selector(FINALIZE) + b32(matchIdByt
 export const escalateCalldata = (matchId, ledger) => selector(ESCALATE) + b32(matchIdBytes32(matchId), 'matchId') + word(64) + bytesTail(toHex(ledgerBytes(ledger)));
 export const resolveCalldata = (matchId) => selector(RESOLVE) + b32(matchIdBytes32(matchId), 'matchId');
 export const expireCalldata = (matchId) => selector(EXPIRE) + b32(matchIdBytes32(matchId), 'matchId');
+// GasRefund (contracts/GasRefund.sol): the treasury pays back a FINAL match's gas to its host and agreeing witnesses.
+export const REFUND_CLAIM = 'claim(bytes32,bytes32)';
+export const REFUND_CLAIMED = 'claimed(bytes32)';
+export const refundClaimCalldata = (matchId, nodeKey) => selector(REFUND_CLAIM) + b32(matchIdBytes32(matchId), 'matchId') + b32(nodeKey, 'nodeKey');
+export const refundClaimedCall = (matchId) => selector(REFUND_CLAIMED) + b32(matchIdBytes32(matchId), 'matchId');
 export const enrollCalldata = (nodeKey) => selector(ENROLL) + b32(nodeKey, 'nodeKey');
 export const withdrawCalldata = (nodeKey) => selector(WITHDRAW) + b32(nodeKey, 'nodeKey');
 

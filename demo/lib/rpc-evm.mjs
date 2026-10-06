@@ -42,7 +42,7 @@ export async function createRpcEvm({ chainId = 4441, startTime = Math.floor(Date
   const revertReason = (ret) => { const hex = bytesToHex(ret); try { const e = allErrors.parseError(hex); if (e) return `${e.name}(${e.args.map(String).join(',')})`; } catch { /* not custom */ } try { return 'revert: ' + ethers.AbiCoder.defaultAbiCoder().decode(['string'], '0x' + hex.slice(10))[0]; } catch { return 'execution reverted'; } };
   // ...on a shallow copy of the VM: a checkpoint/revert on the live state left the account cache stale for the next read (nonce read 0 after a mined tx).
   const dryRun = async (opts) => { const copy = await vm.shallowCopy(); return copy.evm.runCall(opts); };
-  const mkBlock = () => createBlock({ header: { number: BigInt(number), timestamp: BigInt(now()), gasLimit: 30_000_000n, baseFeePerGas: 0n } }, { common });
+  const mkBlock = () => createBlock({ header: { number: BigInt(number), timestamp: BigInt(now()), gasLimit: 30_000_000n, baseFeePerGas: 1n } }, { common }); // the 1 wei eth_getBlockByNumber reports: what a contract sees as block.basefee
   const mined = () => { blocks.set(number, { timestamp: now() }); number += 1; };
   const record = (execLogs, txHash) => execLogs.map(([addr, topics, data], li) => { const l = { address: bytesToHex(addr), topics: topics.map(bytesToHex), data: bytesToHex(data), blockNumber: '0x' + number.toString(16), blockHash: hashOf(number), logIndex: '0x' + li.toString(16), transactionHash: txHash, transactionIndex: '0x0', removed: false }; logs.push(l); return l; });
 

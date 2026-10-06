@@ -10,6 +10,7 @@
  *  carries no delta advertisements.
  *    node --test demo/matchbook-node.test.mjs */
 import { test } from 'node:test';
+import { ethers } from 'ethers';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -43,6 +44,10 @@ test('phase 2: commit → settle → three attests → final on the chain, and e
   const book = await chain.deploy('MatchBook.sol', 'MatchBook', [stake, params, chain.addressOf(0)]);
   await chain.send(0, stake, 'setAdjudicator', [book, true]);
   const anchor = await chain.deploy('EpochAnchor.sol', 'EpochAnchor', [stake, 1400, chain.addressOf(0)]); // 14 % of stake: the host's 1 of 7 tokens (one witness bonds 3) is just enough
+  // GasRefund: the treasury pays back the gas of a FINAL match; funded by a plain transfer, claimed by the nodes themselves
+  const refundParams = { hostGas: 445_000n, witnessGas: 77_000n, claimGas: 260_000n, refundBps: 8000, maxPriceWei: 10n ** 10n, dailyCapWei: ONE };
+  const refund = await chain.deploy('GasRefund.sol', 'GasRefund', [book, stake, refundParams, chain.addressOf(0)]);
+  await chain.fund(refund, ONE);
 
   // ---- five identities, bonded from five operator wallets, each with a delegated + funded hot key (its announcer key)
   const ids = [];
@@ -61,7 +66,7 @@ test('phase 2: commit → settle → three attests → final on the chain, and e
   chain.warp(2); // past eligibilityAge
 
   // ---- five nodes: one host/settler with the title, four witnesses that fetch it by hash
-  const common = { rpc: 'mock://', offline: false, chainFetch: chain.fetch, nodeStake: stake, matchBook: book, epochAnchor: anchor, matchBookWindows: { attestWindow: 4, escalationWindow: 6 }, chainId: 4441, heartbeatMs: 200, updates: false, announce: false };
+  const common = { rpc: 'mock://', offline: false, chainFetch: chain.fetch, nodeStake: stake, matchBook: book, gasRefund: refund, epochAnchor: anchor, matchBookWindows: { attestWindow: 4, escalationWindow: 6 }, chainId: 4441, heartbeatMs: 200, updates: false, announce: false };
   const spawn = (opts) => createNode({ ...common, ...opts }).then((n) => (nodes.push(n), n));
   const host = await spawn({ dataDir: ids[0].dir, operator: 'op1', roles: ['mesh', 'host', 'settler', 'witness'], rulesets: [RULESET] });
   const witnesses = [];
@@ -138,6 +143,14 @@ test('phase 2: commit → settle → three attests → final on the chain, and e
   assert.ok(room, 'the match is a room on /fleet while its placement lives');
   assert.equal(room.state, 'final'); assert.equal(room.ours, true); assert.equal(room.attests, 3); assert.equal(room.room, `LIT-${d.matchId}`);
   assert.equal(fl.recent.at(-1).matchId, mb.matchIdBytes32(d.matchId), 'the final is the newest on the recent strip');
+
+  // ---- gas refunds: the host claims by itself; the host and all three agreeing seats are paid, once
+  const refunded = await until(() => { const xs = chain.logs().filter((l) => l.address.toLowerCase() === refund.toLowerCase() && l.topics[0] === ethers.id('Refunded(bytes32,bytes32,address,uint8,uint256)') && l.topics[1] === mb.matchIdBytes32(d.matchId).replace(/^/, '0x')); return xs.length >= 4 ? xs : null; }, 60_000);
+  assert.ok(refunded, 'four Refunded events: the host and three agreeing seats');
+  assert.deepEqual(refunded.map((l) => l.topics[2].toLowerCase()).sort(), [host.nodeId, ...d.panel].map((k) => '0x' + k).sort(), 'paid to exactly the host and the panel');
+  assert.equal((await chain.read(refund, 'claimed', [mb.matchIdBytes32(d.matchId).replace(/^/, '0x')]))[0], true);
+  const rh = await until(async () => { const j = (await (await fetch(`${host.addr}/health`)).json()).matchBook.refunds; return j?.claimed === 1 ? j : null; }, 30_000);
+  assert.ok(rh, 'the host reports its claim'); assert.equal(rh.contract, refund);
   assert.equal(fl.chain.matchBook.purse.txType, 2, 'the host signed type-2 transactions');
   const sent = fl.chain.matchBook.sent;
   for (const what of ['commit', 'settle', 'finalize']) { const x = sent.find((y) => y.what === what); assert.ok(x, `${what} in the sent ledger`); assert.match(x.tx, /^0x[0-9a-f]{64}$/); assert.equal(x.ok, true, `${what} receipt read`); assert.ok(x.gasUsed > 0, `${what} gas recorded`); }

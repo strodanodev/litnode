@@ -121,6 +121,8 @@ node = await createNode({
   stakeToken: env.STAKE_TOKEN ?? deployed.TestLITVM?.address ?? null,
   // MatchBook: ranked matches committed, settled and attested on chain from the delegated key (BUILD-SPEC v0.3 §11).
   matchBook: env.MATCH_BOOK ?? deployed.MatchBook?.address ?? null,
+  // GasRefund: the treasury pays back the gas of the FINAL matches this node served; the node claims it itself.
+  gasRefund: env.GAS_REFUND ?? deployed.GasRefund?.address ?? null,
   matchBookFromBlock: Number(env.MATCH_BOOK_FROM_BLOCK ?? deployed.MatchBook?.block ?? 0),
   contractsGeneration: deployed.generation ?? null,
   matchBookWindows: { attestWindow: Number(deployed.MatchBook?.attestWindowS ?? 120), escalationWindow: Number(deployed.MatchBook?.escalationWindowS ?? 300) },
