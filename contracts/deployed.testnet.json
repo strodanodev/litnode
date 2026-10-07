@@ -126,5 +126,25 @@
   "chainId": 4441,
   "rpc": "https://liteforge.rpc.caldera.xyz/http",
   "deployedAt": "2026-09-20T22:34:07.928Z",
-  "deployer": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378"
+  "deployer": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
+  "GasRefund": {
+    "address": "0x34a3456c1789670b5578C38E203013200D39f8F6",
+    "tx": "0xb7b9c894fb9847b1eceb8b42490b8066d1a9f1d885d3ae5aff749e7a7b72a31d",
+    "block": 58784400,
+    "args": [
+      "0x90D642d1f1Cb00EBFeB2268dd13Dee32A2852e5b",
+      "0x3CFe2D006d946A1E0E5Cf6B3E0958aFc3fF73717",
+      "445000,77000,260000,8000,10000000000,50000000000000000",
+      "0x04be2b954346324ee54c4b4c0189df5bb577a378"
+    ],
+    "admin": "0x04be2b954346324ee54c4b4c0189df5bb577a378",
+    "params": {
+      "hostGas": 445000,
+      "witnessGas": 77000,
+      "claimGas": 260000,
+      "refundBps": 8000,
+      "maxPriceGwei": 10,
+      "dailyCapZkLTC": "0.05"
+    }
+  }
 }

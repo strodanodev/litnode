@@ -3,6 +3,14 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- **GasRefund is live on Liteforge** at `0x34a3456c1789670b5578C38E203013200D39f8F6` (admin 0x04bE…a378, against
+  the live MatchBook and NodeStake; `contracts/deployed.testnet.json`). Nodes claim refunds from the release that
+  carries this file, or now with `GAS_REFUND=0x34a3456c1789670b5578C38E203013200D39f8F6` in node.env. It pays out
+  once the treasury funds it with a plain transfer (docs/GAS-REFUND.md).
+
 ## [0.11.24] — 2026-10-08 — publishers start courts for their own matches; a node notices when its own tunnel dies
 
 ### Added
