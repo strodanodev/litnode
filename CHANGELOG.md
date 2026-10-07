@@ -3,7 +3,7 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.11.23] — 2026-10-08 — RPC fallback; gossip verified before it is forwarded, with ceilings
 
 ### Security
 - **Gossip is verified before it is forwarded, and its tables have ceilings** (M4 of the Agent Fighter MVP,
