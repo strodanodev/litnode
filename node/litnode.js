@@ -1457,6 +1457,7 @@ export async function createNode({
   // The node's own tunnel: when it comes up, its URL becomes the address we
   // advertise; when it drops, we fall back to the LAN address. A relay tunnel
   // does the same for wsAddr. Peers learn both from the next heartbeat.
+  let tunnelWatch = null; // the advertised URL's outside check (below); stop() clears it
   try {
     if (tunnel) {
       // A quick tunnel's hostname exists before Cloudflare's DNS has published it. Advertised at once, it is
@@ -1471,8 +1472,33 @@ export async function createNode({
       const VERIFY_EVERY_MS = tunnelProbe ? 200 : 5000, VERIFY_GIVE_UP_MS = tunnelProbe ? 3000 : 5 * 60_000;
       const probe = tunnelProbe ?? (async (u) => { const nonce = newNonce(); const r = await fetch(`${u}/whoami?nonce=${nonce}`, { signal: AbortSignal.timeout(8000) }); const c = await checkChallenge(await r.json(), { expectNodeId: nodeId, nonce }); if (!c.ok) throw new Error(c.reason ?? 'challenge failed'); return true; });
       let verifying = null;
+      // Once advertised, the URL is checked from outside every TUNNEL_WATCH_MS, as the relay's is: cloudflared can
+      // keep running while its tunnel is gone (Cloudflare answers 530, and a quick tunnel's name stops resolving),
+      // and nothing else notices — m16 advertised a dead name for over half an hour on 7 Oct 2026. TUNNEL_FAILS
+      // misses in a row stop advertising it and restart cloudflared; a quick tunnel comes back on a new name,
+      // verified and announced as a new one is.
+      const TUNNEL_WATCH_MS = tunnelProbe ? 300 : 60_000, TUNNEL_FAILS = 3;
+      const watchTunnel = (u) => {
+        clearInterval(tunnelWatch?.timer);
+        let fails = 0, busy = false;
+        tunnelWatch = { url: u, timer: setInterval(async () => {
+          if (busy) return;
+          if (tunnels.node?.url !== u || addr !== u) { clearInterval(tunnelWatch?.timer); tunnelWatch = null; return; } // rotated or dropped meanwhile
+          busy = true;
+          let ok = false, why = null;
+          try { ok = !!(await probe(u)); } catch (e) { why = e.cause?.code ?? e.message; }
+          busy = false;
+          if (ok) { fails = 0; return; }
+          if (++fails < TUNNEL_FAILS) return;
+          clearInterval(tunnelWatch?.timer); tunnelWatch = null;
+          log(`tunnel: ${u} stopped answering from outside (${why ?? 'no answer'}; ${fails} checks in a row) — restarting cloudflared`);
+          addr = lanAddr; emit('tunnel', { which: 'node', url: u, state: 'lost' });
+          tunnels.node?.rotate();
+        }, TUNNEL_WATCH_MS) };
+      };
       const verifyTunnel = (u) => {
         if (verifying) { clearInterval(verifying.timer); verifying = null; }
+        clearInterval(tunnelWatch?.timer); tunnelWatch = null;
         if (!u) { addr = lanAddr; emit('tunnel', { which: 'node', url: null }); return; }
         const started = Date.now();
         emit('tunnel', { which: 'node', url: u, state: 'verifying' });
@@ -1482,6 +1508,7 @@ export async function createNode({
             if (!(await probe(u))) throw new Error('not reachable yet');
             clearInterval(verifying.timer); verifying = null;
             addr = u; log(`tunnel: ${u} reachable from outside — advertising and announcing`); emit('tunnel', { which: 'node', url: u, state: 'up' }); announceNow();
+            watchTunnel(u);
           } catch (e) {
             if (Date.now() - started > VERIFY_GIVE_UP_MS) { clearInterval(verifying.timer); verifying = null; log(`tunnel: ${u} never became reachable (${e.cause?.code ?? e.message}) — rotating the hostname`); emit('tunnel', { which: 'node', url: u, state: 'unreachable' }); tunnels.node?.rotate(); }
           }
@@ -1531,6 +1558,6 @@ export async function createNode({
     rulesets: () => buildHashes(), peers: () => heartbeats, inbound, operator, roles, region, startedAt,
     version, updater, restart, tunnels, upnp: upnpCtl, get wsAddr() { return wsAddr; }, get announcer() { return announcer; }, seeds: () => chainSeeds, seedChecks, admitSeed, sandbox, refused, incompatible, protocol: PROTOCOL_VERSION, peersKnown,
     get gauntlet() { return gauntlet; },
-    async stop() { clearInterval(stallTimer); clearInterval(timer); clearInterval(updateTimer); clearInterval(directoryTimer); clearTimeout(announceRetry); clearInterval(relayTimer); await publisherServices?.stop(); await gauntlet?.stopAll(); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); server.closeAllConnections?.(); await new Promise((r) => server.close(r)); },
+    async stop() { clearInterval(stallTimer); clearInterval(timer); clearInterval(tunnelWatch?.timer); clearInterval(updateTimer); clearInterval(directoryTimer); clearTimeout(announceRetry); clearInterval(relayTimer); await publisherServices?.stop(); await gauntlet?.stopAll(); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); server.closeAllConnections?.(); await new Promise((r) => server.close(r)); },
   };
 }

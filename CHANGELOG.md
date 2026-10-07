@@ -16,6 +16,14 @@ follows [Keep a Changelog](https://keepachangelog.com/).
   and the same rating from the chain on all four nodes; the host and the panel are refunded by GasRefund. Needs an
   Agent Fighter checkout, like `demo/af-gauntlet.test.mjs` (both now share `demo/lib/af-bot.mjs`).
 
+### Fixed
+- **A node notices when its own tunnel dies** (`node/litnode.js`). A new tunnel URL was checked from outside
+  until it answered once and never again, so a tunnel that died behind a running cloudflared (Cloudflare's 530,
+  a quick tunnel's name gone from DNS: m16, 7 Oct) stayed advertised and announced indefinitely, and peers could
+  not reach the node. The advertised URL is now checked once a minute, as the relay's is; three misses in a row
+  stop advertising it and restart cloudflared, and the new name is verified and announced as usual
+  (`demo/tunnel.test.mjs`).
+
 ### Changed
 - The gossip limits no longer log a "refused" line with every count at zero when a node starts.
 

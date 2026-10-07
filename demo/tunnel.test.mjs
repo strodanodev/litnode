@@ -98,4 +98,24 @@ test('tunnel: a new hostname is advertised only once reachable from outside, and
   assert.match((await (await fetch(`${b.addr}/health`)).json()).addr, /^http:\/\/127\.0\.0\.1/, 'never advertised');
 });
 
+test('tunnel: an advertised URL that stops answering from outside is dropped and cloudflared restarted', { timeout: 60_000 }, async (t) => {
+  const tmp2 = mkdtempSync(join(tmpdir(), 'litnode-tunnel-watch-'));
+  t.after(() => rmSync(tmp2, { recursive: true, force: true }));
+  // cloudflared keeps running, but the tunnel behind the name is gone (Cloudflare's 530): the probe fails while `up` is false
+  let up = true, probes = 0;
+  const a = await createNode({ dataDir: join(tmp2, 'a'), offline: true, heartbeatMs: 200, operator: 'a', roles: ['mesh'], tunnel: 'quick', tunnelBin: bin, tunnelProbe: async () => { probes++; if (!up) throw new Error('HTTP 530'); return true; }, updates: false });
+  t.after(() => a.stop());
+  const addrOf = async () => (await (await fetch(`${a.addr}/health`)).json()).addr;
+  assert.ok(await until(async () => (await addrOf()).startsWith('https://')), 'advertised once verified');
+  const before = probes;
+  await sleep(1000);
+  assert.ok(probes > before, 'the advertised URL keeps being checked');
+  assert.equal(a.tunnels.node.status().restarts, 0, 'answering: left alone');
+  up = false;
+  assert.ok(await until(() => a.tunnels.node.status().restarts >= 1, 10_000), 'three misses in a row: cloudflared restarted');
+  assert.ok(await until(async () => (await addrOf()).startsWith('http://127.0.0.1'), 5000), 'the dead URL is no longer advertised: the LAN address until a new one verifies');
+  up = true;
+  assert.ok(await until(async () => (await addrOf()).startsWith('https://'), 15_000), 'the restarted tunnel is verified and advertised again');
+});
+
 test('cleanup', () => { rmSync(tmp, { recursive: true, force: true }); });
