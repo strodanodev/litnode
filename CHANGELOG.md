@@ -3,7 +3,14 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.11.22] — 2026-10-08 — a publisher service can name its own env files; gas-refund claims (dormant until the contract is deployed)
+
+### Security
+- **A publisher service can name its own env files** (`node/publisher-services.js`). A bundle's `envFiles` were
+  merged into every service it starts, so Pickle Brawl's two pool courts - game servers the tunnel exposes -
+  received the API's and matchmaker's `.env`: database URL, payment secret, signing key. A service that lists its
+  own `"envFiles"` now reads only those, so a court can be given its ticket secret and nothing else. Services that
+  name none keep the bundle's files, as before (`demo/services.test.mjs`).
 
 ### Added
 - **Gas refunds from the treasury** (M3 of the Agent Fighter MVP, docs/GAS-REFUND.md). `contracts/GasRefund.sol`
