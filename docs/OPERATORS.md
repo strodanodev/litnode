@@ -232,6 +232,7 @@ address you bonded with.
 | Control Plane **Restart** changes nothing | Some builds re-attach to the running node instead of restarting it | Tray icon › **Quit**, end the old node (`Get-NetTCPConnection -LocalPort 7801 -State Listen \| % { Stop-Process -Id $_.OwningProcess -Force }`), reopen the Control Plane |
 | A setting in `node.env` is ignored under the Control Plane | The Control Plane rewrites `node.env` on every start | Set it as a Windows user variable (`setx GAUNTLETS "…"`), then Quit and reopen the Control Plane |
 | Address is `http://192.168.…` after a restart | The tunnel did not start | `cloudflared --version` must work in a new terminal; check `TUNNEL=quick`; look for `tunnel` lines in `litnode.log` |
+| `chain.lastError` on `/health` shows HTTP 502, 429 or timeouts, or the node page says **on a fallback endpoint** | The public RPC is failing or rate-limiting this machine | Add a backup endpoint for chain 4441: `RPC_FALLBACK=https://…` (comma-separated for several). The node uses it while `RPC` fails and returns to `RPC` once it answers |
 | Node is listed as stale, or alone | Clock off by more than ~4 s, or no chain access | Sync the clock; check `chain` and `peers` in `http://localhost:7801/health` |
 | "casual-only" / ranked never goes on chain | Fewer than 4 operators online with fresh, bonded nodes | Expected during onboarding; it fixes itself as operators join |
 | Hot key **LOW** | Gas running out | Top it up in the Hot key panel, or send zkLTC from the faucet straight to the hot-key address |

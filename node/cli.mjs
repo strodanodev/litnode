@@ -4,7 +4,8 @@
  *    PORT=7802 OPERATOR=guild-a SEEDS=http://127.0.0.1:7801 npm run node
  *
  *  RPC and NODE_STAKE default from contracts/deployed.testnet.json when it
- *  exists; OFFLINE=1 forces the local beacon and no stake reads.
+ *  exists; OFFLINE=1 forces the local beacon and no stake reads. RPC_FALLBACK
+ *  (comma-separated) lists endpoints to use while RPC is failing (node/chain.js).
  *
  *  On a terminal the node draws its dashboard (node/tui.js). Under a
  *  scheduled task, a pipe or LITNODE_PLAIN=1 it prints one line per event
@@ -90,7 +91,9 @@ node = await createNode({
   wsAddr: env.WS_ADDR ?? null,
   seeds: list(env.SEEDS),
   rulesets: list(env.RULESETS),
-  rpc: env.OFFLINE ? null : (env.RPC ?? deployed.rpc ?? 'https://liteforge.rpc.caldera.xyz/http'),
+  // The preferred endpoint first, then RPC_FALLBACK and the release's own fallbacks: node/chain.js moves a call to
+  // the next one while an endpoint is failing, and back once it answers again.
+  rpc: env.OFFLINE ? null : [...new Set([env.RPC ?? deployed.rpc ?? 'https://liteforge.rpc.caldera.xyz/http', ...list(env.RPC_FALLBACK), ...(deployed.rpcFallback ?? [])])],
   offline: !!env.OFFLINE,
   nodeStake: env.NODE_STAKE ?? deployed.NodeStake?.address ?? null,
   playerProfile: env.PLAYER_PROFILE ?? deployed.PlayerProfile?.address ?? null,

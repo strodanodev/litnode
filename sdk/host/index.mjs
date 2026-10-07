@@ -33,7 +33,7 @@ export const ENV_FILE = 'node.env';
 /** Where node.env and litnode.log live: the code folder, or LITNODE_HOME
  *  (so a config can sit outside the checkout, and tests get a scratch one). */
 export const home = () => (process.env.LITNODE_HOME ? resolve(process.env.LITNODE_HOME) : ROOT);
-export const KNOWN_KEYS = ['OPERATOR', 'ROLES', 'PORT', 'HOST', 'PUBLIC_ADDR', 'SEEDS', 'RULESETS', 'DATA_DIR', 'REGION', 'TUNNEL', 'TUNNEL_NAME', 'TUNNEL_HOST', 'UPNP', 'RELAY_PORT', 'RELAY_TUNNEL_NAME', 'RELAY_TUNNEL_HOST', 'WS_ADDR', 'RELAY_KEYS', 'COURTS', 'TITLE_TRUST', 'TRUSTED_PUBLISHERS', 'SANDBOX_TIMEOUT_MS', 'SANDBOX_MEMORY_MB', 'RELEASE_CHANNEL', 'RPC', 'NODE_STAKE', 'NODE_DIRECTORY', 'ANNOUNCE', 'ERC6699', 'OFFLINE', 'AF_ROOT', 'AIR_PARTNER_ID', 'AIR_JWKS_URL', 'AIR', 'TITLE_REGISTRY', 'STAKE_TOKEN', 'RELEASE_REGISTRY', 'MATCH_BOOK', 'GAUNTLETS', 'GAUNTLET_UPSTREAM', 'GAUNTLET_GATEWAY_PORT', 'SERVICES', 'SERVICE_NAME'];
+export const KNOWN_KEYS = ['OPERATOR', 'ROLES', 'PORT', 'HOST', 'PUBLIC_ADDR', 'SEEDS', 'RULESETS', 'DATA_DIR', 'REGION', 'TUNNEL', 'TUNNEL_NAME', 'TUNNEL_HOST', 'UPNP', 'RELAY_PORT', 'RELAY_TUNNEL_NAME', 'RELAY_TUNNEL_HOST', 'WS_ADDR', 'RELAY_KEYS', 'COURTS', 'TITLE_TRUST', 'TRUSTED_PUBLISHERS', 'SANDBOX_TIMEOUT_MS', 'SANDBOX_MEMORY_MB', 'RELEASE_CHANNEL', 'RPC', 'RPC_FALLBACK', 'NODE_STAKE', 'NODE_DIRECTORY', 'ANNOUNCE', 'ERC6699', 'OFFLINE', 'AF_ROOT', 'AIR_PARTNER_ID', 'AIR_JWKS_URL', 'AIR', 'TITLE_REGISTRY', 'STAKE_TOKEN', 'RELEASE_REGISTRY', 'MATCH_BOOK', 'GAUNTLETS', 'GAUNTLET_UPSTREAM', 'GAUNTLET_GATEWAY_PORT', 'SERVICES', 'SERVICE_NAME'];
 /** The arcade's AIR partner app (cabinet/config.js AIR.partnerId); `host init` pins tokens to it unless --no-air. */
 export const AIR_PARTNER_ID = '62e01755-138f-4e58-9cdc-fab71e037afd';
 export const ALL_ROLES = ['mesh', 'host', 'witness', 'settler'];
@@ -131,6 +131,7 @@ export function effectiveConfig(env = readEnv() ?? {}, { root = ROOT, processEnv
     wsAddr: e.WS_ADDR || null,
     offline: !!e.OFFLINE,
     rpc: e.OFFLINE ? null : (e.RPC || deployed.rpc || null),
+    rpcFallback: e.OFFLINE ? [] : [...new Set([...list(e.RPC_FALLBACK), ...(deployed.rpcFallback ?? [])])].filter((u) => u !== (e.RPC || deployed.rpc)),
     chainId: deployed.chainId ?? null,
     nodeStake: e.NODE_STAKE || deployed.NodeStake?.address || null,
     nodeDirectory: e.NODE_DIRECTORY || deployed.NodeDirectory?.address || null,
@@ -296,6 +297,14 @@ export async function preflight(cfg, { env = readEnv(cfg.home), fetchImpl = fetc
       const id = Number(await rpcCall(cfg.rpc, 'eth_chainId', [], { fetchImpl, tries: 2 }));
       add('rpc', cfg.chainId == null || id === cfg.chainId, `${cfg.rpc} chainId ${id}${cfg.chainId != null && id !== cfg.chainId ? ` (expected ${cfg.chainId})` : ''}`, 'set RPC to a Liteforge endpoint, or OFFLINE=1 for a local mesh');
     } catch (e) { add('rpc', false, `${cfg.rpc}: ${e.message}`, 'check the network, or OFFLINE=1 for a local mesh'); }
+    // Fallbacks are only shown by host: a provider's URL often carries its API key in the path.
+    for (const url of cfg.rpcFallback ?? []) {
+      const host = (() => { try { return new URL(url).host; } catch { return 'unparseable URL'; } })();
+      try {
+        const id = Number(await rpcCall(url, 'eth_chainId', [], { fetchImpl, tries: 2 }));
+        add('rpc-fallback', cfg.chainId == null || id === cfg.chainId, `${host} chainId ${id}${cfg.chainId != null && id !== cfg.chainId ? ` (expected ${cfg.chainId})` : ''}`, 'RPC_FALLBACK must point at the same chain as RPC');
+      } catch (e) { add('rpc-fallback', false, `${host}: ${e.message}`, 'fix or remove this RPC_FALLBACK entry; the node skips it while it fails'); }
+    }
   }
 
   add('contracts', !!(cfg.nodeStake && cfg.nodeDirectory) || cfg.offline, cfg.offline ? 'not needed offline' : `NodeStake ${cfg.nodeStake ?? '—'} · NodeDirectory ${cfg.nodeDirectory ?? '—'}`, 'contracts/deployed.testnet.json is missing or older than this build; re-apply the release');

@@ -89,6 +89,7 @@ can run before the first start. `--witness` is `--roles mesh,witness
 | port | free, or held by this identity (`null`) | `PORT` / stop the other |
 | cloudflared | on PATH when `TUNNEL` is set (`null` otherwise) | install it |
 | rpc | `eth_chainId` answers and matches `contracts/deployed.testnet.json` (`null` offline) | `RPC` / `OFFLINE=1` |
+| rpc-fallback | each `RPC_FALLBACK` endpoint answers on the same chain id (shown by host only; none = no rows) | fix or drop the entry |
 | contracts | NodeStake + NodeDirectory addresses known | re-apply the release |
 | seeds | each `SEEDS` URL answers `/health` on this protocol version | fix `SEEDS` |
 | clock | within 4 s of each seed (HTTP `Date`) | sync the clock |

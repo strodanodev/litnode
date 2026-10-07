@@ -10,6 +10,20 @@ import { ownerOfKeyCall, decodeOwner, nameOfCall, decodeString } from '../protoc
 import { keysCall, decodeKeys, entryOfCall, decodeEntry } from '../protocol/directory.js';
 import { readAgent } from '../protocol/registry.js';
 
+/** An RPC URL as the dashboard may show it: no credentials, no query, and a path segment that looks like an
+ *  API key (a provider's https://…/v2/<key>) replaced by '…'. */
+export const redactRpc = (url) => {
+  try {
+    const u = new URL(url);
+    return u.origin + u.pathname.split('/').map((s) => (/^[A-Za-z0-9_-]{16,}$/.test(s) ? '…' : s)).join('/');
+  } catch { return String(url); }
+};
+
+/** `rpc` is one URL, a comma-separated list or an array: the first is preferred, the rest are fallbacks. */
+export const rpcList = (rpc) => (Array.isArray(rpc) ? rpc : String(rpc ?? '').split(',')).map((s) => String(s).trim()).filter(Boolean);
+
+const BENCH_MS = 60_000, BENCH_MAX_MS = 10 * 60_000;
+
 export function createChain({ rpc, offline = false, nodeStake = null, playerProfile = null, nodeDirectory = null, erc6699 = null, releaseRegistry = null, titleRegistry = null, fetchImpl = globalThis.fetch }) {
   let id = 0;
   const blocks = [];
@@ -18,33 +32,73 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
   let rpcMs = null, rpcLastMs = null, rpcCalls = 0, rpcFailures = 0, rpcLastAt = 0;
   const timed = (t0, ok) => { rpcLastMs = Math.round(performance.now() - t0); rpcMs = rpcMs == null ? rpcLastMs : Math.round(rpcMs * 0.8 + rpcLastMs * 0.2); rpcCalls++; if (!ok) rpcFailures++; rpcLastAt = Date.now(); };
 
-  // Liteforge's gateway answers 502/530 with an HTML page now and then. A
-  // transient answer (5xx, non-JSON, network) is retried a few times with a
-  // growing pause; a JSON-RPC error (a revert, a bad argument) is not.
+  // Endpoints, preferred first. One that fails in transit (timeout, 5xx page, 429, refused) is benched for a
+  // minute, doubling while it keeps failing, up to ten; calls go to the next one meanwhile and come back to the
+  // preferred one when its bench ends. A JSON-RPC error (a revert) is an answer and never moves a call.
+  const endpoints = rpcList(rpc).map((url) => ({ url, downUntil: 0, failures: 0, lastError: null, head: null, answered: 0 }));
+  let active = endpoints[0] ?? null; // the endpoint that answered last
+  const usable = () => {
+    const now = Date.now();
+    const up = endpoints.filter((e) => e.downUntil <= now);
+    const down = endpoints.filter((e) => e.downUntil > now).sort((a, b) => a.downUntil - b.downUntil);
+    return [...up, ...down]; // all benched: still try, the one back soonest first
+  };
+  const bench = (ep, e) => {
+    ep.failures++; ep.lastError = String(e.message ?? e);
+    if (endpoints.length > 1) ep.downUntil = Date.now() + Math.min(BENCH_MS * 2 ** (ep.failures - 1), BENCH_MAX_MS);
+  };
+  const transientError = (msg) => Object.assign(new Error(msg), { transient: true });
+  const isTransient = (e) => e.transient || e.name === 'TimeoutError' || e.name === 'AbortError' || /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND/.test(String(e.message));
+  const blockNum = (tag) => (typeof tag === 'string' && /^0x[0-9a-f]+$/i.test(tag) ? parseInt(tag, 16) : typeof tag === 'number' ? tag : null);
+
+  const post = async (ep, method, params) => {
+    const t0 = performance.now();
+    let answered = false; // the gateway replied (a revert is an answer; a timeout or an HTML page is not)
+    try {
+      const r = await fetchImpl(ep.url, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (r.status === 429) throw transientError(`${method}: HTTP 429 from the RPC gateway (rate limited)`);
+      let j;
+      if (typeof r.text === 'function') {
+        const text = await r.text();
+        try { j = JSON.parse(text); } catch { throw transientError(`${method}: HTTP ${r.status} non-JSON reply from the RPC gateway`); }
+      } else j = await r.json(); // a test fake with only json()
+      answered = true; timed(t0, true);
+      ep.failures = 0; ep.downUntil = 0; ep.answered++; active = ep;
+      if (j.error) throw new Error(`${method}: ${j.error.message}`);
+      if (method === 'eth_blockNumber') ep.head = Math.max(ep.head ?? 0, parseInt(j.result, 16));
+      else if (method === 'eth_getBlockByNumber' && params?.[0] === 'latest' && j.result?.number) ep.head = Math.max(ep.head ?? 0, parseInt(j.result.number, 16));
+      return j.result;
+    } finally { if (!answered) timed(t0, false); }
+  };
+
+  // Liteforge's gateway answers 502/530 with an HTML page now and then. A transient failure moves the call to
+  // the next endpoint at once; when every endpoint has failed it is retried a few times with a growing pause.
+  // eth_getLogs over a numbered range is only taken from an endpoint whose head has reached the range's end: a
+  // fallback a few blocks behind answers [] for blocks it does not have yet, and MatchBook's cursor would move
+  // past events it never saw.
   const call = async (method, params, tries = 4) => {
-    for (let i = 1; ; i++) {
-      const t0 = performance.now();
-      let answered = false; // the gateway replied (a revert is an answer; a timeout or an HTML page is not)
-      try {
-        const r = await fetchImpl(rpc, {
-          method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }),
-          signal: AbortSignal.timeout(15_000),
-        });
-        let j;
-        if (typeof r.text === 'function') {
-          const text = await r.text();
-          try { j = JSON.parse(text); } catch { throw Object.assign(new Error(`${method}: HTTP ${r.status} non-JSON reply from the RPC gateway`), { transient: true }); }
-        } else j = await r.json(); // a test fake with only json()
-        answered = true; timed(t0, true);
-        if (j.error) throw new Error(`${method}: ${j.error.message}`);
-        return j.result;
-      } catch (e) {
-        if (!answered) timed(t0, false);
-        const transient = e.transient || e.name === 'TimeoutError' || e.name === 'AbortError' || /fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN/.test(String(e.message));
-        if (!transient || i >= tries) throw e;
-        await new Promise((res) => setTimeout(res, 1000 * i));
+    const need = method === 'eth_getLogs' && endpoints.length > 1 ? blockNum(params?.[0]?.toBlock) : null;
+    if (!endpoints.length) throw new Error(`${method}: no RPC endpoint configured`);
+    let last = null;
+    for (let round = 1; ; round++) {
+      for (const ep of usable()) {
+        try {
+          if (need != null && (ep.head ?? -1) < need) {
+            await post(ep, 'eth_blockNumber', []);
+            if (ep.head < need) { last = transientError(`${method}: ${redactRpc(ep.url)} is at block ${ep.head}, behind ${need}`); continue; }
+          }
+          return await post(ep, method, params);
+        } catch (e) {
+          if (!isTransient(e)) throw e;
+          last = e; bench(ep, e);
+        }
       }
+      if (round >= tries) throw last;
+      await new Promise((res) => setTimeout(res, 1000 * round));
     }
   };
 
@@ -193,7 +247,9 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
     recentBlocks: (n = 12) => blocks.slice(-n).map((b) => ({ number: b.number, hash: b.hash, timestamp: b.timestamp })),
     /** The head's base fee in wei, or null (no base fee on this chain / nothing polled yet). */
     baseFeeWei: () => { const b = blocks.at(-1); return b?.baseFeePerGas != null ? BigInt(b.baseFeePerGas) : null; },
-    status: () => ({ rpc, offline, nodeStake, playerProfile, nodeDirectory, erc6699, releaseRegistry, titleRegistry, blocks: blocks.length, head: blocks.at(-1)?.number ?? null, headTs: blocks.at(-1)?.timestamp ?? null, lastError,
+    status: () => ({ rpc: active ? redactRpc(active.url) : null, offline,
+      // every endpoint, preferred first: which answered last, which are benched and why (URLs redacted)
+      rpcEndpoints: endpoints.map((e) => ({ url: redactRpc(e.url), active: e === active, down: e.downUntil > Date.now(), downUntil: e.downUntil > Date.now() ? new Date(e.downUntil).toISOString() : null, failures: e.failures, answered: e.answered, head: e.head, lastError: e.lastError })), nodeStake, playerProfile, nodeDirectory, erc6699, releaseRegistry, titleRegistry, blocks: blocks.length, head: blocks.at(-1)?.number ?? null, headTs: blocks.at(-1)?.timestamp ?? null, lastError,
       // `lagS`: seconds between the head we hold and now — the RPC's freshness, or ours; Liteforge makes a block every 0.25 s.
       rpcMs, rpcLastMs, rpcCalls, rpcFailures, rpcAt: rpcLastAt ? new Date(rpcLastAt).toISOString() : null, lagS: blocks.at(-1)?.timestamp ? Math.max(0, Math.round(Date.now() / 1000 - blocks.at(-1).timestamp)) : null }),
   };

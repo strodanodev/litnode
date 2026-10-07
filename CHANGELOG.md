@@ -3,6 +3,31 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Security
+- **Gossip is verified before it is forwarded, and its tables have ceilings** (M4 of the Agent Fighter MVP,
+  `node/litnode.js`). A received heartbeat or queue entry was cached for forwarding before its signature was
+  checked, so a forged envelope travelled the whole mesh; a queue entry for a far-future bucket never went stale and
+  was forwarded forever; and every new key in a heartbeat made the node re-read NodeStake for all keys and push
+  gossip to the address it named, once a second. Now: envelopes are verified first (once each: a digest cache,
+  where every peer's every push was verified again before); queue entries must be inside the pairing window (not
+  stale, at most four buckets ahead) and name a title some node runs; at most 512 peer keys, 64 of them unbonded (the freshest;
+  an evicted key is refused for 10 min), 4096 queue entries (`POST /queue` answers 503 when full) and 1024
+  envelopes of each kind per message; at most 4 new keys' standings read a tick; an address only unbonded keys
+  claim is pushed to every tenth tick (it still gets everything in our replies). Refusals are counted on
+  `/health.gossipLimits` and logged once a minute at most (`demo/gossip-limits.test.mjs`).
+
+### Added
+- **RPC fallback** (`node/chain.js`). `RPC_FALLBACK` (comma-separated, plus `rpcFallback` in the release's
+  deployed.testnet.json) lists endpoints for the same chain. A call that fails in transit (timeout, 5xx page, 429,
+  refused) moves to the next endpoint at once; the failing one is benched for a minute, doubling up to ten, and
+  the preferred one is used again when its bench ends. A revert is an answer and never moves. Logs for a numbered
+  range are only taken from an endpoint whose head has reached the range's end, so a lagging fallback cannot make
+  MatchBook's cursor skip events. `/health.chain.rpcEndpoints` shows each endpoint (URLs redacted: a path segment
+  that looks like an API key becomes '…'); the cabinet's node panel says when the node is on a fallback; the
+  harness's `doctor` checks each fallback's chain id (`demo/rpc-fallback.test.mjs`).
+
 ## [0.11.22] — 2026-10-08 — a publisher service can name its own env files; gas-refund claims (dormant until the contract is deployed)
 
 ### Security

@@ -7,12 +7,13 @@
  *
  *  Dependency-free: node:http + fetch. One process = one node. */
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { h } from '../protocol/canonical.js';
+import { h, canonical } from '../protocol/canonical.js';
 import { generateKeypair, seal, opened, verify } from '../protocol/keys.js';
-import { snapshot as buildSnapshot, verifyHeartbeats, HEARTBEAT_TAG, epochOf, EPOCH_MS } from '../protocol/snapshot.js';
+import { snapshot as buildSnapshot, HEARTBEAT_TAG, epochOf, EPOCH_MS } from '../protocol/snapshot.js';
 import { applyStakes } from '../protocol/staking.js';
 import { pair, QUEUE_TAG, bucketOf, isStale } from '../protocol/pairing.js';
 import { install as installDoh } from './dns.js';
@@ -564,12 +565,86 @@ export async function createNode({
     links: [...heartbeats.values()].filter((b) => b.nodeId !== nodeId && b.addr && Date.now() - (links.get(b.addr)?.okAt ?? 0) < 10_000).map((b) => ({ id: b.nodeId.slice(0, 16), ms: links.get(b.addr).emaMs })),
   }, identity);
 
+  // ---------------------------------------------------------------- gossip limits
+  // A key costs nothing to make, so "anyone can run a node" also means anyone can send a thousand heartbeats or
+  // queue entries. Everything a peer hands us is verified BEFORE it is cached for forwarding (it used to be cached
+  // first, so a forged envelope travelled the whole mesh), and every table a stranger can add to has a ceiling.
+  const MAX_PEER_KEYS = 512;       // heartbeats held and forwarded
+  const MAX_UNBONDED_KEYS = 64;    // with NodeStake: keys the chain says are not bonded (a pre-bond operator, a test node)
+  const EVICTED_MS = 10 * 60_000;  // an evicted unbonded key is not taken back for this long
+  const MAX_QUEUE = 4096;          // queue entries held and forwarded
+  const QUEUE_AHEAD = 4;           // buckets ahead of ours an entry may name: POST /queue's window (2) plus a peer's clock up to 4 s ahead
+  const MAX_PER_MESSAGE = 1024;    // envelopes of each kind looked at in one gossip message
+  const NEW_KEY_READS = 4;         // standings read per tick for keys not seen before: a flood of keys is not a flood of eth_calls
+  const UNBONDED_PUSH_EVERY = 10;  // ticks between our pushes to an unbonded peer (it still gets everything in our replies)
+  const verifiedSigs = new Map();  // `tag|sig` → digest of what was signed: an envelope is verified once, not on every push
+  const evicted = new Map();       // nodeId → when it was dropped as unbonded over the cap
+  const guard = { heartbeat: { badSig: 0, full: 0, evicted: 0 }, queue: { badSig: 0, window: 0, unknownTitle: 0, full: 0 }, reported: '' };
+  /** opened(), remembered: the same sig over the same body (signer, tag) is not verified twice. */
+  const checked = async (tag, env) => {
+    if (!env?.body || !env.signer || typeof env.sig !== 'string') return false;
+    const k = `${tag}|${env.sig}`;
+    const d = createHash('sha256').update(`${tag}\0${env.signer}\0${canonical(env.body)}`).digest('hex');
+    const hit = verifiedSigs.get(k);
+    if (hit === d) return true;
+    if (hit === '!' + d) return false;
+    const ok = await opened(tag, env);
+    verifiedSigs.set(k, ok ? d : '!' + d);
+    if (verifiedSigs.size > 8192) verifiedSigs.delete(verifiedSigs.keys().next().value);
+    return ok;
+  };
+  const isUnbonded = (k) => !!(nodeStake && stakes && stakes[k] && !stakes[k].active);
+  const forgetKey = (k) => {
+    const addrOf = heartbeats.get(k)?.addr ?? envelopeCache.get(k)?.body?.addr;
+    heartbeats.delete(k); envelopeCache.delete(k);
+    if (addrOf && !seeds.includes(addrOf) && ![...heartbeats.values()].some((b) => b.addr === addrOf)) peersKnown.delete(addrOf);
+  };
+  const evict = (k) => {
+    forgetKey(k); guard.heartbeat.evicted++;
+    evicted.set(k, Date.now());
+    if (evicted.size > 4096) evicted.delete(evicted.keys().next().value);
+  };
+  const evictedRecently = (k) => { const at = evicted.get(k); return !!at && Date.now() - at < EVICTED_MS; };
+  /** Room in the peer table for a key we do not hold yet (asked only after its envelope verified, so a forgery
+   *  cannot evict anyone): a full table makes room by dropping the stalest unbonded key, and refuses when there is none. */
+  const roomFor = (k) => {
+    if (envelopeCache.has(k) || heartbeats.has(k)) return true;
+    if (envelopeCache.size < MAX_PEER_KEYS) return true;
+    const stalest = [...envelopeCache.values()].filter((e) => isUnbonded(e.body.nodeId)).sort((a, b) => (a.body.epoch ?? 0) - (b.body.epoch ?? 0))[0];
+    if (!stalest) { guard.heartbeat.full++; return false; }
+    evict(stalest.body.nodeId);
+    return true;
+  };
+  /** After a stake read: keep at most MAX_UNBONDED_KEYS unbonded keys, the freshest. */
+  const trimUnbonded = () => {
+    const unbonded = [...envelopeCache.values()].filter((e) => isUnbonded(e.body.nodeId)).sort((a, b) => (b.body.epoch ?? 0) - (a.body.epoch ?? 0));
+    for (const e of unbonded.slice(MAX_UNBONDED_KEYS)) evict(e.body.nodeId);
+  };
+  /** Titles this node could place: what it holds and what any peer advertises. */
+  const knownTitles = () => {
+    const t = new Set(loaded.keys());
+    for (const b of heartbeats.values()) for (const rid of Object.keys(b.manifests ?? {})) t.add(rid);
+    return t;
+  };
+  const guardStatus = () => ({ peerKeys: envelopeCache.size, maxPeerKeys: MAX_PEER_KEYS, unbonded: [...envelopeCache.keys()].filter(isUnbonded).length, maxUnbonded: MAX_UNBONDED_KEYS, evicted: evicted.size, queue: queueEnvelopes.size, maxQueue: MAX_QUEUE, verifyCache: verifiedSigs.size, refused: { heartbeat: { ...guard.heartbeat }, queue: { ...guard.queue } } });
+  // Refusals are counted, and reported once a minute at most: a flood must not become a flood of log lines.
+  let guardReportAt = 0;
+  const guardReport = () => {
+    if (Date.now() - guardReportAt < 60_000) return;
+    const now = JSON.stringify({ heartbeat: guard.heartbeat, queue: guard.queue });
+    if (now === guard.reported) return;
+    guardReportAt = Date.now(); guard.reported = now;
+    log(`gossip limits: refused ${now}`); emit('gossip.guard', guardStatus());
+  };
+
   // Peers on another protocol version are heard and listed, never placed,
   // never witnesses: old and new rules must not meet inside one match.
   const incompatible = new Map(); // nodeId → { version, protocol, at }
   const FORGET_AFTER_EPOCHS = Math.ceil(10 * 60_000 / EPOCH_MS); // a heartbeat this old is neither learned nor kept (forgetStale below)
   const mergeHeartbeats = async (envelopes) => {
-    for (const b of await verifyHeartbeats(envelopes ?? [])) {
+    for (const env of envelopes ?? []) {
+      if (env?.body?.nodeId !== env?.signer || !(await checked(HEARTBEAT_TAG, env))) continue;
+      const b = env.body;
       if (b.nodeId !== nodeId && (b.protocol ?? 1) !== PROTOCOL_VERSION) {
         if (!incompatible.has(b.nodeId)) { log(`peer ${b.nodeId.slice(0, 12)} speaks protocol ${b.protocol ?? 1} (${b.version ?? '?'}), ours is ${PROTOCOL_VERSION}: excluded`); emit('incompatible', { nodeId: b.nodeId, protocol: b.protocol ?? 1, version: b.version ?? null }); }
         incompatible.set(b.nodeId, { version: b.version ?? null, protocol: b.protocol ?? 1, at: Date.now() });
@@ -588,7 +663,7 @@ export async function createNode({
       const b = env?.body;
       if (!b || b.playerId !== env.signer || typeof b.bucket !== 'number' || !b.rulesetId) continue;
       const k = `${b.bucket}|${b.playerId}`;
-      if (queue.has(k) || isStale(b.bucket, Date.now()) || !(await opened(QUEUE_TAG, env))) continue;
+      if (queue.has(k) || isStale(b.bucket, Date.now()) || !(await checked(QUEUE_TAG, env))) continue;
       queue.set(k, b);
     }
   };
@@ -623,7 +698,7 @@ export async function createNode({
   };
 
   // ---------------------------------------------------------------- gossip loop
-  let timer = null, updateTimer = null, directoryTimer = null;
+  let timer = null, updateTimer = null, directoryTimer = null, tickNo = 0;
   // A heartbeat nobody has renewed in this long is forgotten: from the table, from the envelopes we forward and
   // from the incompatible list. Without this every node ever heard of stayed in every peer's gossip until a
   // restart (four dead test nodes from the day before were still travelling the mesh on 21 Sep 2026), and a
@@ -653,7 +728,13 @@ export async function createNode({
       matchesNow();
       payload.matches = matchEnvelopes();
       const body = JSON.stringify(payload);
-      const targets = [...peersKnown].filter((p) => p !== addr);
+      // An address only unbonded keys claim is pushed to every UNBONDED_PUSH_EVERY ticks: it still hears everything
+      // in our replies to its own pushes, and a forged heartbeat cannot point every node at a stranger's server
+      // once a second.
+      tickNo++;
+      const bondedAddrs = new Set(), unbondedAddrs = new Set();
+      for (const b of heartbeats.values()) if (b.addr) (isUnbonded(b.nodeId) ? unbondedAddrs : bondedAddrs).add(b.addr);
+      const targets = [...peersKnown].filter((p) => p !== addr && (seeds.includes(p) || bondedAddrs.has(p) || !unbondedAddrs.has(p) || tickNo % UNBONDED_PUSH_EVERY === 0));
       if (targets.length) emit('gossip.out', { peers: targets.length, bytes: body.length, heartbeats: payload.heartbeats.length, queue: payload.queue.length, deltas: payload.deltas.length, matches: payload.matches.length });
       for (const peer of targets) {
         const t0 = performance.now();
@@ -687,11 +768,14 @@ export async function createNode({
       // witnessEligible) from every node on a machine was ~25 requests/s from one IP and Caldera's
       // gateway answered 429 to everything, the operator's tools included (21 Sep 2026). A key we
       // hold no standing for yet (a new peer) is read at once.
+      // A key not read before is read at once, but only NEW_KEY_READS of them a tick: a burst of new keys (a flood,
+      // or a mesh restarting) is a few eth_calls a second, not one per key.
       const ids = [...heartbeats.keys()];
-      const unknownKey = nodeStake && !offline && ids.some((k) => !stakes || !(k in stakes));
-      if (nodeStake && !offline && (unknownKey || Date.now() - lastStakeRead > STAKE_TTL)) {
-        lastStakeRead = Date.now();
-        const st = await chain.standings(ids);
+      const unknown = nodeStake && !offline ? ids.filter((k) => !stakes || !(k in stakes)) : [];
+      const due = Date.now() - lastStakeRead > STAKE_TTL;
+      if (nodeStake && !offline && (due || unknown.length)) {
+        if (due) lastStakeRead = Date.now();
+        const st = await chain.standings(due ? [...ids.filter((k) => stakes && k in stakes), ...unknown.slice(0, NEW_KEY_READS)] : unknown.slice(0, NEW_KEY_READS));
         // Merge, never replace: one transient RPC failure for one key must
         // not drop that peer from the bonded set for a tick (it changed a
         // live placement once). Keys we no longer hear from are pruned.
@@ -701,8 +785,10 @@ export async function createNode({
           stakes = next;
           const bondedNow = Object.keys(next).filter((k) => next[k].active).sort().join(',');
           if (bondedNow !== lastBonded) { lastBonded = bondedNow; emit('stakes', { read: Object.keys(st).length, bonded: bondedNow ? bondedNow.split(',').length : 0 }); }
+          trimUnbonded();
         }
       }
+      guardReport();
       await readMyBond().catch(() => {});
       await refreshTitleOwners();
       await hydrateMissing(currentSnapshot());
@@ -718,15 +804,36 @@ export async function createNode({
       const sig = msg.heartbeats?.find((e) => e?.body?.nodeId !== nodeId)?.sig ?? null;
       emit('gossip.in', { from: meta.from, via: meta.via, bytes: meta.bytes, heartbeats: msg.heartbeats?.length ?? 0, queue: msg.queue?.length ?? 0, deltas: msg.deltas?.length ?? 0, matches: msg.matches?.length ?? 0, sig });
     }
-    for (const env of msg.heartbeats ?? []) if (env?.body?.nodeId && env.body.nodeId !== nodeId) {
-      const cur = envelopeCache.get(env.body.nodeId);
-      if ((env.body.epoch ?? 0) < epochOf(Date.now()) - FORGET_AFTER_EPOCHS) continue; // not ours to forward either
-      if (!cur || env.body.epoch >= cur.body.epoch) envelopeCache.set(env.body.nodeId, env);
+    const list = (x) => (Array.isArray(x) ? x.slice(0, MAX_PER_MESSAGE) : []);
+    const now = Date.now();
+    const fresh = [];
+    for (const env of list(msg.heartbeats)) {
+      const b = env?.body;
+      if (!b?.nodeId || b.nodeId === nodeId || b.nodeId !== env.signer) continue;
+      if ((b.epoch ?? 0) < epochOf(now) - FORGET_AFTER_EPOCHS) continue; // not ours to forward either
+      const cur = envelopeCache.get(b.nodeId);
+      if (cur && (cur.sig === env.sig || b.epoch < cur.body.epoch)) continue; // held already, or older than what we hold
+      if (!cur && evictedRecently(b.nodeId)) continue;
+      if (!(await checked(HEARTBEAT_TAG, env))) { guard.heartbeat.badSig++; continue; }
+      if (!cur && !roomFor(b.nodeId)) continue;
+      envelopeCache.set(b.nodeId, env); fresh.push(env);
     }
-    for (const env of msg.queue ?? []) if (env?.body) queueEnvelopes.set(`${env.body.bucket}|${env.body.playerId}`, env);
-    await mergeHeartbeats(msg.heartbeats);
-    await mergeQueue(msg.queue);
-    for (const env of msg.matches ?? []) await absorbMatch(env);
+    await mergeHeartbeats(fresh);
+    const titles = knownTitles();
+    const entries = [];
+    for (const env of list(msg.queue)) {
+      const b = env?.body;
+      if (!b || b.playerId !== env.signer || typeof b.bucket !== 'number' || !b.rulesetId) continue;
+      const k = `${b.bucket}|${b.playerId}`;
+      if (queueEnvelopes.has(k)) continue; // the first valid entry for a player's bucket stands
+      if (isStale(b.bucket, now) || b.bucket > bucketOf(now) + QUEUE_AHEAD) { guard.queue.window++; continue; } // a far-future bucket never went stale: it was forwarded forever
+      if (!titles.has(b.rulesetId)) { guard.queue.unknownTitle++; continue; }
+      if (queueEnvelopes.size >= MAX_QUEUE) { guard.queue.full++; continue; }
+      if (!(await checked(QUEUE_TAG, env))) { guard.queue.badSig++; continue; }
+      queueEnvelopes.set(k, env); entries.push(env);
+    }
+    await mergeQueue(entries);
+    for (const env of list(msg.matches)) await absorbMatch(env);
     if (isWitness && !mbook) for (const ad of msg.deltas ?? []) void witnessOne(ad); // with MatchBook, witnessing is chain-driven (node/matchbook.js)
     if (mbook && Array.isArray(msg.hints)) mbook.absorbHints(msg.hints);
   };
@@ -866,7 +973,7 @@ export async function createNode({
   /** Adopt or dispute a peer's descriptor. */
   const absorbMatch = async (env) => {
     const d = env?.body;
-    if (!d?.matchId || !d.host || d.computedBy !== env.signer || !(await opened(MATCH_TAG, env))) return;
+    if (!d?.matchId || !d.host || d.computedBy !== env.signer || !(await checked(MATCH_TAG, env))) return; // every peer forwards every placement every tick: verified once
     if ((d.protocol ?? 1) !== PROTOCOL_VERSION) return; // another protocol's placement is not ours to adopt
     if (stakes && !stakes[d.computedBy]?.active) return; // only bonded peers' descriptors count
     if (Date.now() - (d.computedAt ?? 0) > matchTtlMs) return; // older than our own TTL: it was pruned here once and would be again (re-adopting one made the host retry a reverted commit twice a second for 20 minutes, 21 Sep 2026)
@@ -983,7 +1090,7 @@ export async function createNode({
         bonded: stakes?.[nodeId]?.active ?? null, wallet: stakes?.[nodeId]?.operator ?? null, eligible: eligible.has(nodeId), bond: myBond ? { eligible: myBond.eligible, delegate: myBond.delegate, amount: myBond.amount.toString() } : null,
         tunnel: tunnels.node?.status() ?? null, relay: relayFront ? relayStatus() : null, upnp: upnpCtl?.status() ?? null, update: (({ available, latest, checkedAt, lastError, registry, channel, canRollback, applying, date }) => ({ available, latest, checkedAt: checkedAt ?? null, lastError: lastError ?? null, registry, channel, canRollback, applying: !!applying, date: date ?? null }))(updater.status()),
         inbound: { peers: [...inbound.values()].filter((t) => now - t < 30_000).length, reachable: peersKnown.size ? [...inbound.values()].some((t) => now - t < 30_000) : null }, sandbox: sandbox.status() },
-      chain: { ...(({ rpc, head, headTs, lagS, rpcMs, rpcLastMs, rpcCalls, rpcFailures, rpcAt, lastError, offline }) => ({ rpc, head, headTs, lagS, rpcMs, rpcLastMs, rpcCalls, rpcFailures, rpcAt, lastError, offline }))(chain.status()),
+      chain: { ...(({ rpc, rpcEndpoints, head, headTs, lagS, rpcMs, rpcLastMs, rpcCalls, rpcFailures, rpcAt, lastError, offline }) => ({ rpc, rpcEndpoints, head, headTs, lagS, rpcMs, rpcLastMs, rpcCalls, rpcFailures, rpcAt, lastError, offline }))(chain.status()),
         matchBook: mbs ? { contract: mbs.contract, delegate: mbs.delegate, delegated: mbs.delegated, funded: mbs.funded, enrolled: mbs.enrolled, purse: mbs.purse, cursor: mbs.cursor, scanRange: mbs.scanRange, events: mbs.events, sends: mbs.sends, lastTx: mbs.lastTx, lastError: mbs.lastError, hosting: mbs.hosting, seated: mbs.seated, windows: mbs.windows, sent: mbook.sent(50) } : null,
         // the addresses THIS process runs against, and the generation its deployed.testnet.json claimed — a cabinet compares with its own contracts.js
         contracts: { generation: contractsGeneration, NodeStake: nodeStake, NodeDirectory: nodeDirectory, MatchBook: matchBookAddr, GasRefund: gasRefund, EpochAnchor: epochAnchor, ReleaseRegistry: releaseRegistry, TitleRegistry: titleRegistry, PlayerProfile: playerProfile, ERC6699Registry: erc6699 },
@@ -1013,7 +1120,7 @@ export async function createNode({
       }
       if (req.method === 'GET' && url.pathname === '/health') {
         const s = currentSnapshot();
-        return json(res, 200, { nodeId, operator, roles, region, addr, protocol: PROTOCOL_VERSION, epoch: s.epoch, peers: s.peers.length, incompatible: incompatible.size, rulesets: buildHashes(), buildsHeld: builds.size, refused: refused.size, staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null,
+        return json(res, 200, { nodeId, operator, roles, region, addr, protocol: PROTOCOL_VERSION, epoch: s.epoch, peers: s.peers.length, incompatible: incompatible.size, rulesets: buildHashes(), buildsHeld: builds.size, refused: refused.size, gossipLimits: guardStatus(), staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null,
           // v3 bond: witnessEligible, delegate, bondedSince; `admin` says whether NodeStake's admin is a multisig/timelock ('contract') or a wallet ('eoa'). null = v2 contract or unread.
           bond: myBond ? { eligible: myBond.eligible, delegate: myBond.delegate, bondedSince: myBond.bondedSince ? new Date(myBond.bondedSince * 1000).toISOString() : null, unbondAt: myBond.unbondAt ? new Date(myBond.unbondAt * 1000).toISOString() : null, amount: myBond.amount.toString() } : null,
           admin: stakeAdmin === null ? null : stakeAdmin ? 'contract' : 'eoa', matchBook: mbook ? mbook.status() : matchBookAddr ? { contract: matchBookAddr, offline: true } : null, chain: chain.status(), profiles: profileState(), version, repair: sdkMissing, update: updater.status(),
@@ -1090,13 +1197,15 @@ export async function createNode({
         const env = await readBody(req);
         const b = env?.body;
         if (!b || b.playerId !== env.signer) return json(res, 400, { error: 'queue entry must be signed by the player it names' });
-        if (!(await opened(QUEUE_TAG, env))) return json(res, 403, { error: 'bad signature' });
+        if (!(await checked(QUEUE_TAG, env))) return json(res, 403, { error: 'bad signature' });
         if (Math.abs(b.bucket - bucketOf(Date.now())) > 2) return json(res, 400, { error: 'bucket out of window' });
         // A key its profile owner revoked is refused; an unbound key is a guest and fine.
         await refreshProfiles([b.playerId]).catch(() => {});
         const prof = profileCache.get(b.playerId);
         if (prof && prof.tokenId !== 0n && !prof.active) { emit('refused', { what: 'queue', reason: 'key revoked', playerId: b.playerId }); return json(res, 403, { error: 'key revoked by its profile owner' }); }
-        queueEnvelopes.set(`${b.bucket}|${b.playerId}`, env);
+        const qk = `${b.bucket}|${b.playerId}`;
+        if (!queueEnvelopes.has(qk) && queueEnvelopes.size >= MAX_QUEUE) { guard.queue.full++; return json(res, 503, { error: 'matchmaking queue is full on this node; try another node or a moment later' }); }
+        queueEnvelopes.set(qk, env);
         await mergeQueue([env]);
         emit('queue', { playerId: b.playerId, rulesetId: b.rulesetId, mode: b.mode, bucket: b.bucket, region: b.region ?? null, sig: env.sig });
         return json(res, 202, { ok: true, bucket: b.bucket });
