@@ -20,7 +20,8 @@
       "env": {
         "PORT": "${port}",
         "AIR_BUILD_ENV": "sandbox",
-        "AIR_PARTNER_IDS": "62e01755-138f-4e58-9cdc-fab71e037afd"
+        "AIR_PARTNER_IDS": "62e01755-138f-4e58-9cdc-fab71e037afd",
+        "COURT_PUBLIC_KEYS": "09b2b84947a10dcee1bc2f05deda59c6f4b98dc6f3c6d193071fd7c82d097e23"
       }
     },
     "matchmaker": {
@@ -51,7 +52,8 @@
         "MATCHMAKER_URL": "${local:matchmaker}",
         "COURT_PUBLIC_URL": "${public:court-1}",
         "LITNODE_URL": "${nodeUrl}",
-        "COURT_IDENTITY": "C:/Users/sedano/.litnode/pickle-brawl-court.json"
+        "COURT_IDENTITY": "C:/Users/sedano/.litnode/pickle-brawl-court.json",
+        "API_URL": "${local:api}"
       }
     },
     "court-2": {
@@ -69,7 +71,8 @@
         "MATCHMAKER_URL": "${local:matchmaker}",
         "COURT_PUBLIC_URL": "${public:court-2}",
         "LITNODE_URL": "${nodeUrl}",
-        "COURT_IDENTITY": "C:/Users/sedano/.litnode/pickle-brawl-court.json"
+        "COURT_IDENTITY": "C:/Users/sedano/.litnode/pickle-brawl-court.json",
+        "API_URL": "${local:api}"
       }
     }
   }
