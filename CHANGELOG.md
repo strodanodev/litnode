@@ -3,7 +3,7 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.11.24] — 2026-10-08 — publishers start courts for their own matches; a node notices when its own tunnel dies
 
 ### Added
 - **Publishers can start a court for a match they formed: `POST /gauntlet/start`** (`node/litnode.js`,
