@@ -579,7 +579,8 @@ export async function createNode({
   const UNBONDED_PUSH_EVERY = 10;  // ticks between our pushes to an unbonded peer (it still gets everything in our replies)
   const verifiedSigs = new Map();  // `tag|sig` → digest of what was signed: an envelope is verified once, not on every push
   const evicted = new Map();       // nodeId → when it was dropped as unbonded over the cap
-  const guard = { heartbeat: { badSig: 0, full: 0, evicted: 0 }, queue: { badSig: 0, window: 0, unknownTitle: 0, full: 0 }, reported: '' };
+  const guard = { heartbeat: { badSig: 0, full: 0, evicted: 0 }, queue: { badSig: 0, window: 0, unknownTitle: 0, full: 0 } };
+  guard.reported = JSON.stringify({ heartbeat: guard.heartbeat, queue: guard.queue }); // nothing refused yet: nothing to report
   /** opened(), remembered: the same sig over the same body (signer, tag) is not verified twice. */
   const checked = async (tag, env) => {
     if (!env?.body || !env.signer || typeof env.sig !== 'string') return false;
