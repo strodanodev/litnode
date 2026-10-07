@@ -5,7 +5,7 @@
  *  and posts it to the node — the whole loop, without a game engine.
  *
  *  env: PORT · COURT_TICKET_SECRET · COURT_PUBLIC_URL · LITNODE_SEATS (JSON)
- *       LITNODE_URL · COURT_IDENTITY (path) · GAUNTLET_MATCH_ID */
+ *       LITNODE_URL · COURT_IDENTITY (path) · GAUNTLET_MATCH_ID · API_URL (echoed) */
 import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { createHash, createHmac } from 'node:crypto';
@@ -18,6 +18,8 @@ const identity = process.env.COURT_IDENTITY ? JSON.parse(readFileSync(process.en
 const matchId = process.env.GAUNTLET_MATCH_ID;
 if (process.env.FAKE_COURT_CRASH === '1') { console.error('fake court: crashing on purpose'); process.exit(3); }
 if (process.env.FAKE_COURT_SLOW_MS) await new Promise((r) => setTimeout(r, Number(process.env.FAKE_COURT_SLOW_MS)));
+// A court that ends on its own without settling (a crash after the match, a report that never landed).
+if (process.env.FAKE_COURT_EXIT_MS) setTimeout(() => process.exit(0), Number(process.env.FAKE_COURT_EXIT_MS));
 
 const verify = (ticket) => {
   const dot = ticket.indexOf('.');
@@ -31,7 +33,7 @@ const verify = (ticket) => {
 const frame = (text) => { const b = Buffer.from(text); const h = b.length < 126 ? Buffer.from([0x81, b.length]) : Buffer.from([0x81, 126, b.length >> 8, b.length & 255]); return Buffer.concat([h, b]); };
 const unframe = (buf) => { const len0 = buf[1] & 127; let off = 2, len = len0; if (len0 === 126) { len = buf.readUInt16BE(2); off = 4; } const mask = buf.subarray(off, off + 4); const data = Buffer.from(buf.subarray(off + 4, off + 4 + len)); for (let i = 0; i < data.length; i++) data[i] ^= mask[i % 4]; return { text: data.toString('utf8'), rest: buf.subarray(off + 4 + len) }; };
 
-const server = createServer((req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ court: true, matchId, seats: seats.length, publicUrl: process.env.COURT_PUBLIC_URL })); });
+const server = createServer((req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ court: true, matchId, seats: seats.length, publicUrl: process.env.COURT_PUBLIC_URL, apiUrl: process.env.API_URL ?? null })); });
 const clients = new Set();
 server.on('upgrade', (req, socket) => {
   const key = req.headers['sec-websocket-key'];

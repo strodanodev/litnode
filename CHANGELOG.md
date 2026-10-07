@@ -5,6 +5,20 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **Publishers can start a court for a match they formed: `POST /gauntlet/start`** (`node/litnode.js`,
+  `node/gauntlet.js` startDirect, `node/publisher-services.js`). A gauntlet court could only be started by a mesh
+  placement, so a publisher's own matchmaking (a friends' lobby, a 2v2) had to run on long-lived shared courts with
+  one static ticket secret. Now a service a bundle names in `gauntletCallers` asks its node for a court for one of
+  the titles in `gauntletRulesets`: `{rulesetId, matchId (64 hex), mode, seats}`, on the node's own port, from this
+  machine only, with `LITNODE_GAUNTLET_TOKEN` (made fresh at node start and given only to those services). The
+  answer is the run's room, public ws and its own ticket secret, so each secret opens one court. A repeat with the
+  same seats is answered with the same run and other seats are refused (409); the gateway never hands out a direct
+  seat; `POST /gauntlet/stop` ends a publisher's own run; at most `maxDirect` direct runs per title (default half
+  the port range) are live at once, and a court that has ended no longer counts (`demo/gauntlet-direct.test.mjs`).
+- **`${gateway}` in a gauntlet config**: this node's gateway on loopback, so a court reaches its publisher's own
+  services as `${gateway}/svc/<prefix>.<name>` without knowing the local port each one was given.
+
 ### Tests
 - **The publisher-offline test** (M5 of the Agent Fighter MVP, `demo/publisher-offline.test.mjs`). Five nodes
   bonded from five operator wallets on NodeStake v3 + MatchBook + a funded GasRefund (in-process chain, eth_getLogs

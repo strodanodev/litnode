@@ -46,7 +46,7 @@ test('direct gauntlets: a publisher service starts, seats and stops a court for 
     },
   };
   writeFileSync(join(tmp, 'bundle.json'), JSON.stringify(bundle));
-  const cfg = { command: process.execPath, args: [FAKE_COURT], cwd: ROOT, env: { PORT: '${port}', COURT_TICKET_SECRET: '${secret}', LITNODE_SEATS: '${seats}' }, portRange: [7900, 7905], readyMs: 20_000, ttlMs: 60_000, ticketTtlMs: 60_000 };
+  const cfg = { command: process.execPath, args: [FAKE_COURT], cwd: ROOT, env: { PORT: '${port}', COURT_TICKET_SECRET: '${secret}', LITNODE_SEATS: '${seats}', API_URL: '${gateway}/svc/demo-game.api' }, portRange: [7900, 7905], readyMs: 20_000, ttlMs: 60_000, ticketTtlMs: 60_000 };
   const node = await createNode({ dataDir: join(tmp, 'n'), offline: true, heartbeatMs: 200, operator: 'studio', roles: ['mesh', 'host'], rulesets: [PB], gauntlets: { 'pickle-brawl.v1': cfg }, gauntletPort: 0, services: loadServiceBundles(join(tmp, 'bundle.json')) });
   t.after(async () => { await node.stop(); rmSync(tmp, { recursive: true, force: true }); });
   const gw = `http://127.0.0.1:${node.gauntlet.port}`;
@@ -102,10 +102,40 @@ test('direct gauntlets: a publisher service starts, seats and stops a court for 
   });
   assert.equal(seated, 'seated:air|alice:0:0:singles');
 
+  // ${gateway}: the court reaches the publisher's own services through this node's gateway, on loopback.
+  const courtPort = gateway.active.find((r) => r.room === run.room).port;
+  const court = await (await fetch(`http://127.0.0.1:${courtPort}/`)).json();
+  assert.equal(court.apiUrl, `${gw}/svc/demo-game.api`);
+  assert.equal((await (await fetch(`${court.apiUrl}/`)).json()).name, 'demo-game.api', 'and it answers');
+
   // Only its own runs can be stopped, by its own token.
   assert.equal((await post('/gauntlet/stop', { matchId: matchId('somebody else') })).status, 404);
   assert.equal((await post('/gauntlet/stop', { matchId: id })).status, 200);
   assert.ok(await until(async () => !(await (await fetch(`${gw}/gateway`)).json()).active.some((r) => r.room === run.room), 5000), 'the run is gone');
+});
+
+test('direct gauntlets: only a court that is still running holds one of the title\'s slots', { timeout: 120_000 }, async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'litgd-'));
+  const bundle = {
+    prefix: 'demo-game', cwd: ROOT, portRange: [8880, 8889],
+    gauntletCallers: ['mm'], gauntletRulesets: ['pickle-brawl.v1'],
+    services: { mm: { command: '${node}', args: [FAKE_SERVICE], env: { PORT: '${port}' } } },
+  };
+  writeFileSync(join(tmp, 'bundle.json'), JSON.stringify(bundle));
+  // One slot, and a court that ends by itself 1.5 s after it starts, without ever settling.
+  const cfg = { command: process.execPath, args: [FAKE_COURT], cwd: ROOT, env: { PORT: '${port}', COURT_TICKET_SECRET: '${secret}', FAKE_COURT_EXIT_MS: '1500' }, portRange: [7910, 7915], maxDirect: 1, readyMs: 20_000, ttlMs: 60_000, ticketTtlMs: 60_000 };
+  const node = await createNode({ dataDir: join(tmp, 'n'), offline: true, heartbeatMs: 200, operator: 'studio', roles: ['mesh', 'host'], rulesets: [PB], gauntlets: { 'pickle-brawl.v1': cfg }, gauntletPort: 0, services: loadServiceBundles(join(tmp, 'bundle.json')) });
+  t.after(async () => { await node.stop(); rmSync(tmp, { recursive: true, force: true }); });
+  const gw = `http://127.0.0.1:${node.gauntlet.port}`;
+  assert.ok(await until(async () => (await (await fetch(`${gw}/svc`)).json()).services.every((s) => s.state === 'up')), 'services up');
+  const token = (await (await fetch(`${gw}/svc/demo-game.mm/`)).json()).gauntletToken;
+  const start = (label) => fetch(`${node.addr}/gauntlet/start`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ rulesetId: 'pickle-brawl.v1', matchId: matchId(label), mode: 'singles', seats: [{ sub: `${label}|a`, team: 0, slot: 0 }, { sub: `${label}|b`, team: 1, slot: 0 }] }) });
+
+  assert.equal((await start('first')).status, 200);
+  assert.equal((await start('second')).status, 429, 'the one slot is taken');
+  // The first court ends on its own and is never settled, so it stays on the books - but not in the slot.
+  assert.ok(await until(async () => node.gauntlet.active.get(matchId('first'))?.state === 'exited', 10_000), 'the first court ended');
+  assert.equal((await start('second')).status, 200, 'an ended court gives its slot back');
 });
 
 test('direct gauntlets: a bundle cannot name callers outside itself, or callers without titles', () => {

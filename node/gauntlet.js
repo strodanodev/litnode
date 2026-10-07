@@ -24,8 +24,13 @@
  *    { "command": "${node}", "args": ["…/tsx/dist/cli.mjs", "services/court/src/court.ts"],
  *      "cwd": "E:/…/PickleBrawl",
  *      "env": { "PORT": "${port}", "COURT_TICKET_SECRET": "${secret}", "COURT_PUBLIC_URL": "${publicUrl}",
- *               "LITNODE_SEATS": "${seats}", "LITNODE_URL": "${nodeUrl}", "COURT_IDENTITY": "…" },
+ *               "LITNODE_SEATS": "${seats}", "LITNODE_URL": "${nodeUrl}", "COURT_IDENTITY": "…",
+ *               "API_URL": "${gateway}/svc/pickle-brawl.api" },
  *      "portRange": [7777, 7787], "readyMs": 90000, "ttlMs": 900000, "ticketTtlMs": 600000, "settledGraceMs": 3000 }
+ *
+ *  ${gateway} is this gateway on loopback, so a court reaches the publisher's
+ *  own services (/svc/<prefix>.<name>, node/publisher-services.js) without
+ *  knowing which local port each one was given.
  *
  *  Nothing here runs title code in the node process; the child is the
  *  publisher's own server, isolated exactly as far as a process is. */
@@ -125,7 +130,7 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
       // The match seed is the placement's, H(beacon, matchId): the one a witness replays with, so the server
       // never picks it (node/settle.js bind). No beacon (a direct start): the seed settle uses for unplaced matches.
       const seed = beacon != null ? seedFor(beacon, matchId) : h('seed', matchId);
-      const vars = { port: run.port, secret, publicUrl: publicWs(room), seats: JSON.stringify(seats), matchId, room, nodeUrl, mode, placedMode: placedMode ?? 'casual', rulesetId, node: process.execPath, seed, buildHash: buildHash ?? '' };
+      const vars = { port: run.port, secret, publicUrl: publicWs(room), seats: JSON.stringify(seats), matchId, room, nodeUrl, gateway: `http://127.0.0.1:${actualPort}`, mode, placedMode: placedMode ?? 'casual', rulesetId, node: process.execPath, seed, buildHash: buildHash ?? '' };
       // The node's own keys never reach a title's process (same rule as
       // publisher services); a config that needs a secret names it in `env`.
       const inherited = { ...process.env };
@@ -181,7 +186,8 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
       return { run: existing };
     }
     const max = cfg.maxDirect ?? Math.max(1, Math.floor((cfg.portRange[1] - cfg.portRange[0] + 1) / 2));
-    if ([...active.values()].filter((r) => r.direct && r.rulesetId === rulesetId).length >= max) return { code: 429, error: `at most ${max} direct ${rulesetId} matches at once on this node` };
+    // Live runs only: a court that exited or never came up holds no port, and must not hold a slot.
+    if ([...active.values()].filter((r) => r.direct && r.rulesetId === rulesetId && (r.state === 'starting' || r.state === 'up')).length >= max) return { code: 429, error: `at most ${max} direct ${rulesetId} matches at once on this node` };
     return { run: await start({ matchId, rulesetId, participants: want.map((s) => s.sub), seats: want, format, direct: true, owner }) };
   };
 
