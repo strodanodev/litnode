@@ -22,7 +22,7 @@ const bundleFile = (dir) => {
   writeFileSync(join(dir, 'secrets.env'), 'SECRET_FROM_FILE="from the file"\n# a comment\nOPERATOR_KEY=0xnope\n');
   const b = { prefix: 'demo-game', cwd: ROOT, envFiles: [join(dir, 'secrets.env')], portRange: [8840, 8869], services: {
     api: { command: '${node}', args: [FAKE], env: { PORT: '${port}', PEER_URL: '${local:mm}' } },
-    mm: { command: '${node}', args: [FAKE], env: { PORT: '${port}', PUBLIC_URL: '${public:api}' } },
+    mm: { command: '${node}', args: [FAKE], envFiles: [], env: { PORT: '${port}', PUBLIC_URL: '${public:api}' } },
   } };
   const f = join(dir, 'bundle.json');
   writeFileSync(f, JSON.stringify(b));
@@ -57,6 +57,7 @@ test('services: the node runs them, publishes them at /svc/<name>, proxies HTTP 
   assert.equal(r.peer, `http://127.0.0.1:${mmPort}`, 'local:mm is the other service on loopback');
   const mm = await (await fetch(`${gw}/svc/demo-game.mm/`)).json();
   assert.equal(mm.pub, `ws://127.0.0.1:${node.gauntlet.port}/svc/demo-game.api`, 'no tunnel: public:api is the gateway itself');
+  assert.equal(mm.secret, null, 'a service that names its own envFiles does not get the bundle\'s');
   assert.equal((await fetch(`${gw}/svc/demo-game.nope/x`)).status, 404);
 
   const echoed = await new Promise((res, rej) => { const ws = new WebSocket(`ws://127.0.0.1:${node.gauntlet.port}/svc/demo-game.api/socket?room=1`); ws.onopen = () => ws.send('ping'); ws.onmessage = (e) => { res(String(e.data)); ws.close(); }; ws.onerror = () => rej(new Error('ws failed')); });

@@ -29,7 +29,10 @@
  *  quick tunnel rotated), so it never hands out a dead hostname.
  *
  *  Env precedence: the node's own environment < envFiles < the service's
- *  `env`. Operator secrets (OPERATOR_KEY, DEPLOYER_KEY) are never passed. */
+ *  `env`. Operator secrets (OPERATOR_KEY, DEPLOYER_KEY) are never passed.
+ *  A service may name its own "envFiles" (same path rules); it then reads
+ *  ONLY those, not the bundle's - give courts their ticket secret and not
+ *  the API's database URL. */
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { connect, createServer as createTcpServer } from 'node:net';
@@ -76,15 +79,22 @@ export function createServices({ bundles = [], nodeUrl, publicBase = () => null,
   const base = () => { const b = publicBase(); return b ? b.replace(/\/+$/, '') : null; };
   const publicWs = (full, gatewayPort) => `${(base() ?? `ws://127.0.0.1:${gatewayPort ?? 0}`)}/svc/${full}`;
 
-  for (const b of bundles) {
+  const readEnvFiles = (list, cwd, label) => {
     const files = {};
-    for (const f of b.envFiles ?? []) {
-      const p = isAbsolute(f) || /^[A-Za-z]:/.test(f) ? f : join(b.cwd, f);
-      if (!existsSync(p)) { log(`services ${b.prefix}: env file ${p} missing`); continue; }
+    for (const f of list ?? []) {
+      const p = isAbsolute(f) || /^[A-Za-z]:/.test(f) ? f : join(cwd, f);
+      if (!existsSync(p)) { log(`services ${label}: env file ${p} missing`); continue; }
       Object.assign(files, parseEnvFile(readFileSync(p, 'utf8')));
     }
+    return files;
+  };
+  for (const b of bundles) {
+    const shared = readEnvFiles(b.envFiles, b.cwd, b.prefix);
     for (const [name, s] of Object.entries(b.services)) {
       const full = `${b.prefix}.${name}`;
+      // A service that names its own envFiles reads only those. A game server facing the tunnel
+      // has no business holding the API's database URL just because the two ship in one bundle.
+      const files = Array.isArray(s.envFiles) ? readEnvFiles(s.envFiles, b.cwd, full) : shared;
       all.set(full, { full, name, bundle: b, cfg: { args: [], env: {}, readyMs: 120_000, ...s }, files, port: null, pid: null, child: null, state: 'off', restarts: 0, upSince: null, lastError: null, lastLine: null, usesPublic: false, timer: null });
     }
   }
