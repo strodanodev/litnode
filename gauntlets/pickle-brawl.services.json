@@ -42,6 +42,9 @@
         "node_modules/tsx/dist/cli.mjs",
         "services/court/src/court.ts"
       ],
+      "envFiles": [
+        "E:/NPC/PICKLEBRAWLv2/PickleBrawl/services/court/.env"
+      ],
       "readyMs": 180000,
       "env": {
         "PORT": "${port}",
@@ -56,6 +59,9 @@
       "args": [
         "node_modules/tsx/dist/cli.mjs",
         "services/court/src/court.ts"
+      ],
+      "envFiles": [
+        "E:/NPC/PICKLEBRAWLv2/PickleBrawl/services/court/.env"
       ],
       "readyMs": 180000,
       "env": {
