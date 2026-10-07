@@ -12,59 +12,24 @@
  *    node --test demo/af-gauntlet.test.mjs */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { join } from 'node:path';
 import { createNode } from '../node/litnode.js';
 import { loadGauntletConfigs } from '../node/gauntlet.js';
 import { generateKeypair, seal } from '../protocol/keys.js';
 import { QUEUE_TAG, bucketOf, roomCodeFor } from '../protocol/pairing.js';
-import { signSeat } from '../protocol/challenge.js';
-import { chainHead, ledgerBody, signLedger } from '../protocol/log.js';
+import { AF, haveAf as have, afGauntlet, claimSeat, runBot } from './lib/af-bot.mjs';
 
 const ROOT = process.cwd();
-const AF = resolve(process.env.AF_ROOT ?? 'E:/NPC/AGENT FIGHTER/agent-fighter');
-const TSX = join(AF, 'node_modules', 'tsx', 'dist', 'cli.mjs');
 const RULESET = join(ROOT, 'rulesets', 'agent-fighter.v1.js');
-const BOT = join(ROOT, 'demo', 'fixtures', 'af-gauntlet-bot.mts');
-const have = existsSync(TSX) && existsSync(join(AF, 'packages', 'server', 'src', 'gauntlet-server.ts'));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const until = async (pred, ms) => { const end = Date.now() + ms; while (Date.now() < end) { if (await pred()) return true; await sleep(200); } return false; };
-
-/** Run one bot; play the arcade for it: check the head of its own log, sign, answer. */
-const runBot = ({ kp, ws, ticket, room, name, char, seed, match }) => new Promise((resolveBot, reject) => {
-  const child = spawn(process.execPath, [TSX, BOT], {
-    cwd: AF, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, BOT_SESSION_URL: pathToFileURL(join(AF, 'packages', 'server', 'src', 'agent-session.ts')).href, BOT_WS: ws, BOT_TICKET: ticket, BOT_ROOM: room, BOT_NAME: name, BOT_CHAR: char, BOT_SEED: String(seed), BOT_CHARS: join(AF, 'characters') },
-  });
-  let buf = '', err = '', signedHead = null, result = null;
-  child.stderr.on('data', (d) => { err += d; });
-  child.stdout.on('data', async (d) => {
-    buf += d;
-    let nl;
-    while ((nl = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, nl); buf = buf.slice(nl + 1);
-      if (line.startsWith('LEDGER ')) {
-        const { ledger, entries } = JSON.parse(line.slice(7));
-        // What the arcade does (cabinet:sign with entries): the head of the player's OWN record, not the host's word.
-        const own = chainHead(entries);
-        if (own !== ledger.head || entries.length !== ledger.ticks) { child.stdin.write('REFUSE\n'); continue; }
-        signedHead = own;
-        const sig = await signLedger(ledgerBody({ matchId: match.matchId, ticks: entries.length, head: own, buildHash: match.buildHash ?? null }), kp);
-        child.stdin.write(`SIG ${sig}\n`);
-      } else if (line.startsWith('RESULT ')) result = JSON.parse(line.slice(7));
-    }
-  });
-  child.on('exit', (code) => (result ? resolveBot({ ...result, signedHead }) : reject(new Error(`bot ${name} exited ${code} without a result: ${err.slice(-800)}`))));
-});
 
 test('Agent Fighter gauntlet: placed, served per match, signed by both players, settled, witnessed, official', { skip: !have && `no Agent Fighter checkout with node_modules at ${AF}`, timeout: 300_000 }, async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), 'lit-afg-'));
   const [cfg] = Object.values(loadGauntletConfigs(`agent-fighter.v1=${join(ROOT, 'gauntlets', 'agent-fighter.json')}`, { root: ROOT }));
-  // This checkout, and bots that play faster than real time (a gauntlet has no economy for the pace check to guard).
-  const afCfg = { ...cfg, cwd: AF, env: { ...cfg.env, AF_NO_PACE_CHECK: '1' } };
+  const afCfg = afGauntlet(cfg); // this checkout; bots faster than real time
   const host = await createNode({ dataDir: join(tmp, 'host'), offline: true, heartbeatMs: 200, operator: 'studio', roles: ['mesh', 'host', 'settler'], rulesets: [RULESET], gauntlets: { 'agent-fighter.v1': afCfg }, gauntletPort: 0, relayPort: null });
   const witness = await createNode({ dataDir: join(tmp, 'witness'), offline: true, heartbeatMs: 200, operator: 'guild', roles: ['mesh', 'witness'], rulesets: [RULESET], seeds: [host.addr] });
   t.after(async () => { await witness.stop(); await host.stop(); rmSync(tmp, { recursive: true, force: true }); });
@@ -86,14 +51,7 @@ test('Agent Fighter gauntlet: placed, served per match, signed by both players, 
 
   // Each player claims its seat: the gateway's challenge, signed by the player key.
   const gw = `http://127.0.0.1:${host.gauntlet.port}`;
-  const claim = async (kp) => {
-    const { challenge } = await (await fetch(`${gw}/${room}/ticket?player=${kp.publicKey}`)).json();
-    const sig = await signSeat(challenge, kp.privateKey);
-    const r = await fetch(`${gw}/${room}/ticket?player=${kp.publicKey}&nonce=${challenge.nonce}&sig=${sig}`);
-    assert.equal(r.status, 200);
-    return r.json();
-  };
-  const [s1, s2] = await Promise.all([claim(p1), claim(p2)]);
+  const [s1, s2] = await Promise.all([claimSeat(gw, room, p1), claimSeat(gw, room, p2)]);
   assert.equal(s1.ws, `ws://127.0.0.1:${host.gauntlet.port}/${room}`, 'the match has its own room on the gateway');
 
   const [r1, r2] = await Promise.all([

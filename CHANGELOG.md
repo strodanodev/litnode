@@ -3,6 +3,22 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Tests
+- **The publisher-offline test** (M5 of the Agent Fighter MVP, `demo/publisher-offline.test.mjs`). Five nodes
+  bonded from five operator wallets on NodeStake v3 + MatchBook + a funded GasRefund (in-process chain, eth_getLogs
+  unavailable as on Liteforge). The publisher's node is the only one started with Agent Fighter's ruleset; the
+  others fetch it by hash; then it STOPS. With it gone: an operator's node serves the arcade and the build, two
+  players queue ranked there, the match is placed on the operator that runs Agent Fighter's per-match server with
+  the other three as its panel, committed before play, played by the title's own server with two headless players
+  who each sign their own log's head, settled on chain, attested three times, final; `/progress` folds +60/+20 XP
+  and the same rating from the chain on all four nodes; the host and the panel are refunded by GasRefund. Needs an
+  Agent Fighter checkout, like `demo/af-gauntlet.test.mjs` (both now share `demo/lib/af-bot.mjs`).
+
+### Changed
+- The gossip limits no longer log a "refused" line with every count at zero when a node starts.
+
 ## [0.11.23] — 2026-10-08 — RPC fallback; gossip verified before it is forwarded, with ceilings
 
 ### Security

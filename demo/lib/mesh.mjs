@@ -11,8 +11,9 @@ import { h } from '../../protocol/canonical.js';
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export const until = async (pred, ms = 15_000, step = 100) => { const end = Date.now() + ms; while (Date.now() < end) { const v = await pred(); if (v) return v; await sleep(step); } return null; };
 
-/** Queue both keys at `nodeUrl` every bucket until a descriptor names them. Returns the descriptor. */
-export async function placeMatch(nodeUrl, kps, { rulesetId, mode = 'ranked', timeoutMs = 20_000 } = {}) {
+/** Queue both keys at `nodeUrl` every bucket until a descriptor names them. Returns the descriptor.
+ *  `fields` are added to each entry (Agent Fighter's tokenId, a region). */
+export async function placeMatch(nodeUrl, kps, { rulesetId, mode = 'ranked', timeoutMs = 20_000, fields = {} } = {}) {
   const since = Date.now(); // a placement from an earlier call (kept 15 min) is not this one
   const end = since + timeoutMs;
   let lastBucket = -1;
@@ -21,7 +22,7 @@ export async function placeMatch(nodeUrl, kps, { rulesetId, mode = 'ranked', tim
     if (bucket !== lastBucket) {
       lastBucket = bucket;
       for (const kp of kps) {
-        const env = await seal(QUEUE_TAG, { playerId: kp.publicKey, rulesetId, mode, bucket, tokenId: null }, kp);
+        const env = await seal(QUEUE_TAG, { playerId: kp.publicKey, rulesetId, mode, bucket, tokenId: null, ...fields }, kp);
         const r = await fetch(`${nodeUrl}/queue`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(env) });
         if (!r.ok) throw new Error(`queue: ${(await r.json()).error}`);
       }
