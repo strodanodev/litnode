@@ -13,7 +13,7 @@ const server = createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
       path: url.pathname, search: url.search, method: req.method, body, proto: req.headers['x-forwarded-proto'] ?? null,
-      name: env('LITNODE_SERVICE'), secret: env('SECRET_FROM_FILE'), peer: env('PEER_URL'), pub: env('PUBLIC_URL'), operatorKey: env('OPERATOR_KEY'), pid: process.pid,
+      name: env('LITNODE_SERVICE'), secret: env('SECRET_FROM_FILE'), peer: env('PEER_URL'), pub: env('PUBLIC_URL'), operatorKey: env('OPERATOR_KEY'), gauntletToken: env('LITNODE_GAUNTLET_TOKEN'), nodeUrl: env('LITNODE_NODE_URL'), pid: process.pid,
     }));
   });
 });

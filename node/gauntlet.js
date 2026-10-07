@@ -61,6 +61,24 @@ export const seatsFor = (participants) => {
   return { mode, seats: participants.map((sub, i) => ({ sub, team: Math.floor(i / per) % 2, slot: i % per })) };
 };
 
+/** What is wrong with the seats a publisher names for a direct start, or null: one seat per side in singles;
+ *  one or two per side in doubles (two humans with NPC partners is a doubles match); every sub and every
+ *  (team, slot) once; both sides seated. */
+export const directSeatsProblem = (format, seats) => {
+  if (format !== 'singles' && format !== 'doubles') return 'mode must be singles or doubles';
+  if (!Array.isArray(seats)) return 'seats must be an array';
+  if (format === 'singles' ? seats.length !== 2 : seats.length !== 2 && seats.length !== 4) return `${format} takes ${format === 'singles' ? '2' : '2 or 4'} seats`;
+  const subs = new Set(), places = new Set();
+  for (const s of seats) {
+    if (typeof s?.sub !== 'string' || s.sub.length < 1 || s.sub.length > 256) return 'every seat needs a sub (1-256 characters)';
+    if ((s.team !== 0 && s.team !== 1) || (s.slot !== 0 && s.slot !== 1) || (format === 'singles' && s.slot !== 0)) return 'every seat needs a team (0|1) and a slot (0|1; 0 in singles)';
+    if (subs.has(s.sub) || places.has(`${s.team}${s.slot}`)) return 'a sub or a (team, slot) appears twice';
+    subs.add(s.sub); places.add(`${s.team}${s.slot}`);
+  }
+  if (!seats.some((s) => s.team === 0) || !seats.some((s) => s.team === 1)) return 'both teams need a seat';
+  return null;
+};
+
 /** Load GAUNTLETS=<rulesetId>=<path>[,…] into { rulesetId: config }. */
 export function loadGauntletConfigs(spec, { root = process.cwd() } = {}) {
   const out = {};
@@ -92,14 +110,15 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
 
   const allocPort = async ([lo, hi]) => { for (let p = lo; p <= hi; p++) if (!used.has(p) && (await portFree(p))) { used.add(p); return p; } throw new Error(`no free port in ${lo}-${hi}`); };
 
-  /** Start a gauntlet for a placement this node hosts. Idempotent per matchId. */
-  const start = async ({ matchId, rulesetId, participants, mode: placedMode = null, beacon = null, buildHash = null }) => {
+  /** Start a gauntlet for a placement this node hosts - or, with `direct`, for a match a publisher formed
+   *  itself (startDirect: explicit seats and format, no placement). Idempotent per matchId. */
+  const start = async ({ matchId, rulesetId, participants, mode: placedMode = null, beacon = null, buildHash = null, seats: named = null, format = null, direct = false, owner = null }) => {
     const cfg = configs[rulesetId];
     if (!cfg || active.has(matchId)) return active.get(matchId) ?? null;
     const room = roomCodeFor(matchId);
-    const { mode, seats } = seatsFor(participants);
+    const { mode, seats } = named ? { mode: format, seats: named } : seatsFor(participants);
     const secret = randomBytes(32).toString('hex');
-    const run = { matchId, rulesetId, room, mode, placedMode, seats, secret, port: null, pid: null, state: 'starting', startedAt: Date.now(), exitCode: null, lastError: null, tickets: {}, timer: null, child: null };
+    const run = { matchId, rulesetId, room, mode, placedMode, seats, secret, direct, owner, port: null, pid: null, state: 'starting', startedAt: Date.now(), exitCode: null, lastError: null, tickets: {}, timer: null, child: null };
     active.set(matchId, run); rooms.set(room, run);
     try {
       run.port = await allocPort(cfg.portRange);
@@ -138,6 +157,32 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
       rooms.delete(room);
       return run;
     }
+  };
+
+  /**
+   * A court for a match the PUBLISHER formed (a friends' lobby, a queue of its own): node/litnode.js
+   * POST /gauntlet/start, called on this machine by a publisher service holding the bundle's token.
+   * No placement, so no beacon (the unplaced seed) and no player keys: the run's per-match secret goes
+   * back to the publisher, which mints its own players' tickets with it - each secret opens this one
+   * court. Repeating a start with the same seats is answered with the same run; other seats are refused.
+   * Direct runs are capped per title (maxDirect, default half the port range) so placements keep ports.
+   */
+  const startDirect = async ({ rulesetId, matchId, format, seats, owner }) => {
+    const cfg = configs[rulesetId];
+    if (!cfg) return { code: 404, error: `this node runs no gauntlet for ${rulesetId}` };
+    if (!/^[0-9a-f]{64}$/.test(matchId ?? '')) return { code: 400, error: 'matchId must be 64 lowercase hex characters' };
+    const problem = directSeatsProblem(format, seats);
+    if (problem) return { code: 400, error: problem };
+    const want = seats.map((s) => ({ sub: s.sub, team: s.team, slot: s.slot }));
+    const key = (list) => list.map((s) => `${s.team}${s.slot}:${s.sub}`).sort().join('|');
+    const existing = active.get(matchId);
+    if (existing) {
+      if (!existing.direct || existing.owner !== owner || existing.mode !== format || key(existing.seats) !== key(want)) return { code: 409, error: 'that matchId is already running with other seats' };
+      return { run: existing };
+    }
+    const max = cfg.maxDirect ?? Math.max(1, Math.floor((cfg.portRange[1] - cfg.portRange[0] + 1) / 2));
+    if ([...active.values()].filter((r) => r.direct && r.rulesetId === rulesetId).length >= max) return { code: 429, error: `at most ${max} direct ${rulesetId} matches at once on this node` };
+    return { run: await start({ matchId, rulesetId, participants: want.map((s) => s.sub), seats: want, format, direct: true, owner }) };
   };
 
   const stop = (matchId, why = 'stopped') => {
@@ -188,6 +233,9 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
    *  public; before this, naming a placed player's key was enough to take their seat. */
   const SEAT_CHALLENGE_MS = 60_000;
   const claimSeat = async (run, url) => {
+    // A direct run's seats belong to the publisher's players, who get their tickets from the publisher;
+    // its subs are account ids, never listed here.
+    if (run.direct) return [403, { error: 'this match was started by its publisher: your seat comes from it' }];
     const player = url.searchParams.get('player') ?? '';
     const t = run.tickets[player];
     if (!t) return [403, { error: 'not a placed player of this match', seats: run.seats.map((s) => s.sub) }];
@@ -260,7 +308,7 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
     server.listen(port, host, () => { actualPort = server.address().port; log(`gauntlet gateway on :${actualPort}${upstream ? ` (unknown rooms → ${upstream})` : ''}: ${Object.keys(configs).join(', ') || 'no titles configured'}`); res(actualPort); });
   });
 
-  const status = () => ({ port: actualPort, upstream, titles: Object.keys(configs), services: services?.status() ?? [], active: [...active.values()].map((r) => ({ matchId: r.matchId, rulesetId: r.rulesetId, room: r.room, state: r.state, mode: r.mode, seats: r.seats.length, port: r.port, pid: r.pid, since: new Date(r.startedAt).toISOString(), lastError: r.lastError, exitCode: r.exitCode })) });
+  const status = () => ({ port: actualPort, upstream, titles: Object.keys(configs), services: services?.status() ?? [], active: [...active.values()].map((r) => ({ matchId: r.matchId, rulesetId: r.rulesetId, room: r.room, state: r.state, mode: r.mode, seats: r.seats.length, direct: !!r.direct, port: r.port, pid: r.pid, since: new Date(r.startedAt).toISOString(), lastError: r.lastError, exitCode: r.exitCode })) });
 
   /** Hooks the node calls. A placement is ours when it names this node as host. */
   const onPlaced = (d) => { if (configs[d.rulesetId] && (!nodeId || d.host === nodeId)) start({ matchId: d.matchId, rulesetId: d.rulesetId, participants: d.participants, mode: d.mode ?? null, beacon: d.beacon ?? null, buildHash: d.buildHash ?? null }).catch(() => {}); };
@@ -270,5 +318,5 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
   const onSettled = (matchId) => { const run = active.get(matchId); if (!run || run.ending) return; run.ending = true; const grace = configs[run.rulesetId]?.settledGraceMs ?? 3000; setTimeout(() => stop(matchId, 'settled'), grace).unref?.(); };
   const stopAll = async () => { for (const id of [...active.keys()]) stop(id, 'node stopping'); for (const s of sockets) { try { s.destroy(); } catch {} } sockets.clear(); if (server) { server.closeAllConnections?.(); await new Promise((r) => server.close(r)); server = null; } };
 
-  return { listen, start, stop, onPlaced, onSettled, status, stopAll, get port() { return actualPort; }, active, rooms };
+  return { listen, start, startDirect, stop, onPlaced, onSettled, status, stopAll, publicWs, get port() { return actualPort; }, active, rooms };
 }

@@ -886,6 +886,7 @@ export async function createNode({
   const MATCH_TAG = 'match';
   const matchBook = new Map(); // matchId → { descriptor, envelope, disputes: [] }
   let gauntlet = null;          // node/gauntlet.js, created after the server listens (needs our loopback URL)
+  let publisherServices = null; // node/publisher-services.js, created with the gateway (POST /gauntlet/* reads its grants)
   const matchTtlMs = 15 * 60_000;
   const SPENT_BUCKETS = 2;
   const describe = (m, s) => {
@@ -1285,6 +1286,31 @@ export async function createNode({
         const m = guardianReports.get(id);
         return json(res, 200, { matchId: id, reports: m ? [...m].map(([guardianId, r]) => ({ guardianId, ...r })) : [] });
       }
+      // A court for a match a PUBLISHER formed (node/gauntlet.js startDirect): its matchmaker, running
+      // as a publisher service on this node, asks here with the token only it was given
+      // (node/publisher-services.js "gauntletCallers"). This machine only - the node's port is public
+      // through its tunnel - and only for the bundle's own titles. The answer carries the run's
+      // per-match ticket secret, which is why neither check is optional.
+      if ((url.pathname === '/gauntlet/start' || url.pathname === '/gauntlet/stop') && req.method === 'POST') {
+        if (!isLoopback(req)) return json(res, 403, { error: 'gauntlets are started from this machine only' });
+        const grant = publisherServices?.gauntletGrant(String(req.headers.authorization ?? '').replace(/^Bearer\s+/i, ''));
+        if (!grant) return json(res, 401, { error: 'a publisher gauntlet token is required' });
+        if (!gauntlet) return json(res, 503, { error: 'this node runs no gauntlets' });
+        let body; try { body = await readBody(req); } catch (e) { return json(res, 400, { error: e.message }); }
+        if (url.pathname === '/gauntlet/stop') {
+          const run = gauntlet.active.get(String(body?.matchId ?? ''));
+          if (!run || !run.direct || run.owner !== grant.prefix) return json(res, 404, { error: 'no direct match of yours with that id' });
+          gauntlet.stop(run.matchId, `stopped by ${grant.prefix}`);
+          return json(res, 200, { ok: true });
+        }
+        const rulesetId = String(body?.rulesetId ?? '');
+        if (!grant.rulesets.includes(rulesetId)) return json(res, 403, { error: `this token cannot start ${rulesetId || 'that title'}` });
+        const out = await gauntlet.startDirect({ rulesetId, matchId: body?.matchId, format: body?.mode, seats: body?.seats, owner: grant.prefix });
+        if (out.error) return json(res, out.code, { error: out.error });
+        const r = out.run;
+        if (r.state !== 'up') return json(res, 502, { error: r.lastError ?? `court is ${r.state}`, state: r.state });
+        return json(res, 200, { ok: true, matchId: r.matchId, room: r.room, ws: gauntlet.publicWs(r.room), secret: r.secret, mode: r.mode, state: r.state });
+      }
       // Updates: anyone may ask; only this machine may apply. The cabinet's
       // button works on http://localhost:<port>/ and nowhere else.
       if (url.pathname === '/update') {
@@ -1414,7 +1440,6 @@ export async function createNode({
   const actualPort = server.address().port;
   addr ??= `http://${host}:${actualPort}`;
   lanAddr = addr;
-  let publisherServices = null;
   if (runsGateway) {
     if (serviceBundles.length) publisherServices = createPublisherServices({ bundles: serviceBundles, nodeUrl: `http://127.0.0.1:${actualPort}`, publicBase: () => wsAddr, log, emit });
     const upstream = gauntletUpstream ?? (gauntletPort != null && relayPort && gauntletPort !== relayPort ? `ws://127.0.0.1:${relayPort}` : null);

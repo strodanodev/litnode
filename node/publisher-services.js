@@ -34,6 +34,7 @@
  *  ONLY those, not the bundle's - give courts their ticket secret and not
  *  the API's database URL. */
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { connect, createServer as createTcpServer } from 'node:net';
 import { isAbsolute, join } from 'node:path';
@@ -63,6 +64,10 @@ export function loadServiceBundles(spec, { root = process.cwd() } = {}) {
       if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) throw new Error(`SERVICES: ${b.prefix}: bad service name "${name}"`);
       if (!s.command) throw new Error(`SERVICES: ${b.prefix}.${name}: "command" required`);
     }
+    if (b.gauntletCallers !== undefined) {
+      if (!Array.isArray(b.gauntletCallers) || !b.gauntletCallers.every((n) => typeof n === 'string' && n in b.services)) throw new Error(`SERVICES: ${b.prefix}: "gauntletCallers" must name services of this bundle`);
+      if (!Array.isArray(b.gauntletRulesets) || !b.gauntletRulesets.length || !b.gauntletRulesets.every((r) => typeof r === 'string' && r)) throw new Error(`SERVICES: ${b.prefix}: "gauntletCallers" needs "gauntletRulesets", the titles it may start courts for`);
+    }
     out.push({ cwd: root, envFiles: [], portRange: [8790, 8839], ...b, file: path });
   }
   return out;
@@ -75,6 +80,19 @@ export function createServices({ bundles = [], nodeUrl, publicBase = () => null,
   const all = new Map(); // fullName → svc
   const used = new Set();
   let stopped = false, watch = null, lastBase;
+  // POST /gauntlet/start (node/litnode.js): a bundle that names "gauntletCallers" gets a token, made fresh
+  // each time the node starts and handed ONLY to those services (LITNODE_GAUNTLET_TOKEN in their own env,
+  // never process.env, so courts, other services and gauntlet children never see it). The token starts
+  // courts for the bundle's "gauntletRulesets" and nothing else.
+  const grants = new Map(); // token → { prefix, rulesets }
+  const tokenOf = new Map(); // prefix → token
+  for (const b of bundles) {
+    if (!b.gauntletCallers?.length) continue;
+    const token = randomBytes(32).toString('hex');
+    grants.set(token, { prefix: b.prefix, rulesets: [...b.gauntletRulesets] });
+    tokenOf.set(b.prefix, token);
+  }
+  const gauntletGrant = (token) => (typeof token === 'string' && grants.get(token)) || null;
 
   const base = () => { const b = publicBase(); return b ? b.replace(/\/+$/, '') : null; };
   const publicWs = (full, gatewayPort) => `${(base() ?? `ws://127.0.0.1:${gatewayPort ?? 0}`)}/svc/${full}`;
@@ -118,6 +136,8 @@ export function createServices({ bundles = [], nodeUrl, publicBase = () => null,
     const cwd = c.cwd ? (isAbsolute(c.cwd) || /^[A-Za-z]:/.test(c.cwd) ? c.cwd : join(svc.bundle.cwd, c.cwd)) : svc.bundle.cwd;
     const own = Object.fromEntries(Object.entries(c.env).map(([k, v]) => [k, fill(v, svc, gwPort)]));
     const env = { ...process.env, ...svc.files, ...own, LITNODE_SERVICE: svc.full, LITNODE_NODE_URL: nodeUrl };
+    delete env.LITNODE_GAUNTLET_TOKEN;
+    if (svc.bundle.gauntletCallers?.includes(svc.name)) env.LITNODE_GAUNTLET_TOKEN = tokenOf.get(svc.bundle.prefix);
     delete env.OPERATOR_KEY; delete env.DEPLOYER_KEY; delete env.PUBLISHER_KEY; delete env.ADMIN_KEY;
     svc.state = 'starting'; svc.lastError = null;
     const child = spawnImpl(fill(c.command, svc, gwPort), c.args.map((a) => fill(a, svc, gwPort)), { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
@@ -188,5 +208,5 @@ export function createServices({ bundles = [], nodeUrl, publicBase = () => null,
   const route = (full) => { const s = all.get(full); return s && s.state === 'up' ? { port: s.port } : null; };
   const names = () => [...all.keys()].sort();
   const status = () => [...all.values()].map((s) => ({ name: s.full, state: s.state, port: s.port, pid: s.pid, restarts: s.restarts, since: s.upSince ? new Date(s.upSince).toISOString() : null, lastError: s.lastError }));
-  return { start, stop, route, names, status, all };
+  return { start, stop, route, names, status, all, gauntletGrant };
 }
