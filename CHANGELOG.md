@@ -3,13 +3,26 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.11.25] — 2026-10-08 — gas refunds on: nodes claim from the live GasRefund; the arcade launches Pickle Brawl at play.picklebrawl.live
 
 ### Added
-- **GasRefund is live on Liteforge** at `0x34a3456c1789670b5578C38E203013200D39f8F6` (admin 0x04bE…a378, against
-  the live MatchBook and NodeStake; `contracts/deployed.testnet.json`). Nodes claim refunds from the release that
-  carries this file, or now with `GAS_REFUND=0x34a3456c1789670b5578C38E203013200D39f8F6` in node.env. It pays out
-  once the treasury funds it with a plain transfer (docs/GAS-REFUND.md).
+- **Gas refunds are on.** GasRefund is live on Liteforge at `0x34a3456c1789670b5578C38E203013200D39f8F6` (admin
+  0x04bE…a378, against the live MatchBook and NodeStake), funded by the treasury with 10 zkLTC. This release carries
+  its address in `contracts/deployed.testnet.json`, so every node now claims a final ranked match's gas back for
+  its host and agreeing witnesses by itself (docs/GAS-REFUND.md).
+
+### Fixed
+- **Arcade sign-in for Pickle Brawl** (`cabinet/config.js`). The arcade launched `www.picklebrawl.live`, which is
+  now the marketing site; the game is at `play.picklebrawl.live`. The arcade lends its AIR session only to the
+  origin of a title's `url`, so the game got no `cabinet:air` answer, fell back to its own AIR Kit, and AIR
+  refused it ("Domain not allowed"). The hosted arcade was redeployed on 8 Oct; node-served arcades get it here.
+  `cabinet/contracts.{js,json}` now list GasRefund too.
+
+### Changed
+- **Pickle Brawl's friend matches get per-match courts** (`gauntlets/pickle-brawl*.json`). The matchmaker is a
+  `gauntletCallers` service for pickle-brawl.v1 and asks its node for a court per match (`POST /gauntlet/start`)
+  instead of leasing the two pool courts, which are retired; courts reach the matchmaker and the API through
+  `${gateway}/svc/…`. Needs Pickle Brawl's runtime at fb06045 or later.
 
 ## [0.11.24] — 2026-10-08 — publishers start courts for their own matches; a node notices when its own tunnel dies
 
