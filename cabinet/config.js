@@ -54,7 +54,7 @@ export const GAMES = [
     controls: ['Move: W A S D', 'Drive: left mouse', 'Lob: right mouse', 'Dink: E', 'Smash: F', 'Split: Shift'],
     modes: ['single player', 'open play', 'managers cup'],
     players: '1P / 2P · doubles',
-    url: 'https://www.picklebrawl.live/',
+    url: 'https://play.picklebrawl.live/', // the game; www.picklebrawl.live is the marketing site. The arcade lends its AIR session to this origin only
     cover: './covers/pickle-brawl.jpg',
     logo: './covers/pickle-brawl-logo.webp',
     rulesetId: 'pickle-brawl.v1',

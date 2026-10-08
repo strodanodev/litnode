@@ -51,6 +51,10 @@ export const CONTRACTS = {
     "MatchBook": {
       "address": "0x90D642d1f1Cb00EBFeB2268dd13Dee32A2852e5b",
       "block": 52951473
+    },
+    "GasRefund": {
+      "address": "0x34a3456c1789670b5578C38E203013200D39f8F6",
+      "block": 58784400
     }
   }
 };
