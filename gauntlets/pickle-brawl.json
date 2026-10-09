@@ -14,7 +14,7 @@
     "LITNODE_URL": "${nodeUrl}",
     "COURT_IDENTITY": "C:/Users/sedano/.litnode/pickle-brawl-court.json",
     "MATCHMAKER_URL": "${gateway}/svc/pickle-brawl.matchmaker",
-    "API_URL": "${gateway}/svc/pickle-brawl.api"
+    "API_URL": "https://picklebrawl-api.vercel.app"
   },
   "portRange": [
     7777,
