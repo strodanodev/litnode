@@ -23,6 +23,12 @@ export const redactRpc = (url) => {
 export const rpcList = (rpc) => (Array.isArray(rpc) ? rpc : String(rpc ?? '').split(',')).map((s) => String(s).trim()).filter(Boolean);
 
 const BENCH_MS = 60_000, BENCH_MAX_MS = 10 * 60_000;
+// A rate limit is not a hiccup: retrying it makes it worse. Caldera's public gateway answered "429" and
+// "Bandwidth limit exceeded" to the desktop node 42 times a second on 9 Oct 2026, every call retried, while its
+// view of the chain sat four minutes behind. A rate-limited endpoint is paused for RATE_MS, doubling while the
+// limit persists, up to RATE_MAX_MS, and nothing is sent to it meanwhile.
+const RATE_MS = 30_000, RATE_MAX_MS = 5 * 60_000;
+const RATE_RE = /rate.?limit|bandwidth limit|too many requests|request limit|limit exceeded|exceeded .*limit|capacity exceeded/i;
 
 export function createChain({ rpc, offline = false, nodeStake = null, playerProfile = null, nodeDirectory = null, erc6699 = null, releaseRegistry = null, titleRegistry = null, fetchImpl = globalThis.fetch }) {
   let id = 0;
@@ -35,7 +41,7 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
   // Endpoints, preferred first. One that fails in transit (timeout, 5xx page, 429, refused) is benched for a
   // minute, doubling while it keeps failing, up to ten; calls go to the next one meanwhile and come back to the
   // preferred one when its bench ends. A JSON-RPC error (a revert) is an answer and never moves a call.
-  const endpoints = rpcList(rpc).map((url) => ({ url, downUntil: 0, failures: 0, lastError: null, head: null, answered: 0 }));
+  const endpoints = rpcList(rpc).map((url) => ({ url, downUntil: 0, failures: 0, lastError: null, head: null, answered: 0, limitedUntil: 0, limits: 0 }));
   let active = endpoints[0] ?? null; // the endpoint that answered last
   const usable = () => {
     const now = Date.now();
@@ -48,6 +54,12 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
     if (endpoints.length > 1) ep.downUntil = Date.now() + Math.min(BENCH_MS * 2 ** (ep.failures - 1), BENCH_MAX_MS);
   };
   const transientError = (msg) => Object.assign(new Error(msg), { transient: true });
+  const rateError = (msg) => Object.assign(new Error(msg), { transient: true, rateLimited: true });
+  const limit = (ep, e) => {
+    ep.limits++; ep.lastError = String(e.message ?? e);
+    ep.limitedUntil = Date.now() + Math.min(RATE_MS * 2 ** (ep.limits - 1), RATE_MAX_MS);
+  };
+  const limited = (ep) => ep.limitedUntil > Date.now();
   const isTransient = (e) => e.transient || e.name === 'TimeoutError' || e.name === 'AbortError' || /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND/.test(String(e.message));
   const blockNum = (tag) => (typeof tag === 'string' && /^0x[0-9a-f]+$/i.test(tag) ? parseInt(tag, 16) : typeof tag === 'number' ? tag : null);
 
@@ -60,14 +72,16 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
         body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }),
         signal: AbortSignal.timeout(15_000),
       });
-      if (r.status === 429) throw transientError(`${method}: HTTP 429 from the RPC gateway (rate limited)`);
+      if (r.status === 429) throw rateError(`${method}: HTTP 429 from the RPC gateway (rate limited)`);
       let j;
       if (typeof r.text === 'function') {
         const text = await r.text();
         try { j = JSON.parse(text); } catch { throw transientError(`${method}: HTTP ${r.status} non-JSON reply from the RPC gateway`); }
       } else j = await r.json(); // a test fake with only json()
+      // "Bandwidth limit exceeded" can come as a JSON-RPC error with a 200: a limit, not an answer
+      if (j.error && RATE_RE.test(String(j.error.message))) throw rateError(`${method}: ${j.error.message} (rate limited)`);
       answered = true; timed(t0, true);
-      ep.failures = 0; ep.downUntil = 0; ep.answered++; active = ep;
+      ep.failures = 0; ep.downUntil = 0; ep.limits = 0; ep.limitedUntil = 0; ep.answered++; active = ep;
       if (j.error) throw new Error(`${method}: ${j.error.message}`);
       if (method === 'eth_blockNumber') ep.head = Math.max(ep.head ?? 0, parseInt(j.result, 16));
       else if (method === 'eth_getBlockByNumber' && params?.[0] === 'latest' && j.result?.number) ep.head = Math.max(ep.head ?? 0, parseInt(j.result.number, 16));
@@ -85,7 +99,13 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
     if (!endpoints.length) throw new Error(`${method}: no RPC endpoint configured`);
     let last = null;
     for (let round = 1; ; round++) {
-      for (const ep of usable()) {
+      const open = usable().filter((ep) => !limited(ep));
+      if (!open.length) {
+        // every endpoint is rate-limited: fail at once, without touching the network
+        const until = Math.min(...endpoints.map((ep) => ep.limitedUntil));
+        throw rateError(`${method}: RPC rate-limited; calls paused until ${new Date(until).toISOString()}`);
+      }
+      for (const ep of open) {
         try {
           if (need != null && (ep.head ?? -1) < need) {
             await post(ep, 'eth_blockNumber', []);
@@ -93,10 +113,12 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
           }
           return await post(ep, method, params);
         } catch (e) {
+          if (e.rateLimited) { limit(ep, e); last = e; continue; } // the next endpoint, if any; never this one again now
           if (!isTransient(e)) throw e;
           last = e; bench(ep, e);
         }
       }
+      if (last?.rateLimited && endpoints.every(limited)) throw last; // never retried: the pause decides when to ask again
       if (round >= tries) throw last;
       await new Promise((res) => setTimeout(res, 1000 * round));
     }
@@ -249,7 +271,8 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
     baseFeeWei: () => { const b = blocks.at(-1); return b?.baseFeePerGas != null ? BigInt(b.baseFeePerGas) : null; },
     status: () => ({ rpc: active ? redactRpc(active.url) : null, offline,
       // every endpoint, preferred first: which answered last, which are benched and why (URLs redacted)
-      rpcEndpoints: endpoints.map((e) => ({ url: redactRpc(e.url), active: e === active, down: e.downUntil > Date.now(), downUntil: e.downUntil > Date.now() ? new Date(e.downUntil).toISOString() : null, failures: e.failures, answered: e.answered, head: e.head, lastError: e.lastError })), nodeStake, playerProfile, nodeDirectory, erc6699, releaseRegistry, titleRegistry, blocks: blocks.length, head: blocks.at(-1)?.number ?? null, headTs: blocks.at(-1)?.timestamp ?? null, lastError,
+      rateLimitedUntil: endpoints.length && endpoints.every(limited) ? new Date(Math.min(...endpoints.map((e) => e.limitedUntil))).toISOString() : null,
+      rpcEndpoints: endpoints.map((e) => ({ url: redactRpc(e.url), active: e === active, down: e.downUntil > Date.now(), downUntil: e.downUntil > Date.now() ? new Date(e.downUntil).toISOString() : null, limitedUntil: limited(e) ? new Date(e.limitedUntil).toISOString() : null, failures: e.failures, answered: e.answered, head: e.head, lastError: e.lastError })), nodeStake, playerProfile, nodeDirectory, erc6699, releaseRegistry, titleRegistry, blocks: blocks.length, head: blocks.at(-1)?.number ?? null, headTs: blocks.at(-1)?.timestamp ?? null, lastError,
       // `lagS`: seconds between the head we hold and now — the RPC's freshness, or ours; Liteforge makes a block every 0.25 s.
       rpcMs, rpcLastMs, rpcCalls, rpcFailures, rpcAt: rpcLastAt ? new Date(rpcLastAt).toISOString() : null, lagS: blocks.at(-1)?.timestamp ? Math.max(0, Math.round(Date.now() / 1000 - blocks.at(-1).timestamp)) : null }),
   };

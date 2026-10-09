@@ -3,6 +3,24 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.11.26] — 2026-10-09 — a rate-limited RPC is paused, not retried; the chain half of a tick no longer piles up
+
+### Fixed
+- **A rate-limited RPC is paused, not hammered** (`node/chain.js`). On 9 Oct the desktop node sent Caldera's public
+  gateway 42 calls a second, every one refused (HTTP 429, Cloudflare 1015, "Bandwidth limit exceeded"): half of its
+  572,000 calls since its last restart had failed, its view of the chain sat four minutes behind, its announcements
+  failed, and the limit covered the whole machine (MetaMask on it could not register a release). Since 0.11.23 a 429
+  counted as a transient failure and was retried. Now a 429, or a JSON-RPC error that names a rate or bandwidth
+  limit, pauses that endpoint for 30 s, doubling while it lasts, up to 5 minutes; calls fail at once without the
+  network while every endpoint is paused, a fallback (`RPC_FALLBACK`) takes over if there is one, and a rate limit is
+  never retried. `/health.chain.rateLimitedUntil` and each endpoint's `limitedUntil` show the pause.
+- **The chain half of a tick no longer piles up** (`node/litnode.js`). Every tick read the head, stakes, bonds,
+  titles, builds, profiles and MatchBook, and a tick did not wait for the one before: when calls slowed, ticks
+  overlapped and so did their calls. Gossip still runs every tick (a heartbeat must not wait on the chain); the
+  chain half is skipped while the previous one is still running (`/health.chainTicksSkipped`).
+  Tests: `demo/rpc-fallback.test.mjs` (pauses, doubling, the JSON form, a fallback taking over, and a node over a
+  1.2 s-per-call chain making one call at a time while its heartbeat stays fresh).
+
 ## [0.11.25] — 2026-10-08 — gas refunds on: nodes claim from the live GasRefund; the arcade launches Pickle Brawl at play.picklebrawl.live
 
 ### Added

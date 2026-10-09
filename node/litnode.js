@@ -762,6 +762,19 @@ export async function createNode({
         const fresh = currentSnapshot().peers.filter((p) => p.nodeId !== nodeId).length;
         if (fresh === 0) { lastDirectoryRead = Date.now(); log('no fresh peers — re-reading NodeDirectory'); readDirectory().catch(() => {}); }
       }
+      chainRun = chainTick();
+    } catch (e) { log(`tick: ${e.message}`); }
+  };
+  // The chain half of a tick: head, stakes, bonds, titles, builds, profiles, MatchBook. It used to run inside every
+  // tick, and a tick did not wait for the one before: when the RPC slowed (rate-limited, retrying), ticks piled up
+  // on each other and so did their calls, 42 a second from the desktop on 9 Oct 2026, all refused. Gossip stays
+  // on every tick (a heartbeat must not wait on the chain, or peers drop the node after 4 s); the chain half is
+  // skipped while the previous one is still running.
+  let chainBusy = false, chainSkipped = 0, chainRun = null;
+  const chainTick = async () => {
+    if (chainBusy) { chainSkipped++; return; }
+    chainBusy = true;
+    try {
       const head = chain.status().head;
       const b = await chain.pollBlock();
       if (b && b.number !== head) emit('block', { number: b.number, hash: b.hash });
@@ -796,7 +809,8 @@ export async function createNode({
       await refreshProfiles([...queue.values()].map((b) => b.playerId).concat(settlement.list().flatMap((d) => d.participants)));
       settlement.maybeFreeze();
       await mbook?.poll();
-    } catch (e) { log(`tick: ${e.message}`); }
+    } catch (e) { log(`tick (chain): ${e.message}`); }
+    finally { chainBusy = false; }
   };
   const envelopeCache = new Map(); // nodeId → latest envelope (for forwarding)
   const queueEnvelopes = new Map();
@@ -1130,7 +1144,7 @@ export async function createNode({
           cabinet: { version: CABINET_VERSION }, // the copy this node serves at /; a cabinet loaded from elsewhere compares its own
           relay: relayFront ? relayStatus() : null, // the relay tunnel as a WebSocket client sees it: verified before it is advertised
           wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, upnp: upnpCtl?.status() ?? null, gauntlet: gauntlet?.status() ?? null, guardian: (({ matches, reports, flagged }) => ({ matches, reports, flagged: flagged.length }))(guardianSummary()),
-          directory: nodeDirectory ? { contract: nodeDirectory, seeds: chainSeeds.length, announcer: announcer?.status() ?? null } : null, startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt, stalls,
+          directory: nodeDirectory ? { contract: nodeDirectory, seeds: chainSeeds.length, announcer: announcer?.status() ?? null } : null, startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt, stalls, chainTicksSkipped: chainSkipped,
           // reachable: a peer has pushed gossip to us in the last 30 s. null = no peers known, so nothing to conclude.
           inbound: { peers: [...inbound.values()].filter((t) => Date.now() - t < 30_000).length, lastAt: inbound.size ? new Date(Math.max(...inbound.values())).toISOString() : null, reachable: peersKnown.size ? [...inbound.values()].some((t) => Date.now() - t < 30_000) : null } });
       }
@@ -1548,7 +1562,7 @@ export async function createNode({
     if (!tunnel) setTimeout(announceNow, 3_000);
   }
   timer = setInterval(tick, heartbeatMs);
-  await tick();
+  await tick(); await chainRun; // the first tick's chain half too: callers read stakes and the head right after start
   if (updates && version) { setTimeout(() => checkUpdates().catch(() => {}), 5_000); updateTimer = setInterval(() => checkUpdates().catch(() => {}), 60 * 60_000); }
   log(`litnode ${nodeId.slice(0, 12)} on ${addr} roles=${roles.join(',')} rulesets=${[...loaded.keys()].join(',') || '-'}`);
 

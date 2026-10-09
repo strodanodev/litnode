@@ -4,7 +4,11 @@
  *    node --test demo/rpc-fallback.test.mjs */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createChain, redactRpc, rpcList } from '../node/chain.js';
+import { createNode } from '../node/litnode.js';
 
 /** Endpoints by URL: each a function (method, params) → result, or throws { status } for an HTTP failure. */
 const fakeFetch = (eps, seen = []) => async (url, init) => {
@@ -105,4 +109,71 @@ test('rpc fallback: every endpoint failing is retried with pauses and then throw
   assert.equal(redactRpc('https://liteforge.rpc.caldera.xyz/http'), 'https://liteforge.rpc.caldera.xyz/http');
   assert.deepEqual(rpcList(' https://a , https://b,,'), ['https://a', 'https://b']);
   assert.deepEqual(rpcList(['https://a']), ['https://a']);
+});
+
+test('rate limits: a 429 pauses the endpoint, calls fail at once without the network, and resume after the pause', async (t) => {
+  let limitedNow = true;
+  const seen = [];
+  const chain = createChain({ rpc: 'https://a.example/http', fetchImpl: fakeFetch({ 'https://a.example/http': (m) => { if (limitedNow) throw Object.assign(new Error('x'), { status: 429 }); return '0x10'; } }, seen) });
+  await assert.rejects(chain.blockNumber(), /429/);
+  assert.equal(seen.length, 1, 'a rate limit is never retried');
+  for (let i = 0; i < 5; i++) await assert.rejects(chain.blockNumber(), /rate-limited; calls paused until/);
+  assert.equal(seen.length, 1, 'nothing is sent while paused');
+  const st = chain.status();
+  assert.ok(st.rateLimitedUntil, 'the pause shows on the dashboard');
+  assert.ok(st.rpcEndpoints[0].limitedUntil);
+  limitedNow = false;
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 31_000 });
+  assert.equal(await chain.blockNumber(), 16, 'asked again once the pause is over');
+  assert.equal(chain.status().rateLimitedUntil, null);
+});
+
+test('rate limits: the pause doubles while the limit lasts, and a JSON "Bandwidth limit exceeded" counts as one', async (t) => {
+  const seen = [];
+  const f = async (url, init) => {
+    const { id } = JSON.parse(init.body); seen.push(url);
+    return { status: 200, text: async () => JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32005, message: 'Bandwidth limit exceeded' } }) };
+  };
+  const chain = createChain({ rpc: 'https://a.example/http', fetchImpl: f });
+  const t0 = Date.now();
+  await assert.rejects(chain.blockNumber(), /Bandwidth limit exceeded \(rate limited\)/);
+  const first = Date.parse(chain.status().rateLimitedUntil) - t0;
+  assert.ok(first >= 29_000 && first <= 31_000, `first pause about 30 s (${first} ms)`);
+  t.mock.timers.enable({ apis: ['Date'], now: t0 + 31_000 });
+  await assert.rejects(chain.blockNumber(), /Bandwidth/);
+  const second = Date.parse(chain.status().rateLimitedUntil) - (t0 + 31_000);
+  assert.ok(second >= 59_000 && second <= 61_000, `second pause about 60 s (${second} ms)`);
+  assert.equal(seen.length, 2);
+});
+
+test('rate limits: with a fallback, a rate-limited endpoint is skipped and the other answers', async () => {
+  const seen = [];
+  const chain = createChain({ rpc: ['https://a.example/http', 'https://b.example/http'], fetchImpl: fakeFetch({ 'https://a.example/http': http(429), 'https://b.example/http': () => '0x2a' }, seen) });
+  assert.equal(await chain.blockNumber(), 42);
+  seen.length = 0;
+  assert.equal(await chain.blockNumber(), 42);
+  assert.deepEqual(seen, ['https://b.example/http eth_blockNumber'], 'the limited endpoint is not asked during its pause');
+});
+
+test('a slow chain does not pile up calls: the chain half of a tick waits for the one before, gossip does not', { timeout: 30_000 }, async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'litnode-slowrpc-'));
+  let inFlight = 0, maxInFlight = 0, calls = 0;
+  const slow = async (_url, init) => {
+    const { id, method } = JSON.parse(init.body);
+    calls++; inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
+    await new Promise((r) => setTimeout(r, 1200));
+    inFlight--;
+    const result = method === 'eth_getBlockByNumber' ? { number: '0x' + (100 + calls).toString(16), timestamp: '0x' + Math.floor(Date.now() / 1000).toString(16), hash: '0x' + calls.toString(16).padStart(64, '0') } : method === 'eth_blockNumber' ? '0x64' : '0x';
+    return { status: 200, text: async () => JSON.stringify({ jsonrpc: '2.0', id, result }) };
+  };
+  const node = await createNode({ dataDir: join(tmp, 'n'), rpc: 'mock://', offline: false, chainFetch: slow, heartbeatMs: 100, operator: 'slow', roles: ['mesh'], updates: false, announce: false });
+  t.after(async () => { await node.stop(); rmSync(tmp, { recursive: true, force: true }); });
+  const before = calls;
+  await new Promise((r) => setTimeout(r, 3000)); // 30 ticks
+  const h = await (await fetch(`${node.addr}/health`)).json();
+  assert.equal(maxInFlight, 1, 'one chain call at a time, not one per tick');
+  assert.ok(calls - before <= 4, `3 s of 1.2 s calls: a handful, not 30 (${calls - before})`);
+  assert.ok(h.chainTicksSkipped >= 20, `ticks skipped their chain half while it ran (${h.chainTicksSkipped})`);
+  const snap = await (await fetch(`${node.addr}/snapshot`)).json();
+  assert.ok(snap.peers.some((p) => p.nodeId === node.nodeId), 'its own heartbeat stayed fresh: gossip did not wait on the chain');
 });
