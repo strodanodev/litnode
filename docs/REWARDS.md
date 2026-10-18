@@ -63,26 +63,33 @@ them, those 60 bot matches weigh about 0.65 — roughly 1 % of the hour
 
 ## How one match's share is paid
 
-1. **Gas back first.** Each duty's own transaction cost, from its receipt:
-   the host's commit and settle, each agreeing witness's attest, the finalize.
-   If the share cannot cover it all, the refunds are prorated and nobody profits.
-2. **The rest splits** host 35 % · each agreeing witness 10 % (three seats) ·
-   the title's publisher 20 % · guardian 15 %. The guardian share goes to the
-   escalation panel members who sided with the final result, or else to
-   whoever finalized the match.
+The match's allocation splits host 35 % · each agreeing witness 10 % (three
+seats) · the title's publisher 20 % · guardian 15 %. The guardian share goes to
+the escalation panel members who sided with the final result, or else to
+whoever finalized the match. **In practice that is the host:** the node sends
+`finalize` from the host first and from each seat only 20 s × seat later
+(`node/matchbook.js`), so until a dispute escalates the host collects 50 % of
+every match it hosts, its three witnesses 30 % between them, the publisher 20 %.
+
+**Gas is not paid from the pool.** Since 8 Oct 2026 GasRefund pays the host's
+and each agreeing witness's gas back on chain (docs/GAS-REFUND.md). Until
+19 Oct the fold refunded each duty's receipt out of the hour's release first,
+which would have paid the same gas twice.
 
 Operator shares are then scaled by **reliability**: witness seats answered ÷
 seats drawn over the last 7 days (a settled match counts for its host). At
 90 % or more it pays in full; at 50 % or less nothing; a straight line between
 (70 % pays half). A placement that never settles is not held against its host:
 it is almost always players leaving, which the chain cannot tell from an
-outage, and the host already earns nothing for it. Gas refunds are not scaled.
+outage, and the host already earns nothing for it.
 
-**Forfeits.** An operator forfeits a whole week (Monday to Monday UTC) if one of
-its nodes is slashed, or if it dissented alone on a match that was then voided.
-Until 13 operators exist, a lone wrong attestation voids a match for free
-(BUILD-SPEC §16); this rule makes it cost the week. A dissent that was a genuine
-report — a replay bug, say — can be exempted by adding the match to `waivers`.
+**Forfeits.** An operator forfeits a whole week (Monday to Monday UTC): the
+week one of its nodes is slashed, or the week a match voided after it dissented
+alone on it — the week of the void, not of the dissent, so a Sunday-night
+dissent whose match voids on Monday forfeits the new week. Until 13 operators
+exist, a lone wrong attestation voids a match for free (BUILD-SPEC §16); this
+rule makes it cost the week. A dissent that was a genuine report — a replay
+bug, say — can be exempted by adding the match to `waivers`.
 
 Everything not paid — seats that did not agree, missing publishers,
 reliability cuts, forfeits, rounding — **rolls back into the pool**. For every
@@ -92,16 +99,22 @@ paid.
 ## Where the numbers come from
 
 The chain's own `eth_getLogs` over MatchBook, NodeStake, TitleRegistry,
-PlayerProfile and EpochAnchor, each log joined with its receipt (sender, gas).
+PlayerProfile and EpochAnchor, each log joined with its receipt for the sender,
+so a `finalize` is credited to the bonded node that sent it.
 Not the block explorer: on 27 Sep 2026 its index lacked the `Staked` events of
 two bonded nodes, both title registrations of 26 Sep and a MatchBook
 `Finalized`, and a payout computed from it would silently skip people.
 
 The RPC answers ~1.5 ms per block with an address filter and takes parallel
-requests, so the first run reads the contracts' whole history (≈ 2 million
-blocks, about 10 minutes) and caches it in `data/rewards/<chainId>.json`;
+requests; Liteforge adds ~350,000 blocks a day, so a season is millions and the
+first run takes tens of minutes. The scan is read in 200,000-block segments and
+`data/rewards/<chainId>.json` is written after each, so a run that stops (a
+rate limit, Ctrl-C) keeps what it read and the next run continues from there;
 later runs read only the new blocks. A request the node times out is split in
-half and asked again.
+half and asked again. A 429 holds every request until the gateway's
+Retry-After (else 1 s, doubling to a minute); eight in a row give up. On
+19 Oct 2026 the first sync since 27 Sep died at 30 % of 7.4 million blocks on
+one 429 and lost all of it; this is why.
 
 ## Running it
 

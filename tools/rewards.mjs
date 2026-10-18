@@ -11,8 +11,10 @@
  *
  *  Rules and parameters: contracts/deploy.testnet.json → Rewards. The scan
  *  cache is data/rewards/<chainId>.json (git-ignored): the first run reads the
- *  contracts' whole history from the chain (~10 minutes on Liteforge), later
- *  runs only the new blocks. */
+ *  contracts' whole history from the chain (tens of minutes on Liteforge),
+ *  later runs only the new blocks. The cache is written after every
+ *  200,000-block segment, so a run that stops (a rate limit, Ctrl-C) keeps
+ *  what it read and the next one continues from there. */
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,16 +40,26 @@ async function main() {
 
   const cacheFile = join(root, 'data', 'rewards', `${deployed.chainId}.json`);
   let cache = existsSync(cacheFile) ? JSON.parse(readFileSync(cacheFile, 'utf8')) : null;
+  const save = (c) => {
+    mkdirSync(dirname(cacheFile), { recursive: true });
+    writeFileSync(cacheFile + '.tmp', JSON.stringify({ chainId: c.chainId, addresses: c.addresses, scannedTo: c.scannedTo, rows: c.rows }));
+    renameSync(cacheFile + '.tmp', cacheFile);
+  };
   if (!has('no-sync')) {
     const client = rpcClient(flag('rpc') ?? deployed.rpc);
     const t0 = Date.now();
-    let last = 0;
-    const onProgress = (done, total) => { const pct = Math.floor((done / total) * 100); if (!has('json') && pct >= last + 10) { last = pct; process.stderr.write(`  scanning ${pct}% of ${total.toLocaleString('en-US')} blocks\n`); } };
-    cache = await syncRows(client, { contracts, chainId: deployed.chainId, cache, onProgress });
-    mkdirSync(dirname(cacheFile), { recursive: true });
-    writeFileSync(cacheFile + '.tmp', JSON.stringify({ chainId: cache.chainId, addresses: cache.addresses, scannedTo: cache.scannedTo, rows: cache.rows }));
-    renameSync(cacheFile + '.tmp', cacheFile);
-    if (!has('json')) process.stderr.write(`  chain read to block ${cache.scannedTo.toLocaleString('en-US')} (+${cache.added} logs, ${((Date.now() - t0) / 1000).toFixed(1)} s)\n`);
+    let last = 0, saved = null;
+    const say = (s) => { if (!has('json')) process.stderr.write(`  ${s}\n`); };
+    const onProgress = (done, total) => { const pct = Math.floor((done / total) * 100); if (pct >= last + 10) { last = pct; say(`scanning ${pct}% of ${total.toLocaleString('en-US')} blocks`); } };
+    // The cache is written after every segment: a run that stops keeps what it read, and the next continues from there.
+    try {
+      cache = await syncRows(client, { contracts, chainId: deployed.chainId, cache, onProgress, onCheckpoint: (c) => { saved = c; save(c); } });
+    } catch (e) {
+      if (!saved) throw e;
+      return fail(`chain read stopped at block ${saved.scannedTo.toLocaleString('en-US')} (${e.message}); the cache keeps it — run again to continue from there`);
+    }
+    save(cache);
+    say(`chain read to block ${cache.scannedTo.toLocaleString('en-US')} (+${cache.added} logs, ${((Date.now() - t0) / 1000).toFixed(1)} s${client.stats.rateLimits ? `, held ${client.stats.rateLimits}× for rate limits` : ''})`);
   } else if (!cache) return fail('no scan cache yet — run once without --no-sync');
 
   const report = computeRewards(entriesFromRows(cache.rows, contracts), params);
@@ -69,8 +81,8 @@ function print(r, cache, showHours) {
   console.log(`Matches finalized ${r.matches.finalized} · counted ${r.matches.qualifying}${ex ? ` · not counted: ${ex}` : ''}`);
   if (r.forfeits.length) console.log(`Forfeits (operator:week): ${r.forfeits.join(', ')}`);
   console.log('');
-  console.log(`${pad('Operator', 14)}${pad('points', 12, true)}${pad('gas back', 12, true)}${pad('host', 11, true)}${pad('witness', 11, true)}${pad('guardian', 11, true)}${pad('duties', 9, true)}${pad('reliability', 13, true)}`);
-  for (const o of r.operators) console.log(`${pad(short(o.address), 14)}${pad(z(o.total), 12, true)}${pad(formatWei(o.gas, 9), 12, true)}${pad(z(o.host), 11, true)}${pad(z(o.witness), 11, true)}${pad(z(o.guardian), 11, true)}${pad(`${o.duties.answered}/${o.duties.drawn}`, 9, true)}${pad(`${Math.round(o.reliability * 100)}%`, 13, true)}`);
+  console.log(`${pad('Operator', 14)}${pad('points', 12, true)}${pad('host', 11, true)}${pad('witness', 11, true)}${pad('guardian', 11, true)}${pad('duties', 9, true)}${pad('reliability', 13, true)}`);
+  for (const o of r.operators) console.log(`${pad(short(o.address), 14)}${pad(z(o.total), 12, true)}${pad(z(o.host), 11, true)}${pad(z(o.witness), 11, true)}${pad(z(o.guardian), 11, true)}${pad(`${o.duties.answered}/${o.duties.drawn}`, 9, true)}${pad(`${Math.round(o.reliability * 100)}%`, 13, true)}`);
   if (!r.operators.length) console.log('  (no operator has done on-chain work yet)');
   if (r.publishers.length) {
     console.log('');

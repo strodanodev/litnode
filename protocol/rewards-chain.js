@@ -66,16 +66,31 @@ export function decodeRewardLog(contract, row) {
 }
 
 /** A JSON-RPC client that retries what a retry can fix: a network error, a 5xx, a request that
- *  hangs past `timeoutMs` (fetch has no timeout of its own, and one stalled socket would stall a scan). */
-export function rpcClient(rpc, { fetchImpl = globalThis.fetch, tries = 4, delayMs = 1000, timeoutMs = 60_000 } = {}) {
-  let id = 0;
+ *  hangs past `timeoutMs` (fetch has no timeout of its own, and one stalled socket would stall a scan).
+ *  A rate limit (HTTP 429) is a hold on the whole client, not a retry of one request: the limit covers
+ *  this machine's address, so every worker waits — for the gateway's Retry-After, else `delayMs`
+ *  doubling up to `maxHoldMs` — and `limitTries` in a row give up. (On 19 Oct 2026 a season scan of
+ *  7.4 million blocks died at 30 % on a single 429 that was treated as final.) */
+export function rpcClient(rpc, { fetchImpl = globalThis.fetch, tries = 4, delayMs = 1000, timeoutMs = 60_000, limitTries = 8, maxHoldMs = 60_000 } = {}) {
+  let id = 0, holdUntil = 0;
+  const stats = { rateLimits: 0 };
+  const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
   const post = async (body) => {
-    for (let i = 1; ; i++) {
+    for (let fails = 0, limited = 0; ;) {
+      const wait = holdUntil - Date.now();
+      if (wait > 0) await sleep(wait);
       let r = null, err = null;
       try { r = await fetchImpl(rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) }); } catch (e) { err = e; }
+      if (r?.status === 429) {
+        stats.rateLimits++;
+        if (++limited > limitTries) throw new Error(`rpc HTTP 429: rate limited ${limitTries} times in a row`);
+        const after = Number(r.headers?.get?.('retry-after')) * 1000;
+        holdUntil = Math.max(holdUntil, Date.now() + (after > 0 ? after : Math.min(maxHoldMs, delayMs * 2 ** (limited - 1))));
+        continue;
+      }
       if (r && r.status < 500) { if (!r.ok) throw new Error(`rpc HTTP ${r.status}`); return r.json(); }
-      if (i >= tries) throw err ?? new Error(`rpc HTTP ${r.status}`);
-      await new Promise((res) => setTimeout(res, delayMs * 2 ** (i - 1)));
+      if (++fails >= tries) throw err ?? new Error(`rpc HTTP ${r.status}`);
+      await sleep(delayMs * 2 ** (fails - 1));
     }
   };
   const call = async (method, params) => {
@@ -99,7 +114,7 @@ export function rpcClient(rpc, { fetchImpl = globalThis.fetch, tries = 4, delayM
     }
     return out;
   };
-  return { call, many };
+  return { call, many, stats };
 }
 
 /** Every log `addresses` emitted in [from, to], in `chunk`-block requests, `concurrency` at a time.
@@ -149,20 +164,29 @@ export function entriesFromRows(rows, contracts) {
   return out;
 }
 
-/** Bring a cache up to `head − confirmations`: { chainId, addresses, scannedTo, rows }.
- *  A cache for other addresses (a new contract generation) is discarded. */
-export async function syncRows(client, { contracts, chainId, cache = null, confirmations = 20, chunk, concurrency, onProgress }) {
+/** Bring a cache up to `head − confirmations`: { chainId, addresses, scannedTo, rows }, read in `segment`-block
+ *  pieces; after each, the cache so far goes to `onCheckpoint`, so a run that stops (a rate limit, Ctrl-C)
+ *  keeps what it read and the next one continues from there. A cache for other addresses (a new contract
+ *  generation) is discarded. */
+export async function syncRows(client, { contracts, chainId, cache = null, confirmations = 20, chunk, concurrency, segment = 200_000, onProgress, onCheckpoint }) {
   const addresses = REWARD_CONTRACTS.map((n) => contracts[n]?.address?.toLowerCase());
   if (addresses.some((a) => !a)) throw new Error(`need addresses for ${REWARD_CONTRACTS.join(', ')}`);
   const start = Math.min(...REWARD_CONTRACTS.map((n) => contracts[n].block ?? 0));
   const same = cache && cache.chainId === chainId && JSON.stringify(cache.addresses) === JSON.stringify(addresses);
-  const base = same ? cache : { chainId, addresses, scannedTo: start - 1, rows: [] };
+  let base = same ? cache : { chainId, addresses, scannedTo: start - 1, rows: [] };
   const head = num(await client.call('eth_blockNumber', [])) - confirmations;
   if (head <= base.scannedTo) return { ...base, head, added: 0 };
-  const logs = await scanLogs(client, addresses, base.scannedTo + 1, head, { chunk, concurrency, onProgress });
-  const rows = await withReceipts(client, logs.filter((l) => !l.removed));
-  const seen = new Set(base.rows.map((r) => `${r.transactionHash}:${num(r.logIndex)}`));
-  const fresh = rows.filter((r) => !seen.has(`${r.transactionHash}:${num(r.logIndex)}`));
-  const all = [...base.rows, ...fresh].sort((a, b) => num(a.blockNumber) - num(b.blockNumber) || num(a.logIndex) - num(b.logIndex));
-  return { chainId, addresses, scannedTo: head, rows: all, head, added: fresh.length };
+  const total = head - base.scannedTo;
+  let added = 0, done = 0;
+  for (let from = base.scannedTo + 1; from <= head; from += segment) {
+    const to = Math.min(head, from + segment - 1);
+    const logs = await scanLogs(client, addresses, from, to, { chunk, concurrency, onProgress: onProgress && ((d) => onProgress(done + d, total)) });
+    const rows = await withReceipts(client, logs.filter((l) => !l.removed));
+    const seen = new Set(base.rows.map((r) => `${r.transactionHash}:${num(r.logIndex)}`));
+    const fresh = rows.filter((r) => !seen.has(`${r.transactionHash}:${num(r.logIndex)}`));
+    base = { chainId, addresses, scannedTo: to, rows: [...base.rows, ...fresh].sort((a, b) => num(a.blockNumber) - num(b.blockNumber) || num(a.logIndex) - num(b.logIndex)) };
+    added += fresh.length; done += to - from + 1;
+    await onCheckpoint?.(base);
+  }
+  return { ...base, head, added };
 }

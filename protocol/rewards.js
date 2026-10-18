@@ -16,13 +16,15 @@
  *                the trailing multiplier.trailingH hours; an hour with none releases nothing
  *    quality     repeat pairs decay (1, ½, ¼ …) to pairCapPerDay; playerCapPerDay; a
  *                player's distinct opponents over diversityWindowH scale the weight
- *    gas first   each duty's own gas (receipt gasUsed × price) is refunded before the split
- *    split       host 35 · witness 10 per agreeing seat · publisher 20 · guardian 15 (bps)
+ *    split       host 35 · witness 10 per agreeing seat · publisher 20 · guardian 15 (bps) of the
+ *                match's allocation. The guardian share goes to the escalation voters who sided with
+ *                the result, else to whoever finalized — the host, in practice (node/matchbook.js sends
+ *                finalize from the host first), so the host takes 50 until a dispute escalates.
+ *                Gas is not refunded here: GasRefund pays it on chain (contracts/GasRefund.sol).
  *    reliability witness seats answered ÷ drawn (and settled hosts) over reliability.windowH,
- *                mapped smoothly between `zero` (×0) and `full` (×1); scales operator shares,
- *                not gas refunds
- *    forfeits    a slashed node's operator, and a lone dissenter on a match that
- *                voided, forfeit that ISO week (unless the match is in `waivers`)
+ *                mapped smoothly between `zero` (×0) and `full` (×1); scales operator shares
+ *    forfeits    a slashed node's operator forfeits the week of the slash; a lone dissenter on a
+ *                match that voided forfeits the week of the void (unless the match is in `waivers`)
  *
  *  Amounts are wei (BigInt) end to end. Everything an hour releases is either
  *  paid or rolled back into the pool: paid + rolledBack === released, always. */
@@ -83,11 +85,10 @@ export function formatWei(w, digits = 6) {
 /** Monday-based week number (the Unix epoch fell on a Thursday). */
 export const weekOf = (ts) => Math.floor((Math.floor(ts / DAY_S) + 3) / 7);
 const isZero = (a) => !a || /^0x0{40}$/.test(a);
-const gasOf = (e) => BigInt(e.gasCost ?? 0);
 
 /** The fold. `entries`: decoded logs from all five contracts, each
- *  { contract, event, block, logIndex, ts (seconds), tx, gasCost (wei), from, …fields }
- *  (protocol/rewards-chain.js builds them). Returns the hour-by-hour ledger,
+ *  { contract, event, block, logIndex, ts (seconds), tx, from, …fields }
+ *  (protocol/rewards-chain.js builds them; a gasCost on an entry is ignored). Returns the hour-by-hour ledger,
  *  per-operator and per-publisher totals, and why matches did not count. */
 export function computeRewards(entries, overrides = {}, { now = Date.now() } = {}) {
   const p = rewardParams(overrides), q = p.quality, rl = p.reliability;
@@ -138,16 +139,16 @@ export function computeRewards(entries, overrides = {}, { now = Date.now() } = {
     if (!m) matches.set(e.matchId, (m = { matchId: e.matchId, attests: [] }));
     switch (ev) {
       case 'Committed':
-        Object.assign(m, { rulesetKey: e.rulesetKey, host: e.hostKey, hostOperator: opOf(e.hostKey), panel: e.panel, panelOperators: e.panel.map(opOf), commit: { ts: e.ts, gas: gasOf(e) } });
+        Object.assign(m, { rulesetKey: e.rulesetKey, host: e.hostKey, hostOperator: opOf(e.hostKey), panel: e.panel, panelOperators: e.panel.map(opOf) });
         activity.push({ ts: e.ts, node: e.hostKey, operator: m.hostOperator });
         break;
       case 'Settled':
-        m.settle = { ts: e.ts, gas: gasOf(e), resultHash: e.resultHash, participants: e.participants, owners: e.participants.map(ownerOfPlayer) };
+        m.settle = { ts: e.ts, resultHash: e.resultHash, participants: e.participants, owners: e.participants.map(ownerOfPlayer) };
         m.host ??= e.hostKey; m.hostOperator ??= opOf(e.hostKey); m.rulesetKey ??= e.rulesetKey;
         activity.push({ ts: e.ts, node: e.hostKey, operator: opOf(e.hostKey) });
         break;
       case 'Attested':
-        m.attests.push({ ts: e.ts, gas: gasOf(e), witness: e.witnessKey, operator: opOf(e.witnessKey), resultHash: e.resultHash, agrees: e.agrees, escalation: e.escalation });
+        m.attests.push({ ts: e.ts, witness: e.witnessKey, operator: opOf(e.witnessKey), resultHash: e.resultHash, agrees: e.agrees, escalation: e.escalation });
         activity.push({ ts: e.ts, node: e.witnessKey, operator: opOf(e.witnessKey) });
         break;
       case 'Escalated':
@@ -157,7 +158,7 @@ export function computeRewards(entries, overrides = {}, { now = Date.now() } = {
         const caller = callerOf(e.from);
         const titleId = titleOfKey.get(e.rulesetKey ?? m.rulesetKey);
         const publisher = titleId == null ? null : publisherOf.get(titleId) ?? null;
-        m.final = { ts: e.ts, gas: gasOf(e), status: e.status, finalHash: e.finalHash, caller: caller.operator, publisher: isZero(publisher) ? null : publisher };
+        m.final = { ts: e.ts, status: e.status, finalHash: e.finalHash, caller: caller.operator, publisher: isZero(publisher) ? null : publisher };
         if (caller.operator) activity.push({ ts: e.ts, node: caller.node, operator: caller.operator });
         break;
       }
@@ -180,7 +181,8 @@ export function computeRewards(entries, overrides = {}, { now = Date.now() } = {
           && regular.filter((x) => x.witness !== key && x.agrees).length >= 2;
         if (lone) {
           duty(m.panelOperators[i], m.settle.ts, rl.lonelyDissentMisses, 0);
-          if (rl.lonelyDissentForfeit && m.panelOperators[i]) forfeits.add(`${m.panelOperators[i]}:${weekOf(a.ts)}`);
+          // the week of the void (the final), not of the attest: a Sunday-night dissent whose match voids on Monday forfeits the new week
+          if (rl.lonelyDissentForfeit && m.panelOperators[i]) forfeits.add(`${m.panelOperators[i]}:${weekOf(m.final.ts)}`);
         } else duty(m.panelOperators[i], m.settle.ts, 1, a ? 1 : 0);
       });
     }
@@ -262,27 +264,21 @@ export function computeRewards(entries, overrides = {}, { now = Date.now() } = {
   const row = (map, who, fields) => map.get(who) ?? map.set(who, { address: who, total: 0n, ...fields }).get(who);
   const eligible = (op, ts) => !!op && (!allow || allow.has(op)) && !forfeits.has(`${op}:${weekOf(ts)}`);
 
-  /** Pays one match's allocation; returns what was paid (the rest rolls back). */
+  /** Pays one match's allocation; returns what was paid (the rest rolls back). Gas is not refunded from the
+   *  pool: GasRefund pays each duty's gas back on chain (contracts/GasRefund.sol, live since 8 Oct 2026). */
   const payMatch = (m, alloc, hourEnd) => {
     let paid = 0n;
     const credit = (map, who, field, amt, fields) => { if (amt <= 0n) return; const r = row(map, who, fields); r[field] += amt; r.total += amt; paid += amt; };
-    const opCredit = (op, field, amt) => credit(opRows, op, field, amt, { gas: 0n, host: 0n, witness: 0n, guardian: 0n });
+    const opCredit = (op, field, amt) => credit(opRows, op, field, amt, { host: 0n, witness: 0n, guardian: 0n });
     const agreeing = m.attests.filter((a) => !a.escalation && a.agrees && m.panel?.includes(a.witness));
-    const refunds = [
-      { op: m.hostOperator, amt: (m.commit?.gas ?? 0n) + m.settle.gas },
-      ...agreeing.map((a) => ({ op: a.operator, amt: a.gas })),
-      { op: m.final.caller, amt: m.final.gas },
-    ].filter((r) => r.op && r.amt > 0n);
-    const gasTotal = refunds.reduce((s, r) => s + r.amt, 0n);
-    for (const r of refunds) if (eligible(r.op, m.final.ts)) opCredit(r.op, 'gas', alloc < gasTotal ? alloc * r.amt / gasTotal : r.amt);
-    if (alloc <= gasTotal) return paid;
-    const profit = alloc - gasTotal, share = (bps) => profit * BigInt(bps) / BPS;
+    const share = (bps) => alloc * BigInt(bps) / BPS;
     const earn = (op, field, amt) => { if (eligible(op, m.final.ts)) opCredit(op, field, amt * reliabilityPpm(op, hourEnd) / PPM); };
     earn(m.hostOperator, 'host', share(p.split.host));
     for (const a of agreeing) earn(a.operator, 'witness', share(p.split.witness));
     const pub = share(p.split.publisher);
     if (m.final.publisher && pub > 0n) { credit(pubRows, m.final.publisher, 'publisher', pub, { publisher: 0n, matches: 0 }); pubRows.get(m.final.publisher).matches++; }
-    // The guardian share: the escalation voters who sided with the final result, else whoever finalized it.
+    // The guardian share: the escalation voters who sided with the final result, else whoever finalized it — the host, in
+    // practice: the node sends finalize from the host first and from each seat 20 s × seat later (node/matchbook.js).
     const voters = m.escalationPanel ? m.attests.filter((a) => a.escalation && a.resultHash === m.final.finalHash && a.operator).map((a) => a.operator) : [];
     const guardians = voters.length ? voters : m.final.caller ? [m.final.caller] : [];
     for (const g of guardians) earn(g, 'guardian', share(p.split.guardian) / BigInt(guardians.length));
@@ -312,7 +308,7 @@ export function computeRewards(entries, overrides = {}, { now = Date.now() } = {
   }
 
   // Every operator with a duty is listed, earning or not: a paused season still shows who is doing the work.
-  for (const op of duties.keys()) row(opRows, op, { gas: 0n, host: 0n, witness: 0n, guardian: 0n });
+  for (const op of duties.keys()) row(opRows, op, { host: 0n, witness: 0n, guardian: 0n });
   const operators = [...opRows.values()].map((r) => {
     const all = dutyStats(r.address, -Infinity, nowS);
     return { ...r, duties: all, reliability: Number(reliabilityPpm(r.address, nowS)) / 1e6 };
