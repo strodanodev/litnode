@@ -153,7 +153,8 @@ async function pollNode() {
     for (const g of GAMES) {
       if (!g.rulesetId) continue;
       const rid = encodeURIComponent(g.rulesetId);
-      const [lb, st, ds, pg] = await Promise.all([api(`/leaderboard?ruleset=${rid}`).catch(() => ({})), api(`/stats?ruleset=${rid}`).catch(() => ({})), wantDeltas ? api(`/deltas?ruleset=${rid}`).catch(() => null) : null,
+      // An attested title (a court's reports, never official) has no official ladder by construction: show its own, labelled (docs/SETTLEMENT-STANDARD.md §4).
+      const [lb, st, ds, pg] = await Promise.all([api(`/leaderboard?ruleset=${rid}${g.status === 'attested' ? '&scope=all' : ''}`).catch(() => ({})), api(`/stats?ruleset=${rid}`).catch(() => ({})), wantDeltas ? api(`/deltas?ruleset=${rid}`).catch(() => null) : null,
         player?.id ? api(`/progress?ruleset=${rid}&player=${player.id}`).catch(() => null) : null]);
       S.boards[g.rulesetId] = lb.leaderboard ?? [];
       S.stats[g.rulesetId] = st && !st.error ? st : {};
@@ -505,10 +506,13 @@ function boardTable(rid, limit, q = '') {
   const me = myBoardRow(rid);
   const tr = (r) => { const s = st[r.player] ?? {}; return `<tr class="${r.player === player.id ? 'me' : ''}"><td class="rank ${r.rank <= 3 ? 'top' : ''}">#${r.rank}</td><td><div class="pl"><img src="${r.player === player.id ? player.avatar : identicon(r.player, 40)}" alt=""/>${r.player === player.id ? esc(player.name) : short(r.player, 12)}</div></td><td class="num">${r.rating}</td><td class="num">${s.matches ?? 0}</td><td class="num">${s.wins ?? 0}</td><td class="num">${pct(s.wins ?? 0, s.matches ?? 0)}%</td></tr>`; };
   if (!S.online) return nodeHint();
-  if (!rows.length) return '<div class="empty">No verified ranked matches on this title yet. The official ladder counts placed, player-signed, witness-verified results only; every settled match still shows in your record, labelled.</div>';
+  if (!rows.length) return attestedTitle(rid) ? '<div class="empty">No court-reported matches on this title yet. This ladder is attested: the title’s own court signs each result and the node checks it against the rules; nothing on it is replayed by witnesses or official.</div>' : '<div class="empty">No verified ranked matches on this title yet. The official ladder counts placed, player-signed, witness-verified results only; every settled match still shows in your record, labelled.</div>';
   const extra = me && !list.some((r) => r.player === player.id) ? `<tr><td colspan="6" class="dim" style="text-align:center">…</td></tr>${tr(me)}` : '';
-  return `<table><thead><tr><th>Rank</th><th>Player</th><th class="num">Rating</th><th class="num">Matches</th><th class="num">Wins</th><th class="num">Win %</th></tr></thead><tbody>${list.map(tr).join('')}${extra}</tbody></table>`;
+  return `${attestedNote(rid)}<table><thead><tr><th>Rank</th><th>Player</th><th class="num">Rating</th><th class="num">Matches</th><th class="num">Wins</th><th class="num">Win %</th></tr></thead><tbody>${list.map(tr).join('')}${extra}</tbody></table>`;
 }
+/** A title whose results a court attests (defineAttestedTitle): its ladder is labelled so wherever it is drawn. */
+const attestedTitle = (rid) => GAMES.some((g) => g.rulesetId === rid && g.status === 'attested');
+const attestedNote = (rid) => attestedTitle(rid) ? '<div class="dim" style="margin:0 0 8px"><span class="tag court">attested</span> results signed by the title’s own court and checked against its rules, not replayed by witnesses — this ladder is never official</div>' : '';
 let lbTab = PRIMARY.rulesetId;
 const lbTabs = () => `<div class="tabs">${GAMES.filter((g) => g.rulesetId).map((g) => `<button class="${g.rulesetId === lbTab ? 'active' : ''}" data-lb="${g.rulesetId}">${esc(g.title)}</button>`).join('')}</div>`;
 const leaderboardPanel = () => panel('Leaderboards', `${lbTabs()}<div style="margin-top:8px">${boardTable(lbTab, 8)}</div>`, moreLink('#/leaderboards'), 's5');

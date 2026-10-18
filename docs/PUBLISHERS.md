@@ -78,6 +78,7 @@ docs/PUBLISHER-BONDS.md     title ownership as an ERC-721 (BUILT: TitleRegistry,
 docs/BRING-YOUR-BACKEND.md  existing backend → bridge → settlement          sdk/bridge/   npm run bridge
 docs/BUILD-FROM-SCRATCH.md  new title → client SDK → cabinet → settlement   sdk/client.js
 docs/HOST-YOUR-TITLE.md     the title contract and the rules of recognition sdk/index.js  npm run create-title|conformance|bundle:title
+docs/SETTLEMENT-STANDARD.md the one envelope, identity, result, provenance tiers and chain lifecycle every title settles through
 docs/HOST-A-NODE.md         run the node that hosts it                     sdk/host/     npm run host
 docs/WEBSITE-COPY.md        what the site and litepaper say vs. what ships, and the copy to change
 .claude/skills/             migrate-a-title · build-a-title · host-a-title · host-a-node

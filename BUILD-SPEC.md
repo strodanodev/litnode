@@ -744,16 +744,29 @@ beacon (§5.2) remains the stated gap.
 ### 11.4 Who pays, who earns
 
 The node's delegated hot key pays gas for commit, settle, attest, dispute
-and claims. Per ranked match a fee `matchFee` (parameter; source: the
-title's pot, or a per-match charge on the players' proxy wallets, to be
-decided per title) accrues in `MatchBook` and is split at finality: host
-share, one attest share per agreeing panel member, the remainder to
-`treasury`. `claim(nodeKey)` pays a node's accrued shares in one
-transaction whenever its operator likes. No paymaster: a treasury that pays
-everyone's gas is a softer single point of failure — when it runs dry,
-settlement stops. Operators fund their own hot key and earn it back by
-serving. This is the loop that makes "anyone can run a node" true rather
-than charitable, and it is phase 3.
+and claims. What comes back, and from where, was decided on 5 Oct 2026 and
+supersedes the per-match `matchFee` this section first proposed:
+
+- **Gas comes back from the treasury, per final match** — `GasRefund`
+  (contracts/GasRefund.sol, live on Liteforge 8 Oct 2026, docs/GAS-REFUND.md):
+  80 % of each duty's gas at up to 10 gwei, once per FINAL ranked match, to the
+  host and every agreeing witness, capped per node per day. The node claims it
+  by itself. A treasury that only refunds gas is not a paymaster: settlement
+  never waits on it, and a dry treasury costs operators gas, not finality.
+- **Operator pay is the Season Zero rewards fold** (docs/REWARDS.md,
+  protocol/rewards.js): an hourly release from the rewards treasury split
+  host 35 · each agreeing witness 10 · publisher 20 · guardian 15, weighted
+  against wash trading and scaled by reliability, computed from the chain by
+  anyone. Points only until a claim-root contract exists; it opens at ten
+  active operators.
+- **No per-match player fee in MatchBook.** The contract carries no
+  `matchFee` and no `claim(nodeKey)`; a title that charges its players does
+  so in its own plane. If a fee ever accrues on chain it is a new contract
+  beside MatchBook, not a change to it.
+
+What stays phase 3: the claim-root contract that pays the fold, and custody
+challenges (§11.5). "Anyone can run a node" is true today for gas; for pay it
+waits on the gate.
 
 ### 11.5 Custody
 
@@ -932,8 +945,8 @@ manifest completeness, bounded ranked mapping. A title that passes is listed.
   wrong at any real scale (§0, "what changed"); it is replaced by §6/§11,
   not patched.
 - **The node signs type-2 transactions with a fee ceiling (0.11.12);** the
-  cabinet's wallet path always did. What is still open on fees is phase 3:
-  nobody is reimbursed.
+  cabinet's wallet path always did. Gas comes back from GasRefund since
+  0.11.25 (§11.4); operator pay is points until the claim-root contract exists.
 - **The operator's dashboard reads `/fleet` (0.11.12, docs/FLEET-TELEMETRY.md)**
   — links measured on the gossip push, a grade per peer, the graph from every
   heartbeat's `links`, rooms, the purse — signed by the node key over a digest.
@@ -992,8 +1005,8 @@ manifest completeness, bounded ranked mapping. A title that passes is listed.
 - **Disagreement has a path on chain but has not been walked on
   Liteforge.** A dissenting attest escalates to nine stake-weighted seats
   (§6); the branch is executed on the in-process EVM only.
-- **No economics** until phase 3. Credits reconcile against no reserve;
-  nothing is paid; the fee split is specified.
+- **No economics** beyond gas refunds. Credits reconcile against no reserve;
+  rewards are points (docs/REWARDS.md); the claim-root contract is not built.
 - **No agent role.**
 - **Peer-to-peer disconnects settle as no-contest.** No referee, no forfeit.
 - **Pickle Brawl results are attested, not verified.** The node checks the
