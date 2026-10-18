@@ -181,6 +181,13 @@ gateway's challenge; the seed is the placement's; the server posts the log with
 both players' signatures to this node and exits. Any bonded node set up this way
 can host Agent Fighter; it does not need the publisher's relay.
 
+**Server bundles.** `GAUNTLET_SERVERS=<rulesetId>,...` does the same with no
+checkout: the title's server comes from the mesh as a hashed artifact its
+publisher registered under the title (`node/server-bundle.js`,
+docs/OPERATORS.md step 6). `GAUNTLET_SERVERS=<rulesetId>=<bundle.tgz>` is the
+publisher's side: serve this file. `/health.gauntletServers` shows what is
+held, current and refused; `doctor` checks the opt-in.
+
 ## Services: running a studio's backend on this node
 
 `SERVICES=<bundle.json>,...` runs a studio's long-lived backend (API,

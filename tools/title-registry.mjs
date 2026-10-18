@@ -22,6 +22,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { addressOf, signTransaction } from '../protocol/evm.js';
 import { h } from '../protocol/canonical.js';
+import { openBundle } from '../node/server-bundle.js';
 import { buildStatusCall, decodeBuildStatus, titleOfCall, decodeTitle, buildsOfCall, decodeHashes, registerCalldata, setBuildCalldata, revokeBuildCalldata, transferCalldata, activationDelayCall, decodeUint, titleIdOf } from '../protocol/title.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -39,6 +40,14 @@ const reg = deployed.TitleRegistry.address;
 
 /** The title and build this acts on. A file gives both; a bare rulesetId needs --build for the write commands. */
 const it = (() => {
+  // A server bundle (node/server-bundle.js): its sidecar servers/<id>.server.json or the .tgz itself. The hash
+  // registered is the serverHash; the title's token carries it beside the ruleset builds, no kind tag needed.
+  if (existsSync(target) && (target.endsWith('.tgz') || target.endsWith('.server.json'))) {
+    if (target.endsWith('.tgz')) { const { hash, manifest } = openBundle(readFileSync(target)); return { rulesetId: manifest.rulesetId, buildHash: opt('--build') ?? hash, name: target }; }
+    const meta = JSON.parse(readFileSync(target, 'utf8'));
+    if (!meta.rulesetId || !meta.serverHash) { console.error(`${target}: not a server bundle sidecar (needs rulesetId and serverHash)`); process.exit(1); }
+    return { rulesetId: meta.rulesetId, buildHash: opt('--build') ?? meta.serverHash, name: target };
+  }
   if (existsSync(target)) {
     const source = readFileSync(target, 'utf8');
     const side = target.replace(/\.js$/, '.json');

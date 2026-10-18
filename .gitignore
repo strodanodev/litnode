@@ -21,3 +21,6 @@ audit-test-output.txt
 
 # Local wallet signer (tools/signer): internal tool, kept out of the repo on purpose (25 Sep 2026)
 tools/signer/
+
+# Server bundles are build output: npm run bundle:server (the hash is what gets registered, not the file)
+servers/

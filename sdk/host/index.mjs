@@ -26,6 +26,7 @@ import { checkChallenge, newNonce } from '../../protocol/challenge.js';
 import { PROTOCOL_VERSION } from '../../protocol/version.js';
 import { lanAddress } from '../../node/upnp.js';
 import { loadGauntletConfigs } from '../../node/gauntlet.js';
+import { parseServerOptIns } from '../../node/server-bundle.js';
 import { loadServiceBundles } from '../../node/publisher-services.js';
 
 export const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), '..', '..'));
@@ -33,7 +34,7 @@ export const ENV_FILE = 'node.env';
 /** Where node.env and litnode.log live: the code folder, or LITNODE_HOME
  *  (so a config can sit outside the checkout, and tests get a scratch one). */
 export const home = () => (process.env.LITNODE_HOME ? resolve(process.env.LITNODE_HOME) : ROOT);
-export const KNOWN_KEYS = ['OPERATOR', 'ROLES', 'PORT', 'HOST', 'PUBLIC_ADDR', 'SEEDS', 'RULESETS', 'DATA_DIR', 'REGION', 'TUNNEL', 'TUNNEL_NAME', 'TUNNEL_HOST', 'UPNP', 'RELAY_PORT', 'RELAY_TUNNEL_NAME', 'RELAY_TUNNEL_HOST', 'WS_ADDR', 'RELAY_KEYS', 'COURTS', 'TITLE_TRUST', 'TRUSTED_PUBLISHERS', 'SANDBOX_TIMEOUT_MS', 'SANDBOX_MEMORY_MB', 'RELEASE_CHANNEL', 'RPC', 'RPC_FALLBACK', 'NODE_STAKE', 'NODE_DIRECTORY', 'ANNOUNCE', 'ERC6699', 'OFFLINE', 'AF_ROOT', 'AIR_PARTNER_ID', 'AIR_JWKS_URL', 'AIR', 'TITLE_REGISTRY', 'STAKE_TOKEN', 'RELEASE_REGISTRY', 'MATCH_BOOK', 'GAUNTLETS', 'GAUNTLET_UPSTREAM', 'GAUNTLET_GATEWAY_PORT', 'SERVICES', 'SERVICE_NAME'];
+export const KNOWN_KEYS = ['OPERATOR', 'ROLES', 'PORT', 'HOST', 'PUBLIC_ADDR', 'SEEDS', 'RULESETS', 'DATA_DIR', 'REGION', 'TUNNEL', 'TUNNEL_NAME', 'TUNNEL_HOST', 'UPNP', 'RELAY_PORT', 'RELAY_TUNNEL_NAME', 'RELAY_TUNNEL_HOST', 'WS_ADDR', 'RELAY_KEYS', 'COURTS', 'TITLE_TRUST', 'TRUSTED_PUBLISHERS', 'SANDBOX_TIMEOUT_MS', 'SANDBOX_MEMORY_MB', 'RELEASE_CHANNEL', 'RPC', 'RPC_FALLBACK', 'NODE_STAKE', 'NODE_DIRECTORY', 'ANNOUNCE', 'ERC6699', 'OFFLINE', 'AF_ROOT', 'AIR_PARTNER_ID', 'AIR_JWKS_URL', 'AIR', 'TITLE_REGISTRY', 'STAKE_TOKEN', 'RELEASE_REGISTRY', 'MATCH_BOOK', 'GAUNTLETS', 'GAUNTLET_SERVERS', 'GAUNTLET_UPSTREAM', 'GAUNTLET_GATEWAY_PORT', 'SERVICES', 'SERVICE_NAME'];
 /** The arcade's AIR partner app (cabinet/config.js AIR.partnerId); `host init` pins tokens to it unless --no-air. */
 export const AIR_PARTNER_ID = '62e01755-138f-4e58-9cdc-fab71e037afd';
 export const ALL_ROLES = ['mesh', 'host', 'witness', 'settler'];
@@ -125,6 +126,7 @@ export function effectiveConfig(env = readEnv() ?? {}, { root = ROOT, processEnv
     upnp: e.UPNP === '1',
     relayPort: e.RELAY_PORT ? Number(e.RELAY_PORT) : null,
     gauntlets: e.GAUNTLETS || null,
+    gauntletServers: e.GAUNTLET_SERVERS || null, // <rulesetId>[=<bundle.tgz>],… (node/server-bundle.js)
     services: e.SERVICES || null,
     gauntletGatewayPort: e.GAUNTLET_GATEWAY_PORT ? Number(e.GAUNTLET_GATEWAY_PORT) : null,
     afRoot: e.AF_ROOT || null,
@@ -342,8 +344,15 @@ export async function preflight(cfg, { env = readEnv(cfg.home), fetchImpl = fetc
     } catch (e) { problems.push(e.message); }
     add('services', problems.length === 0, problems.length ? problems.join('; ') : names.join(', '), 'fix SERVICES (docs/BRING-YOUR-BACKEND.md §6c)');
   }
-  if (!cfg.gauntlets && cfg.services && cfg.afRoot && cfg.relayPort && cfg.gauntletGatewayPort == null) add('gauntlets', false, `the gateway (for SERVICES) would take RELAY_PORT ${cfg.relayPort}, where the Agent Fighter relay listens; set GAUNTLET_GATEWAY_PORT (e.g. 8478)`, 'set GAUNTLET_GATEWAY_PORT');
-  else if (!cfg.gauntlets) add('gauntlets', null, 'no GAUNTLETS: this node runs no title match servers');
+  if (!cfg.gauntlets && cfg.gauntletServers) {
+    // Server bundles: the title's server is fetched from the mesh by hash (or served from the operator's own file); nothing to find on disk but that file.
+    let problems = [], titles = [];
+    try { const opt = parseServerOptIns(cfg.gauntletServers, { root: cfg.root }); titles = Object.keys(opt); for (const [rid, f] of Object.entries(opt)) if (f && !existsSync(f)) problems.push(`${rid}: ${f} not found`); } catch (e) { problems.push(e.message); }
+    if (cfg.afRoot && cfg.relayPort && cfg.gauntletGatewayPort == null) problems.push(`the gateway would take RELAY_PORT ${cfg.relayPort}, where the Agent Fighter relay listens; set GAUNTLET_GATEWAY_PORT (e.g. 8478)`);
+    add('gauntlets', problems.length === 0, problems.length ? problems.join('; ') : `${titles.join(', ')} from server bundles on gateway :${cfg.gauntletGatewayPort ?? cfg.relayPort ?? '(ephemeral, this machine only)'}`, 'fix GAUNTLET_SERVERS / GAUNTLET_GATEWAY_PORT (docs/OPERATORS.md step 6)');
+  }
+  else if (!cfg.gauntlets && cfg.services && cfg.afRoot && cfg.relayPort && cfg.gauntletGatewayPort == null) add('gauntlets', false, `the gateway (for SERVICES) would take RELAY_PORT ${cfg.relayPort}, where the Agent Fighter relay listens; set GAUNTLET_GATEWAY_PORT (e.g. 8478)`, 'set GAUNTLET_GATEWAY_PORT');
+  else if (!cfg.gauntlets) add('gauntlets', null, 'no GAUNTLETS or GAUNTLET_SERVERS: this node runs no title match servers');
   else {
     let problems = [], titles = [];
     try {

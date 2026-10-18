@@ -1,0 +1,16 @@
+{
+  "$comment": "Agent Fighter's per-match server as a hashed artifact (node/server-bundle.js): npm run bundle:server -- gauntlets/agent-fighter.server.json [--root <checkout>] packs packages/server/src/gauntlet-server.ts with @af/core and ws inlined, plus the character, stage and pet JSON the server reads beside itself (the sprites stay out: the server never reads them), into servers/agent-fighter.v1.server.tgz and prints the serverHash. The publisher registers that hash under the title (npm run publish:title -- set-build servers/agent-fighter.v1.server.json) and serves it from its node (GAUNTLET_SERVERS=agent-fighter.v1=servers/agent-fighter.v1.server.tgz); an operator opts in with GAUNTLET_SERVERS=agent-fighter.v1 and needs no checkout. `root` is this machine's checkout; --root or AF_ROOT overrides it. The settings below are what gauntlets/agent-fighter.json gave a hand-installed checkout.",
+  "rulesetId": "agent-fighter.v1",
+  "repo": "https://github.com/strodanodev/agent-fighter",
+  "root": "E:/NPC/AGENT FIGHTER/agent-fighter",
+  "entry": "packages/server/src/gauntlet-server.ts",
+  "include": ["characters/*/character.json", "stages/*/stage.json", "pets/*/pet.json"],
+  "external": ["bufferutil", "utf-8-validate"],
+  "runtime": { "node": ">=22" },
+  "env": {},
+  "portRange": [7820, 7859],
+  "readyMs": 60000,
+  "ttlMs": 900000,
+  "ticketTtlMs": 900000,
+  "settledGraceMs": 3000
+}

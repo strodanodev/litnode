@@ -175,25 +175,35 @@ A node can run Agent Fighter's own match server for each match it is
 drawn to host. It needs no database and no publisher key. This is what
 lets the game run without its publisher online.
 
-1. Install Node.js 20+ and Git, then:
-   ```bash
-   git clone https://github.com/strodanodev/agent-fighter C:/litvm/agent-fighter
-   cd C:/litvm/agent-fighter && npm ci
-   ```
-2. Copy `gauntlets/agent-fighter.json` from the litnode folder to a place
-   **outside** it (updates replace the litnode folder's copy), for example
-   `C:/litvm/agent-fighter.json`, and set its `"cwd"` to your checkout.
-3. Add to `node.env` (Control Plane: as user environment variables, see
+The server comes to your node the way the game's rules do: as a **server
+bundle** the publisher registered under the title on chain, fetched from
+the mesh by hash, checked against that hash and the publisher's word,
+and kept under your `data` folder. You install nothing and clone nothing.
+
+1. Add to `node.env` (Control Plane: as user environment variables, see
    Troubleshooting), with `TUNNEL` set:
    ```ini
-   GAUNTLETS=agent-fighter.v1=C:/litvm/agent-fighter.json
+   GAUNTLET_SERVERS=agent-fighter.v1
    GAUNTLET_GATEWAY_PORT=8478
    ```
-4. Restart the node. `http://localhost:7801/health` shows `gauntlet.titles`
-   with `agent-fighter.v1` and a `wsAddr`.
+   This is an **opt-in**: a server bundle is a real process on your
+   machine with a port and the network (the game's rules, by contrast, run
+   in a sandbox). Your node runs only the titles you list here, and only a
+   bundle the title's publisher registered on `TitleRegistry` (or signed
+   with a key in your `TRUSTED_PUBLISHERS`).
+2. Restart the node. Within a minute `http://localhost:7801/health` shows
+   `gauntletServers.current["agent-fighter.v1"]` with the bundle's hash,
+   `gauntlet.titles` with `agent-fighter.v1`, and a `wsAddr`. The bundle is
+   at `data/<operator>/servers/<hash>/`; `data/<operator>/gauntlet-state/`
+   is the one place a title's server may keep state between matches.
+3. When the publisher registers a new bundle, your node picks it up by
+   itself on the next tick after it activates. Nothing to pull.
 
-Keep the checkout current (`git pull && npm ci`) when the game updates:
-players and your server must run the same engine.
+`npm run host -- doctor` reports the opt-in and the gateway port. Until a
+title's publisher has registered a bundle, the older way still works: a
+checkout of the game on this machine and a `GAUNTLETS=` config pointing at
+it (`gauntlets/agent-fighter.json`, `docs/HOST-A-NODE.md` "Gauntlets");
+that is also how a developer runs an unreleased server.
 
 ## 7. Keep it running and current
 

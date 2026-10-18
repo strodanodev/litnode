@@ -145,11 +145,42 @@ A title ships one of two artifacts, both pinned by hash on `TitleRegistry`:
   conformance and bundling.
 
 A title whose match server is a process (a gauntlet) also ships that
-process. Today it ships as a machine-local JSON (`gauntlets/<id>.json`)
-pointing at a checkout the operator installed by hand, which is why a
-gauntlet title is publisher-less only on nodes whose operator did that.
-Target: the server bundle registered as a second build hash under the same
-title and fetched like a ruleset. Not built as of 19 Oct 2026.
+process, as a **server bundle** (`node/server-bundle.js`; built 19 Oct
+2026, after the audit of that day named the gap):
+
+- **Shape.** One deterministic tar (gzipped for transport): `manifest.json`
+  `{ kind: 'server', rulesetId, entry, runtime, env, portRange, readyMs,
+  ttlMs, ticketTtlMs, settledGraceMs, source }`, the server bundled by
+  esbuild into plain JS with its dependencies inlined, and the data files
+  it reads beside itself. No node_modules, no install step: everything that
+  executes is inside the hashed bytes, and a node never runs npm.
+  `npm run bundle:server -- gauntlets/<id>.server.json` packs it and
+  prints the hash.
+- **Hash.** `serverHash = sha256('server' NUL tar)`, the same tag-prefixed
+  scheme as `H('ruleset', source)`, over the uncompressed tar, so the same
+  checkout and esbuild reproduce it anywhere.
+- **Registered** under the SAME `TitleRegistry` token with the existing
+  `setBuild` (`npm run publish:title -- set-build servers/<id>.server.json`)
+  and admitted by the existing `buildStatus`. No contract change and no
+  kind tag: the kind is in the hash domain (a server hash can never verify
+  as a ruleset or the reverse) and in the manifest, which must name the
+  title it is registered under. A later bundle waits `activationDelay`; a
+  revoked one stops being fetched at once.
+- **Fetched** from any peer that holds it (`GET /server/<id>?build=<hash>`,
+  advertised in the heartbeat as `servers`), kept under
+  `<dataDir>/servers/<hash>/`, never evicted.
+- **Run only by a node that opted in** (`GAUNTLET_SERVERS=<id>`). This is
+  the one place the trust boundary differs from a ruleset's: a ruleset is
+  admitted by the sandbox; a server is a trusted process with a port and
+  the network, so admission is the publisher's registration (or a
+  `TRUSTED_PUBLISHERS` signature) plus the operator's opt-in, and
+  `TITLE_TRUST=open` does not extend to it.
+
+Still machine-local: a gauntlet config that points at a checkout
+(`gauntlets/<id>.json`) for a server the publisher has not bundled, and a
+court key a server needs (Pickle Brawl's) — a bundle gets a per-title
+state directory on the node for that (`GAUNTLET_STATE_DIR`), but the
+operator still provisions the key and lists it in `COURTS`.
 
 ## 8. Conformance of the two shipped titles
 

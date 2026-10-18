@@ -212,6 +212,51 @@ Your client reads the arcade launch
 (`?ws&room&player&match`), fetches its ticket from the gateway and joins;
 Pickle Brawl's `src/net/litnodeLaunch.ts` is 60 lines.
 
+**Ship the server as a bundle, so any operator can run it.** The config
+above points at a checkout on one machine; a *server bundle*
+(`node/server-bundle.js`) is the same server as a hashed artifact that
+travels the mesh like your ruleset does. Write a spec
+(`gauntlets/agent-fighter.server.json` is the example):
+
+```json
+{ "rulesetId": "agent-fighter.v1", "root": "/path/to/your/checkout",
+  "entry": "packages/server/src/gauntlet-server.ts",
+  "include": ["characters/*/character.json", "stages/*/stage.json"],
+  "external": ["bufferutil", "utf-8-validate"],
+  "runtime": { "node": ">=22" }, "env": {},
+  "portRange": [7820, 7859], "readyMs": 60000, "ttlMs": 900000, "ticketTtlMs": 900000, "settledGraceMs": 3000 }
+```
+
+Then:
+
+```
+npm run bundle:server -- gauntlets/<id>.server.json      # servers/<id>.server.tgz + .json, prints serverHash
+npm run publish:title -- set-build servers/<id>.server.json   # the publisher's wallet registers the hash under the title
+GAUNTLET_SERVERS=<id>=servers/<id>.server.tgz             # node.env on your node: serve it to the mesh
+```
+
+esbuild inlines your dependencies into one plain-JS module at the entry's
+own path inside the archive (`import.meta.url`-relative lookups still find
+the data files in `include`), a one-line `run.mjs` imports it (so an
+`argv[1] === import.meta.url` main guard stays false), and the archive is
+a deterministic tar: the same checkout gives the same hash anywhere. The
+hash is `sha256('server' NUL tar)`; the registry needs no kind tag because
+a server hash can never verify as a ruleset. An operator runs it with
+`GAUNTLET_SERVERS=<id>` and no checkout (docs/OPERATORS.md step 6); their
+node fetches it from yours by hash, verifies it, and spawns `run.mjs`
+from `<dataDir>/servers/<hash>/` with the same `GAUNTLET_*` environment
+as above plus `GAUNTLET_SERVER` (the hash) and `GAUNTLET_STATE_DIR` (a
+per-title directory on that node your server may keep a key or a cache
+in; also `${stateDir}` in `env`). What the bundle may not carry: an
+operator secret (`env.OPERATOR_KEY` and friends are refused), a
+machine-local path (a court key file: generate it in `GAUNTLET_STATE_DIR`
+on first run, and have the operator add it to `COURTS`), or an install
+step (a node never runs npm; a dependency with a native optional stays
+`external` and its JS fallback runs). `TITLE_TRUST=open` does not admit
+a server bundle: unlike a ruleset it is not sandboxed, so only the
+chain's word (or a `TRUSTED_PUBLISHERS` signature, `npm run sign:build --
+servers/<id>.server.tgz`) and the operator's opt-in let it run.
+
 ## 6b. Finding the node
 
 `--node auto` (or `LITNODE_URL=auto`) on any bridge command, and `npm run

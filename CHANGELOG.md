@@ -3,6 +3,40 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased — server bundles] — 2026-10-19 — a gauntlet title's match server travels the mesh by hash
+
+### Added
+- **Server bundles** (`node/server-bundle.js`, `node/litnode.js`). A title whose match server is a process (Agent
+  Fighter's `gauntlet-server.ts`, Pickle Brawl's court) shipped as a machine-local `gauntlets/<id>.json` pointing at a
+  checkout the operator cloned by hand, so it was publisher-less only on nodes whose operator did that (audit of 19
+  Oct; `docs/SETTLEMENT-STANDARD.md` §7). Now the server is the title's second hashed artifact: one deterministic tar
+  (`manifest.json` + the server bundled to plain JS by esbuild + the data files it reads), hashed as
+  `sha256('server' NUL tar)`, registered under the SAME `TitleRegistry` token with the existing `setBuild` (no contract
+  change: the kind is in the hash domain, a server hash can never verify as a ruleset), advertised in the heartbeat
+  (`servers`), served by any node that holds it (`GET /server/<id>?build=<hash>`), kept under
+  `<dataDir>/servers/<hash>/` and never evicted. An operator opts in with `GAUNTLET_SERVERS=<id>` in `node.env` and
+  needs no checkout: the node fetches the bundle peers advertise, verifies the hash and the publisher's word
+  (TitleRegistry says registered and active, or a `TRUSTED_PUBLISHERS` signature; `TITLE_TRUST=open` does not apply,
+  a server is a trusted process with a port and the network, not a sandboxed replay), unpacks it, and runs it through
+  the gauntlet machinery for the matches it hosts. The publisher serves its own file with
+  `GAUNTLET_SERVERS=<id>=servers/<id>.server.tgz`. A refused bundle is remembered (for good when its bytes are wrong,
+  a minute when the chain said no); a cached one is re-held on restart with no peer. `/health.gauntletServers`.
+- **`npm run bundle:server -- gauntlets/<id>.server.json`** (`tools/bundle-server.mjs`): packs a server from a checkout
+  (spec: entry, data files to include, externals, runtime floor, the gauntlet settings) and prints the serverHash.
+  `gauntlets/agent-fighter.server.json` packs Agent Fighter's server with `@af/core` and `ws` inlined and the
+  character, stage and pet JSON beside it: 31 files, 1.6 MB, 160 KB gzipped, no change needed in its repository.
+  `npm run publish:title -- set-build servers/<id>.server.json` registers the hash; `npm run sign:build --
+  servers/<id>.server.tgz` signs it for nodes without a registry. `servers/` is build output (gitignored).
+- **`GAUNTLET_STATE_DIR` / `${stateDir}`** (`node/gauntlet.js`): a per-title directory on the node a server may keep a
+  key or a cache in between matches; `GAUNTLET_SERVER` names the bundle's hash to the process.
+  `npm run host -- doctor` and `init --gauntlet-servers` know the new key.
+  Tests: `demo/server-bundle.test.mjs` (the tar, the manifest and the hash; an in-process mesh where the operator's
+  node fetches the stand-in server from the publisher's node, hosts a placed match with it, a node without the
+  opt-in never fetches, an unvouched bundle is refused unwritten, a restart re-holds from disk; and, with an Agent
+  Fighter checkout, the real tool packs the real server and a second node plays a match with the title's bots).
+  Docs: `docs/OPERATORS.md` step 6, `docs/BRING-YOUR-BACKEND.md` §6a, `docs/SETTLEMENT-STANDARD.md` §7,
+  `docs/HOST-A-NODE.md`.
+
 ## [0.11.27] — 2026-10-18 — a relay tunnel that stays dead is restarted on a fresh hostname
 
 ### Fixed

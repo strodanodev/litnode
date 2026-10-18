@@ -17,6 +17,7 @@ import { createNode } from './litnode.js';
 import { createTui, formatEvent } from './tui.js';
 import { lanAddress } from './upnp.js';
 import { loadGauntletConfigs } from './gauntlet.js';
+import { parseServerOptIns } from './server-bundle.js';
 import { loadServiceBundles } from './publisher-services.js';
 import { checkInstance, describePortHolder, ALREADY_RUNNING_EXIT, PORT_BUSY_EXIT } from './port.js';
 
@@ -150,6 +151,9 @@ node = await createNode({
   // those titles, behind the relay port (node/gauntlet.js). GAUNTLET_UPSTREAM=ws://127.0.0.1:8477
   // sends rooms the gateway does not know to a title's own relay on this machine.
   gauntlets: loadGauntletConfigs(env.GAUNTLETS, { root }), gauntletUpstream: env.GAUNTLET_UPSTREAM || null, gauntletPort: env.GAUNTLET_GATEWAY_PORT ? Number(env.GAUNTLET_GATEWAY_PORT) : null,
+  // GAUNTLET_SERVERS=<rulesetId>[=<bundle.tgz>],… — a title's match server fetched from the mesh by hash and run
+  // here (docs/OPERATORS.md step 6; node/server-bundle.js). With a path: this operator's own bundle, served to peers.
+  gauntletServers: parseServerOptIns(env.GAUNTLET_SERVERS, { root }),
   // SERVICES=<bundle.json>,… — a publisher's long-lived backend run on this node (node/publisher-services.js).
   services: loadServiceBundles(env.SERVICES, { root }),
   // Universal login (docs/UNIVERSAL-LOGIN.md): on whenever PlayerProfile is set; AIR=0 turns it off.

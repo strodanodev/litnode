@@ -38,7 +38,7 @@ import { spawn } from 'node:child_process';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { createServer, request as httpRequest } from 'node:http';
 import { connect, createServer as createTcpServer } from 'node:net';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { roomCodeFor } from '../protocol/pairing.js';
 import { newNonce, verifySeat, NONCE_RE } from '../protocol/challenge.js';
 import { seedFor } from '../protocol/placement.js';
@@ -130,12 +130,15 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
       // The match seed is the placement's, H(beacon, matchId): the one a witness replays with, so the server
       // never picks it (node/settle.js bind). No beacon (a direct start): the seed settle uses for unplaced matches.
       const seed = beacon != null ? seedFor(beacon, matchId) : h('seed', matchId);
-      const vars = { port: run.port, secret, publicUrl: publicWs(room), seats: JSON.stringify(seats), matchId, room, nodeUrl, gateway: `http://127.0.0.1:${actualPort}`, mode, placedMode: placedMode ?? 'casual', rulesetId, node: process.execPath, seed, buildHash: buildHash ?? '' };
+      // ${stateDir}: a per-title directory on this node a server may keep a key or a cache in across matches
+      // (a bundle fetched by hash, node/server-bundle.js, has no checkout to keep them in). Created on first use.
+      if (cfg.stateDir) mkdirSync(cfg.stateDir, { recursive: true });
+      const vars = { port: run.port, secret, publicUrl: publicWs(room), seats: JSON.stringify(seats), matchId, room, nodeUrl, gateway: `http://127.0.0.1:${actualPort}`, mode, placedMode: placedMode ?? 'casual', rulesetId, node: process.execPath, seed, buildHash: buildHash ?? '', stateDir: cfg.stateDir ?? '' };
       // The node's own keys never reach a title's process (same rule as
       // publisher services); a config that needs a secret names it in `env`.
       const inherited = { ...process.env };
       for (const k of OPERATOR_SECRETS) delete inherited[k];
-      const env = { ...inherited, ...Object.fromEntries(Object.entries(cfg.env).map(([k, v]) => [k, fill(v, vars)])), GAUNTLET_MATCH_ID: matchId, GAUNTLET_ROOM: room, GAUNTLET_PORT: String(run.port), GAUNTLET_SECRET: secret, GAUNTLET_SEATS: vars.seats, GAUNTLET_PUBLIC_URL: vars.publicUrl, GAUNTLET_NODE_URL: nodeUrl, GAUNTLET_MODE: mode, GAUNTLET_PLACED_MODE: vars.placedMode, GAUNTLET_SEED: seed, GAUNTLET_BUILD: vars.buildHash, GAUNTLET_RULESET: rulesetId };
+      const env = { ...inherited, ...Object.fromEntries(Object.entries(cfg.env).map(([k, v]) => [k, fill(v, vars)])), GAUNTLET_MATCH_ID: matchId, GAUNTLET_ROOM: room, GAUNTLET_PORT: String(run.port), GAUNTLET_SECRET: secret, GAUNTLET_SEATS: vars.seats, GAUNTLET_PUBLIC_URL: vars.publicUrl, GAUNTLET_NODE_URL: nodeUrl, GAUNTLET_MODE: mode, GAUNTLET_PLACED_MODE: vars.placedMode, GAUNTLET_SEED: seed, GAUNTLET_BUILD: vars.buildHash, GAUNTLET_RULESET: rulesetId, ...(cfg.stateDir ? { GAUNTLET_STATE_DIR: cfg.stateDir } : {}), ...(cfg.bundle ? { GAUNTLET_SERVER: cfg.bundle } : {}) };
       const child = spawnImpl(fill(cfg.command, vars), cfg.args.map((a) => fill(a, vars)), { cwd: cfg.cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
       run.child = child; run.pid = child.pid ?? null;
       const tail = (d) => { const line = String(d).trim().split('\n').pop(); if (line) run.lastLine = line.slice(0, 200); };
@@ -314,7 +317,7 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
     server.listen(port, host, () => { actualPort = server.address().port; log(`gauntlet gateway on :${actualPort}${upstream ? ` (unknown rooms → ${upstream})` : ''}: ${Object.keys(configs).join(', ') || 'no titles configured'}`); res(actualPort); });
   });
 
-  const status = () => ({ port: actualPort, upstream, titles: Object.keys(configs), services: services?.status() ?? [], active: [...active.values()].map((r) => ({ matchId: r.matchId, rulesetId: r.rulesetId, room: r.room, state: r.state, mode: r.mode, seats: r.seats.length, direct: !!r.direct, port: r.port, pid: r.pid, since: new Date(r.startedAt).toISOString(), lastError: r.lastError, exitCode: r.exitCode })) });
+  const status = () => ({ port: actualPort, upstream, titles: Object.keys(configs), bundles: Object.fromEntries(Object.entries(configs).filter(([, c]) => c.bundle).map(([rid, c]) => [rid, c.bundle])), services: services?.status() ?? [], active: [...active.values()].map((r) => ({ matchId: r.matchId, rulesetId: r.rulesetId, room: r.room, state: r.state, mode: r.mode, seats: r.seats.length, direct: !!r.direct, port: r.port, pid: r.pid, since: new Date(r.startedAt).toISOString(), lastError: r.lastError, exitCode: r.exitCode })) });
 
   /** Hooks the node calls. A placement is ours when it names this node as host. */
   const onPlaced = (d) => { if (configs[d.rulesetId] && (!nodeId || d.host === nodeId)) start({ matchId: d.matchId, rulesetId: d.rulesetId, participants: d.participants, mode: d.mode ?? null, beacon: d.beacon ?? null, buildHash: d.buildHash ?? null }).catch(() => {}); };

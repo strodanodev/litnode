@@ -8,7 +8,7 @@
  *  Dependency-free: node:http + fetch. One process = one node. */
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { h, canonical } from '../protocol/canonical.js';
@@ -25,6 +25,7 @@ import { matchIdBytes32 } from '../protocol/matchbook.js';
 import { createUpdater, RESTART_EXIT } from './update.js';
 import { createTunnel } from './tunnel.js';
 import { createGauntlets } from './gauntlet.js';
+import { openBundle, writeFiles, configFromBundle, runtimeOk, permanent, MANIFEST_NAME, MAX_BUNDLE_BYTES } from './server-bundle.js';
 import { createServices as createPublisherServices } from './publisher-services.js';
 import { keepMapped } from './upnp.js';
 import { createAnnouncer } from './announce.js';
@@ -150,6 +151,11 @@ export async function createNode({
   // so a node that already fronts a relay (Agent Fighter's, whose wrapper
   // listens on RELAY_PORT) adds gauntlets with GAUNTLET_GATEWAY_PORT alone.
   gauntlets = {}, gauntletUpstream = null, gauntletPort = null,
+  // Server bundles (node/server-bundle.js): a gauntlet title's match server as a hashed artifact.
+  // { rulesetId: null } opts in to fetching the title's bundle from peers (admitted by TitleRegistry or a
+  // TRUSTED_PUBLISHERS signature) and running it; { rulesetId: '<path>.tgz' } is this operator's own file (the
+  // publisher's node), served to peers. Either way the title joins `gauntlets` once the bundle is held.
+  gauntletServers = {},
   // Publisher services (node/publisher-services.js): a title's long-lived backend — matchmaker,
   // accounts API, a court pool — supervised here and published on the gateway at /svc/<prefix>.<name>.
   services: serviceBundles = [],
@@ -360,6 +366,108 @@ export async function createNode({
     await installRuleset(readFileSync(p, 'utf8'), null, { origin: 'local', attestation: meta.publisher ? { publisher: meta.publisher, sig: meta.sig } : null });
   }
 
+  // ---------------------------------------------------------------- server bundles (node/server-bundle.js)
+  // A gauntlet title's match server as a hashed artifact, held like a build: every bundle this node ever
+  // fetched, by hash, never evicted; the CURRENT one per opted-in title is the gauntlet config this node runs.
+  // Nothing here executes a bundle: one runs only when a placement names this node (node/gauntlet.js).
+  const servers = new Map();        // serverHash → { rulesetId, hash, manifest, dir, file, bytes, publisher, sig, origin }
+  const serverCurrent = new Map();  // rulesetId → entry
+  const serversRefused = new Map(); // serverHash → { reason, until }: when to ask again (Infinity: the bytes themselves are wrong)
+  const SERVER_RETRY_MS = 60_000;
+  const serversDir = join(dataDir, 'servers');
+  mkdirSync(serversDir, { recursive: true });
+  const makeCurrent = (entry) => {
+    gauntlets[entry.rulesetId] = configFromBundle(entry, { stateDir: join(dataDir, 'gauntlet-state', entry.rulesetId) });
+    serverCurrent.set(entry.rulesetId, entry);
+  };
+  /** Hold a server bundle ONLY if its bytes hash to the pinned value, its manifest is sound and names the title it
+   *  is held under, this runtime satisfies it, and — unless it is this operator's own file — the title's publisher
+   *  vouches for the hash: TitleRegistry says it is registered and active, or a TRUSTED_PUBLISHERS key signed it.
+   *  TITLE_TRUST=open does not apply: a server is a trusted process, and the sandbox 'open' leans on is not there.
+   *  Refused before anything is written. */
+  const installServer = async (gzBytes, expectedHash, { rulesetId = null, current = true, origin = 'peer', attestation = null } = {}) => {
+    const { tar, hash, files, manifest } = openBundle(gzBytes, expectedHash);
+    if (rulesetId && manifest.rulesetId !== rulesetId) throw permanent(new Error(`server bundle ${hash.slice(0, 12)} is ${manifest.rulesetId}'s, not ${rulesetId}'s`));
+    if (servers.has(hash)) { const e = servers.get(hash); if (current) makeCurrent(e); return e; }
+    if (!runtimeOk(manifest)) throw permanent(new Error(`server bundle ${manifest.rulesetId} @ ${hash.slice(0, 12)} needs Node ${manifest.runtime.node}; this node runs ${process.versions.node}`));
+    const onChain = origin === 'local' ? null : await buildRegistered(manifest.rulesetId, hash);
+    const trusted = origin === 'local' || onChain?.ok === true || (await buildAttested(manifest.rulesetId, hash, attestation));
+    if (!trusted) {
+      const failed = [onChain ? `title registry: ${onChain.reason}` : null, 'not signed by a trusted publisher'].filter(Boolean);
+      emit('server-refused', { serverHash: hash, rulesetId: manifest.rulesetId, stage: 'trust', failed });
+      throw new Error(`server bundle ${manifest.rulesetId} @ ${hash.slice(0, 12)} refused: ${failed.join('; ')}`);
+    }
+    const dir = join(serversDir, hash), file = join(serversDir, `${hash}.tgz`);
+    if (!existsSync(join(dir, MANIFEST_NAME))) { const tmp = `${dir}.tmp`; rmSync(tmp, { recursive: true, force: true }); writeFiles(tmp, files); rmSync(dir, { recursive: true, force: true }); renameSync(tmp, dir); }
+    if (!existsSync(file)) { writeFileSync(file, gzBytes); writeFileSync(join(serversDir, `${hash}.json`), JSON.stringify({ rulesetId: manifest.rulesetId, serverHash: hash, publisher: attestation?.publisher ?? null, sig: attestation?.sig ?? null, origin })); }
+    const entry = { rulesetId: manifest.rulesetId, hash, manifest, dir, file, bytes: tar.length, files: Object.keys(files).length, publisher: attestation?.publisher ?? null, sig: attestation?.sig ?? null, origin };
+    servers.set(hash, entry);
+    if (current) makeCurrent(entry);
+    log(`server ${manifest.rulesetId} @ ${hash.slice(0, 12)} ${current ? 'current' : 'held'} · ${origin} · ${entry.files} files, ${tar.length} bytes${entry.publisher ? ` · publisher ${entry.publisher.slice(0, 12)}` : ''}`);
+    emit('server', { rulesetId: manifest.rulesetId, serverHash: hash, current, bytes: tar.length, origin });
+    return entry;
+  };
+  // Re-hold every bundle cached from earlier runs (re-checked: the hash from its bytes, the trust gate again unless
+  // it was this operator's own file), then make the operator's own files current.
+  for (const f of readdirSync(serversDir).filter((f) => f.endsWith('.tgz'))) {
+    try {
+      const hash = f.slice(0, -4);
+      const side = join(serversDir, `${hash}.json`);
+      const meta = existsSync(side) ? JSON.parse(readFileSync(side, 'utf8')) : {};
+      await installServer(readFileSync(join(serversDir, f)), hash, { current: false, origin: meta.origin === 'local' ? 'local' : 'cache', attestation: meta.publisher ? { publisher: meta.publisher, sig: meta.sig } : null });
+    } catch (e) { log(`cached server bundle ${f}: ${e.message}`); }
+  }
+  for (const [rid, file] of Object.entries(gauntletServers)) {
+    if (!file) continue;
+    if (!existsSync(file)) throw new Error(`GAUNTLET_SERVERS: ${rid}: ${file} not found`);
+    // The sidecar <file minus .tgz>.json (tools/bundle-server.mjs, tools/sign-build.mjs) carries the hash and the publisher attestation to serve.
+    const side = file.replace(/\.tgz$/, '.json');
+    const meta = existsSync(side) ? JSON.parse(readFileSync(side, 'utf8')) : {};
+    await installServer(readFileSync(file), meta.serverHash ?? null, { rulesetId: rid, origin: 'local', attestation: meta.publisher ? { publisher: meta.publisher, sig: meta.sig } : null });
+  }
+  // A title opted in without a file: run what was held from an earlier run until peers say otherwise.
+  for (const [rid, file] of Object.entries(gauntletServers)) if (!file && !serverCurrent.has(rid)) { const held = [...servers.values()].find((e) => e.rulesetId === rid); if (held) makeCurrent(held); }
+  /** For every title opted in without a file, the bundle peers advertise (heartbeat `servers`): the hash most
+   *  peers name (ties by hash) is the one to hold and run, fetched from a peer that serves it and admitted by
+   *  installServer. A hash whose bytes were refused is never asked for again; one refused for trust is retried
+   *  after a minute (a build activates, a chain read recovers); a peer that served wrong bytes is just skipped. */
+  const hydrateServers = async () => {
+    for (const [rid, file] of Object.entries(gauntletServers)) {
+      if (file) continue;
+      const votes = new Map(); // serverHash → peers advertising it
+      for (const b of heartbeats.values()) { const hsh = b.servers?.[rid]; if (b.nodeId !== nodeId && b.addr && /^[0-9a-f]{64}$/.test(hsh ?? '')) votes.set(hsh, [...(votes.get(hsh) ?? []), b]); }
+      if (!votes.size) continue;
+      const [want, peers] = [...votes.entries()].sort((a, b) => b[1].length - a[1].length || (a[0] < b[0] ? -1 : 1))[0];
+      if (serverCurrent.get(rid)?.hash === want) continue;
+      if (servers.has(want)) { makeCurrent(servers.get(want)); log(`server ${rid} @ ${want.slice(0, 12)} current (held)`); emit('server', { rulesetId: rid, serverHash: want, current: true, origin: servers.get(want).origin, held: true }); continue; }
+      const r = serversRefused.get(want);
+      if (r && Date.now() < r.until) continue;
+      for (const p of peers.slice(0, 3)) {
+        try {
+          const res = await fetch(`${p.addr}/server/${encodeURIComponent(rid)}?build=${want}`, { signal: AbortSignal.timeout(120_000) });
+          if (!res.ok) continue;
+          const bytes = Buffer.from(await res.arrayBuffer());
+          if (bytes.length > MAX_BUNDLE_BYTES) continue;
+          const att = res.headers.get('x-build-publisher') ? { publisher: res.headers.get('x-build-publisher'), sig: res.headers.get('x-build-sig') } : null;
+          await installServer(bytes, want, { rulesetId: rid, origin: 'peer', attestation: att });
+          serversRefused.delete(want);
+          break;
+        } catch (e) {
+          log(`server ${rid} @ ${want.slice(0, 12)} from ${p.addr}: ${e.message}`);
+          if (/hash mismatch|not a gzip/.test(e.message)) continue; // that peer's bytes, not the bundle's: try another
+          serversRefused.set(want, { reason: e.message, until: e.permanent ? Infinity : Date.now() + SERVER_RETRY_MS });
+          break;
+        }
+      }
+    }
+  };
+  const serverStatus = () => ({
+    optIns: gauntletServers,
+    current: Object.fromEntries([...serverCurrent].map(([rid, e]) => [rid, { serverHash: e.hash, origin: e.origin, publisher: e.publisher, bytes: e.bytes, files: e.files, entry: e.manifest.entry, builtAt: e.manifest.builtAt ?? null, source: e.manifest.source ?? null }])),
+    held: [...servers.values()].map((e) => ({ rulesetId: e.rulesetId, serverHash: e.hash, origin: e.origin })),
+    refused: Object.fromEntries([...serversRefused].map(([hsh, r]) => [hsh, r.reason])),
+  });
+
   const registry = erc6699 && !offline ? {
     configured: true,
     readAgent: (tokenId, block) => chain.agentAt(tokenId, block),
@@ -449,7 +557,7 @@ export async function createNode({
   let wsAddr = wsAddrIn;        // the relay this node fronts; a relay tunnel sets it live
   // The port the relay tunnel fronts: the gauntlet gateway when this node runs one on its own port
   // (it forwards everything else to the title relay on relayPort), else the title relay itself.
-  const runsGateway = Object.keys(gauntlets).length > 0 || serviceBundles.length > 0;
+  const runsGateway = Object.keys(gauntlets).length > 0 || Object.keys(gauntletServers).length > 0 || serviceBundles.length > 0;
   const relayFront = runsGateway && gauntletPort != null ? gauntletPort : relayPort;
   let lanAddr = null;           // what we listen on, kept for /health when a tunnel replaces addr
   const tunnels = { node: null, relay: null };
@@ -568,6 +676,8 @@ export async function createNode({
     // Titles whose match server THIS node runs (node/gauntlet.js). Placement puts these nodes first
     // for those titles: a gauntlet title drawn onto a node without its court is a match nobody can join.
     ...(Object.keys(gauntlets).length ? { gauntlets: Object.keys(gauntlets).sort() } : {}),
+    // Server bundles this node holds and runs (node/server-bundle.js), by title: a peer that opted in fetches the hash from GET /server/<id>?build=.
+    ...(serverCurrent.size ? { servers: Object.fromEntries([...serverCurrent].map(([rid, e]) => [rid, e.hash]).sort()) } : {}),
     // Publisher services this node runs (reachable at <wsAddr>/svc/<name>): how a game client finds its backend.
     ...(serviceBundles.length ? { services: serviceBundles.flatMap((b) => Object.keys(b.services).map((n) => `${b.prefix}.${n}`)).sort() } : {}),
     buildHashes: buildHashes(), manifests: manifests(), epoch: epochOf(Date.now()),
@@ -816,6 +926,7 @@ export async function createNode({
       await readMyBond().catch(() => {});
       await refreshTitleOwners();
       await hydrateMissing(currentSnapshot());
+      await hydrateServers();
       await refreshProfiles([...queue.values()].map((b) => b.playerId).concat(settlement.list().flatMap((d) => d.participants)));
       settlement.maybeFreeze();
       await mbook?.poll();
@@ -1153,7 +1264,7 @@ export async function createNode({
           sandbox: sandbox.status(), trust: { policy: titleTrust, publishers: trustedPublishers, titleRegistry: titleRegistry ?? null, relayKeys, courts: Object.keys(courts) }, registry: registry ? 'chain' : erc6699 ? 'offline' : 'unset',
           cabinet: { version: CABINET_VERSION }, // the copy this node serves at /; a cabinet loaded from elsewhere compares its own
           relay: relayFront ? relayStatus() : null, // the relay tunnel as a WebSocket client sees it: verified before it is advertised
-          wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, upnp: upnpCtl?.status() ?? null, gauntlet: gauntlet?.status() ?? null, guardian: (({ matches, reports, flagged }) => ({ matches, reports, flagged: flagged.length }))(guardianSummary()),
+          wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, upnp: upnpCtl?.status() ?? null, gauntlet: gauntlet?.status() ?? null, gauntletServers: Object.keys(gauntletServers).length || servers.size ? serverStatus() : null, guardian: (({ matches, reports, flagged }) => ({ matches, reports, flagged: flagged.length }))(guardianSummary()),
           directory: nodeDirectory ? { contract: nodeDirectory, seeds: chainSeeds.length, announcer: announcer?.status() ?? null } : null, startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt, stalls, chainTicksSkipped: chainSkipped,
           // reachable: a peer has pushed gossip to us in the last 30 s. null = no peers known, so nothing to conclude.
           inbound: { peers: [...inbound.values()].filter((t) => Date.now() - t < 30_000).length, lastAt: inbound.size ? new Date(Math.max(...inbound.values())).toISOString() : null, reachable: peersKnown.size ? [...inbound.values()].some((t) => Date.now() - t < 30_000) : null } });
@@ -1193,6 +1304,17 @@ export async function createNode({
           clockSkewS: +(((b.epoch - epochOf(now)) * EPOCH_MS) / 1000).toFixed(1),
           rulesets: Object.keys(b.buildHashes ?? {}), version: b.version ?? null, protocol: b.protocol ?? 1,
         })), incompatible: [...incompatible].map(([id, x]) => ({ nodeId: id, ...x })) });
+      }
+      // A title's server bundle, by hash (node/server-bundle.js): the gzipped archive, with the publisher attestation
+      // in headers as a ruleset's; ?manifest=1 answers with what is inside instead.
+      if (req.method === 'GET' && url.pathname.startsWith('/server/')) {
+        const rid = decodeURIComponent(url.pathname.slice(8));
+        const want = url.searchParams.get('build');
+        const e = want ? (servers.get(want)?.rulesetId === rid ? servers.get(want) : null) : serverCurrent.get(rid);
+        if (!e) return json(res, 404, { error: want ? 'server bundle not held' : 'no server bundle for this title' });
+        if (url.searchParams.get('manifest') === '1') return json(res, 200, { rulesetId: e.rulesetId, serverHash: e.hash, manifest: e.manifest, publisher: e.publisher, origin: e.origin, bytes: e.bytes, files: e.files });
+        res.writeHead(200, { 'content-type': 'application/gzip', 'x-build-hash': e.hash, ...(e.publisher ? { 'x-build-publisher': e.publisher, 'x-build-sig': e.sig } : {}), ...CORS });
+        return res.end(readFileSync(e.file));
       }
       if (req.method === 'GET' && url.pathname.startsWith('/ruleset/')) {
         const rid = decodeURIComponent(url.pathname.slice(9));
@@ -1578,7 +1700,7 @@ export async function createNode({
 
   return {
     nodeId, addr, port: actualPort, identity,
-    snapshot: currentSnapshot, matches: matchesNow, installRuleset, chain, settlement, matchBook: mbook,
+    snapshot: currentSnapshot, matches: matchesNow, installRuleset, installServer, servers: serverStatus, chain, settlement, matchBook: mbook,
     rulesets: () => buildHashes(), peers: () => heartbeats, inbound, operator, roles, region, startedAt,
     version, updater, restart, tunnels, upnp: upnpCtl, get wsAddr() { return wsAddr; }, get announcer() { return announcer; }, seeds: () => chainSeeds, seedChecks, admitSeed, sandbox, refused, incompatible, protocol: PROTOCOL_VERSION, peersKnown,
     get gauntlet() { return gauntlet; },

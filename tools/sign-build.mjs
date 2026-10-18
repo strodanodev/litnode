@@ -25,6 +25,18 @@ const keyFile = args.includes('--key') ? args[args.indexOf('--key') + 1] : (proc
 if (!file) { console.error('usage: node tools/sign-build.mjs rulesets/<id>.js [--key file]'); process.exit(2); }
 if (!existsSync(keyFile)) { console.error(`no key at ${keyFile}`); process.exit(1); }
 const key = JSON.parse(readFileSync(keyFile, 'utf8'));
+// A server bundle (servers/<id>.server.tgz, node/server-bundle.js) is signed the same way over its serverHash:
+// the attestation is { rulesetId, buildHash }, and the hash's domain says which kind of artifact it names.
+if (file.endsWith('.tgz')) {
+  const { openBundle } = await import('../node/server-bundle.js');
+  const { hash, manifest } = openBundle(readFileSync(file));
+  const side = file.replace(/\.tgz$/, '.json');
+  const meta = existsSync(side) ? JSON.parse(readFileSync(side, 'utf8')) : {};
+  const sig = await sign('build', { rulesetId: manifest.rulesetId, buildHash: hash }, key.privateKey);
+  writeFileSync(side, JSON.stringify({ ...meta, kind: 'server', rulesetId: manifest.rulesetId, serverHash: hash, publisher: key.publicKey, sig, signedAt: new Date().toISOString() }, null, 2) + '\n');
+  console.log(`${side}: ${manifest.rulesetId} server @ ${hash.slice(0, 12)}… signed by ${key.publicKey.slice(0, 12)}…`);
+  process.exit(0);
+}
 const source = readFileSync(file, 'utf8');
 const buildHash = h('ruleset', source);
 const side = file.replace(/\.js$/, '.json');
