@@ -3,6 +3,26 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.11.27] — 2026-10-18 — a relay tunnel that stays dead is restarted on a fresh hostname
+
+### Fixed
+- **A relay whose quick-tunnel name died is restarted, not watched forever** (`node/litnode.js`). On 17 Oct at
+  20:24Z the desktop's relay stopped answering through its Cloudflare quick tunnel: the name no longer existed at
+  Cloudflare, while cloudflared kept running and reconnecting. The node did the right first thing —
+  three misses in a row withdrew `wsAddr` from the heartbeat and NodeDirectory — and then checked the same dead
+  name once a minute for 18 hours. No other bonded node advertises a relay, so Agent Fighter's client found
+  nothing in the directory and every launch said SERVER OFFLINE until the next afternoon. The node tunnel has had
+  the cure since m16 advertised a dead name on 7 Oct (its outside check restarts cloudflared after three misses);
+  the relay check only rotated a hostname that had never verified, never one that had been up. Now six misses in
+  a row (three past the withdrawal) restart the relay's cloudflared as well: a quick tunnel comes back on a fresh
+  name, verified and announced like any new one, and `/health.relay.rotations` counts it. A name that only
+  blinked answers again before that and is kept — one did for 25 minutes on 17 Oct.
+- **The dashboard's tunnel line said "relay up at …" on a withdrawal** (`node/tui.js`): the `tunnel` event was
+  rendered by whether it carried a URL, not by its state. It now says verifying, up, stopped answering, or
+  restarting cloudflared.
+  Test: `demo/tunnel.test.mjs` (a relay that stays dead is withdrawn after three misses, its cloudflared
+  restarted after six, and the fresh hostname verified and advertised).
+
 ## [0.11.26] — 2026-10-09 — a rate-limited RPC is paused, not retried; the chain half of a tick no longer piles up
 
 ### Fixed

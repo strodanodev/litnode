@@ -47,7 +47,17 @@ export function formatEvent(ev, color = true) {
     case 'revoked': return `${tag(G.bad, 'revoked', c.yellow)} key ${hash(ev.playerId, 12)} revoked by its owner ${hash(ev.owner, 10)} — queue entries refused from now`;
     case 'announced': return `${tag(G.stake, 'announce', c.magenta)} ${P(c.white, ev.url)}${ev.wsAddr ? ` + ${ev.wsAddr}` : ''} on NodeDirectory  tx ${hash(ev.tx, 14)}`;
     case 'upnp': return ev.mapped?.length ? `${tag(G.ruleset, 'upnp', c.magenta)} ${ev.gateway} forwards ${ev.mapped.map((m) => m.external).join(', ')} · public IP ${ev.publicIp}${ev.cgnat ? P(c.red, ' — CGNAT: unreachable from the internet anyway') : ''}` : `${tag(G.bad, 'upnp', c.yellow)} ${ev.lastError ?? 'no mapping'}${ev.cgnat ? P(c.red, ' — CGNAT') : ''}`;
-    case 'tunnel': return `${tag(G.ruleset, 'tunnel', c.magenta)} ${ev.which} ${ev.url ? `up at ${P(c.white, ev.url)} — in the next heartbeat` : P(c.red, 'down (falling back to the LAN address until it returns)')}`;
+    case 'tunnel': {
+      // By state, not by whether a URL came along: a withdrawn relay used to print as "relay up at …" (17 Oct 2026).
+      const s = ev.state ?? (ev.url ? 'up' : 'down');
+      const line = !ev.url ? P(c.red, `down (${ev.which === 'relay' ? 'no relay advertised' : 'falling back to the LAN address'} until it returns)`)
+        : s === 'up' ? `up at ${P(c.white, ev.url)} — in the next heartbeat`
+        : s === 'verifying' ? `${P(c.white, ev.url)} — checking it answers from outside before advertising it`
+        : s === 'down' ? P(c.red, `${ev.url} stopped answering — withdrawn until it does`)
+        : s === 'rotating' || s === 'unreachable' || s === 'lost' ? P(c.yellow, `${ev.url} ${s === 'unreachable' ? 'never answered' : s === 'lost' ? 'stopped answering from outside' : 'stays dead'} — restarting cloudflared for a fresh hostname`)
+        : `${s} ${P(c.white, ev.url)}`;
+      return `${tag(G.ruleset, 'tunnel', c.magenta)} ${ev.which} ${line}`;
+    }
     case 'update': return `${tag(G.ruleset, 'update', c.yellow)} ${ev.latest} is available (running ${ev.version}) — press u to update and restart`;
     case 'restart': return `${tag(G.ruleset, 'restart', c.yellow)} restarting to run the new build`;
     case 'refused': return `${tag(G.bad, 'refused', c.red)} ${ev.what}${ev.matchId ? ` ${ev.matchId}` : ''}: ${ev.reason}`;

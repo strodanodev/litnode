@@ -498,8 +498,14 @@ export async function createNode({
   // relay process behind relayPort is alive. A directory entry that points at a dead relay is worse than
   // none: every client that trusts it says "server offline". Now: verify before advertising, keep checking,
   // and withdraw (advertise/announce no wsAddr) when it stops answering.
-  const RELAY_VERIFY_MS = relayProbe ? 200 : 5000, RELAY_GIVE_UP_MS = relayProbe ? 3000 : 5 * 60_000, RELAY_WATCH_MS = relayProbe ? 500 : 60_000, RELAY_FAILS = 3;
-  const relay = { url: null, state: 'off', checkedAt: null, ms: null, lastError: null, fails: 0 }; // state: off | verifying | up | down | unreachable
+  // Withdrawn is not mended. A quick tunnel whose name Cloudflare dropped never answers on that name again
+  // (cloudflared keeps running, reconnecting to an edge that no longer routes it), and the desktop checked one
+  // dead name every minute for 18 hours while Agent Fighter said SERVER OFFLINE (17–18 Oct 2026): the node
+  // tunnel's outside check restarts cloudflared in that case, the relay's only rotated a name that had never
+  // verified. Now RELAY_ROTATE_FAILS misses in a row restart it too — a quick tunnel comes back on a fresh name,
+  // verified and announced like any new one. A name that only blinked (25 min on 17 Oct) answers before that.
+  const RELAY_VERIFY_MS = relayProbe ? 200 : 5000, RELAY_GIVE_UP_MS = relayProbe ? 3000 : 5 * 60_000, RELAY_WATCH_MS = relayProbe ? 500 : 60_000, RELAY_FAILS = 3, RELAY_ROTATE_FAILS = 6;
+  const relay = { url: null, state: 'off', checkedAt: null, ms: null, lastError: null, fails: 0, rotations: 0 }; // state: off | verifying | up | down | unreachable; rotations: cloudflared restarts this check asked for
   const openWs = relayProbe ?? (async (u) => { const t0 = Date.now(); await new Promise((res, rej) => { const ws = new WebSocket(u); const t = setTimeout(() => { try { ws.close(); } catch { /* */ } rej(new Error('timeout')); }, 8000); ws.onopen = () => { clearTimeout(t); ws.close(); res(); }; ws.onerror = () => { clearTimeout(t); rej(new Error('websocket error')); }; }); return Date.now() - t0; });
   let relayTimer = null;
   const relayCheck = async () => {
@@ -511,6 +517,10 @@ export async function createNode({
     } catch (e) {
       relay.lastError = e.message; relay.checkedAt = Date.now(); relay.fails++;
       if (relay.state === 'up' && relay.fails >= RELAY_FAILS) { relay.state = 'down'; wsAddr = null; log(`relay: ${u} stopped answering (${e.message}) — withdrawing wsAddr from the heartbeat and the directory`); emit('tunnel', { which: 'relay', url: u, state: 'down' }); announceNow(); }
+      // Still dead after the withdrawal: restart cloudflared for a fresh hostname. The exit brings relayUrl(null)
+      // (this check stops), the supervisor's restart brings relayUrl(new) (verifying → up → announced). The miss
+      // count starts over so a kill that did not take is tried again, not waited on.
+      else if (relay.state === 'down' && relay.fails >= RELAY_ROTATE_FAILS && tunnels.relay) { const misses = relay.fails; relay.fails = 0; relay.rotations++; log(`relay: ${u} still not answering (${e.message}; ${misses} checks in a row) — restarting cloudflared for a fresh hostname`); emit('tunnel', { which: 'relay', url: u, state: 'rotating' }); tunnels.relay.rotate(); }
       else if (relay.state === 'verifying' && Date.now() - relay.since > RELAY_GIVE_UP_MS) { relay.state = 'unreachable'; log(`relay: ${u} never answered a WebSocket (${e.message}) — rotating the hostname`); emit('tunnel', { which: 'relay', url: u, state: 'unreachable' }); tunnels.relay?.rotate(); }
     }
   };
@@ -523,7 +533,7 @@ export async function createNode({
     relayTimer = setInterval(() => { void relayCheck().then(() => { if (relay.state === 'up' && relayTimer) { clearInterval(relayTimer); relayTimer = setInterval(() => void relayCheck(), RELAY_WATCH_MS); } }); }, RELAY_VERIFY_MS);
     void relayCheck();
   };
-  const relayStatus = () => ({ url: relay.url, port: relayFront, state: relay.state, checkedAt: relay.checkedAt ? new Date(relay.checkedAt).toISOString() : null, ms: relay.ms, lastError: relay.lastError });
+  const relayStatus = () => ({ url: relay.url, port: relayFront, state: relay.state, checkedAt: relay.checkedAt ? new Date(relay.checkedAt).toISOString() : null, ms: relay.ms, lastError: relay.lastError, rotations: relay.rotations });
   const announceSend = () => {
     if (!announcer || !announce) return;
     // Only a node with a public https address is worth announcing (a seed

@@ -118,4 +118,27 @@ test('tunnel: an advertised URL that stops answering from outside is dropped and
   assert.ok(await until(async () => (await addrOf()).startsWith('https://'), 15_000), 'the restarted tunnel is verified and advertised again');
 });
 
+test('tunnel: a relay that stays dead is withdrawn, then its cloudflared restarted, and the fresh hostname verified and advertised', { timeout: 60_000 }, async (t) => {
+  const tmp3 = mkdtempSync(join(tmpdir(), 'litnode-relay-rotate-'));
+  t.after(() => rmSync(tmp3, { recursive: true, force: true }));
+  // the name dies at Cloudflare: cloudflared keeps running, nothing opens through the hostname (the desktop,
+  // 17–18 Oct 2026: 18 hours of SERVER OFFLINE while the same dead name was checked once a minute)
+  let relayAlive = true;
+  const relayProbe = async () => { if (!relayAlive) throw new Error('websocket error'); return 5; };
+  const a = await createNode({ dataDir: join(tmp3, 'a'), offline: true, heartbeatMs: 200, operator: 'a', roles: ['mesh', 'host'], tunnel: 'quick', relayPort: 8477, tunnelBin: bin, tunnelProbe: async () => true, relayProbe, updates: false });
+  t.after(() => a.stop());
+  const health = async () => (await fetch(`${a.addr}/health`)).json();
+  assert.ok(await until(async () => (await health()).wsAddr === 'wss://fake-8477-g0.trycloudflare.com', 10_000), 'the relay is verified and advertised');
+  relayAlive = false;
+  assert.ok(await until(async () => (await health()).relay.state === 'down', 10_000), 'three misses: withdrawn');
+  assert.equal(a.tunnels.relay.status().restarts, 0, 'withdrawn first, cloudflared left alone');
+  assert.equal((await health()).relay.rotations, 0);
+  process.env.FAKE_GEN = '1'; // the restarted stand-in announces a new name, as a quick tunnel does
+  assert.ok(await until(() => a.tunnels.relay.status().restarts >= 1, 15_000), 'six misses: cloudflared restarted');
+  assert.equal((await health()).relay.rotations, 1, 'the restart is counted on /health');
+  relayAlive = true;
+  assert.ok(await until(async () => { const h = await health(); return h.relay.state === 'up' && h.wsAddr === 'wss://fake-8477-g1.trycloudflare.com'; }, 20_000), 'the fresh hostname is verified and advertised');
+  delete process.env.FAKE_GEN;
+});
+
 test('cleanup', () => { rmSync(tmp, { recursive: true, force: true }); });
