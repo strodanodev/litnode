@@ -1,10 +1,11 @@
 /** Season Zero reward points (protocol/rewards.js, protocol/rewards-chain.js,
  *  docs/REWARDS.md): the gate opens at minActive operators and pauses below
- *  it; emission, gas-first refunds and the split are exact to the wei and the
- *  books always balance; quality weights, caps, reliability and forfeits do
- *  what the rules say; the fold is order-independent; the chain side decodes
- *  every event, splits timed-out log requests, caches incrementally; and the
- *  real Liteforge history folds to the facts the contracts report.
+ *  it; emission and the split are exact to the wei (gas is GasRefund's to pay,
+ *  not the pool's) and the books always balance; quality weights, caps,
+ *  reliability and forfeits do what the rules say; the fold is
+ *  order-independent; the chain side decodes every event, splits timed-out log
+ *  requests, waits a 429 out, checkpoints the scan by segment; and the real
+ *  Liteforge history folds to the facts the contracts report.
  *    node --test demo/rewards.test.mjs */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -136,18 +137,15 @@ test('rewards: emission is pool × ln2/(180·24) × (1 + 2√(Q̄/400)), exact t
   balanced(r);
 });
 
-test('rewards: gas is refunded first, then host 35 · witness 10 × 3 · publisher 20 · guardian 15', () => {
-  const gas = { commit: 3n * 10n ** 12n, settle: 2n * 10n ** 12n, attest: 10n ** 12n, finalize: 10n ** 12n };
-  const c = tenActive(world(10)).match(1, T0 + 600, { gas });
+test('rewards: a match splits host 35 · witness 10 × 3 · publisher 20 · guardian 15 — and the host, which finalizes, collects the guardian share: 50 in all', () => {
+  const c = tenActive(world(10)).match(1, T0 + 600);
   const r = run(c, { quality: { diversityOpponents: 1 } });
-  const alloc = r.totals.released;
-  const gasTotal = gas.commit + gas.settle + 3n * gas.attest + gas.finalize;
-  const profit = alloc - gasTotal, cut = (bps) => profit * BigInt(bps) / 10_000n;
+  const alloc = r.totals.released, cut = (bps) => alloc * BigInt(bps) / 10_000n;
   const row = (i) => r.operators.find((o) => o.address === operator(i));
-  assert.equal(row(0).gas, gas.commit + gas.settle + gas.finalize, 'the host sent commit, settle and finalize');
   assert.equal(row(0).host, cut(3500));
   assert.equal(row(0).guardian, cut(1500), 'the host finalized it, through its delegate');
-  for (const w of [1, 2, 3]) { assert.equal(row(w).gas, gas.attest); assert.equal(row(w).witness, cut(1000)); }
+  assert.equal(row(0).total, cut(5000), 'so the host takes half of the match');
+  for (const w of [1, 2, 3]) assert.equal(row(w).witness, cut(1000));
   assert.equal(r.publishers[0].address, PUBLISHER);
   assert.equal(r.publishers[0].total, cut(2000));
   assert.equal(r.publishers[0].matches, 1);
@@ -155,16 +153,14 @@ test('rewards: gas is refunded first, then host 35 · witness 10 × 3 · publish
   balanced(r);
 });
 
-test('rewards: when the allocation cannot cover gas, refunds are prorated and nobody profits', () => {
+test('rewards: gas spent on chain changes nothing — GasRefund pays it back, the pool does not', () => {
   const gas = { commit: 10n ** 18n, settle: 10n ** 18n, attest: 10n ** 18n, finalize: 10n ** 18n };
-  const c = tenActive(world(10)).match(1, T0 + 600, { gas });
-  const r = run(c, { quality: { diversityOpponents: 1 } });
-  assert.ok(r.totals.released > 0n && r.totals.released < 6n * 10n ** 18n);
-  assert.ok(r.operators.every((o) => o.host === 0n && o.witness === 0n && o.guardian === 0n));
-  assert.equal(r.publishers.length, 0);
-  const host = r.operators.find((o) => o.address === operator(0)).gas, witness = r.operators.find((o) => o.address === operator(1)).gas;
-  assert.ok(host > 2n * witness && host <= 3n * witness + 3n, 'the host sent 3 of the 6 gas units');
-  balanced(r);
+  const plain = run(tenActive(world(10)).match(1, T0 + 600), { quality: { diversityOpponents: 1 } });
+  const costly = run(tenActive(world(10)).match(1, T0 + 600, { gas }), { quality: { diversityOpponents: 1 } });
+  assert.deepEqual(costly, plain, 'the same report whatever the receipts say');
+  assert.ok(!('gas' in plain.operators[0]), 'no gas column');
+  assert.ok(plain.totals.paid > 0n);
+  balanced(costly);
 });
 
 // ------------------------------------------------------------------ what counts, and how much
@@ -272,6 +268,16 @@ test('rewards: a lone dissent on a voided match forfeits the week and counts two
   assert.deepEqual(waived.forfeits, []);
 });
 
+test('rewards: the lone-dissent forfeit is the week the match voided, not the week of the attest', () => {
+  const c = tenActive(world(10, 8));
+  c.match(1, T0 + 600, { players: [0, 1] });                                                       // pays operator 1 as a witness in week W
+  c.match(2, T0 + 7 * DAY - 200, { players: [2, 3], agree: [false, true, true], status: 'void' }); // dissent Sunday 23:58Z, void Monday 00:03Z
+  const r = run(c, {}, T0 + 8 * DAY);
+  assert.deepEqual(r.forfeits, [`${operator(1)}:${weekOf(T0 + 7 * DAY)}`], 'the new week is forfeited');
+  assert.ok(r.operators.find((o) => o.address === operator(1)).total > 0n, 'the week before stands');
+  balanced(r);
+});
+
 test('rewards: a slashed node’s operator forfeits that week', () => {
   const c = tenActive(world(10)).match(1, T0 + 600).slash(2, T0 + 3 * DAY);
   const r = run(c, {}, T0 + 4 * DAY);
@@ -337,13 +343,14 @@ test('rewards chain: every event the fold reads decodes from its raw log', () =>
 });
 
 /** A fake Liteforge: logs by block, receipts by tx, and eth_getLogs that times out over `limit` blocks. */
-function fakeRpc({ logs = [], head = 10_000, limit = 1000, batches = true } = {}) {
+function fakeRpc({ logs = [], head = 10_000, limit = 1000, batches = true, failAt = 0 } = {}) {
   const calls = { getLogs: [], batch: 0 };
   const answer = ({ id, method, params }) => {
     if (method === 'eth_blockNumber') return { id, result: '0x' + head.toString(16) };
     if (method === 'eth_getLogs') {
       const from = parseInt(params[0].fromBlock, 16), to = parseInt(params[0].toBlock, 16);
       calls.getLogs.push([from, to]);
+      if (failAt && to >= failAt) return { id, error: { code: -32000, message: 'boom' } };
       if (to - from + 1 > limit) return { id, error: { code: -32002, message: 'request timed out' } };
       return { id, result: logs.filter((l) => l.block >= from && l.block <= to).map((l) => ({ address: l.address, blockNumber: '0x' + l.block.toString(16), logIndex: '0x0', blockTimestamp: '0x' + (T0 + l.block).toString(16), transactionHash: l.tx, topics: l.topics, data: '0x', removed: false })) };
     }
@@ -388,6 +395,17 @@ test('rewards chain: a request that hangs is abandoned and retried; a 5xx is ret
   assert.equal(k, 1, 'a 4xx is final');
 });
 
+test('rewards chain: a 429 holds the client until the gateway’s Retry-After, then continues; too many in a row give up', async () => {
+  let n = 0;
+  const limited = async () => (++n <= 2 ? { ok: false, status: 429, headers: { get: (k) => (k === 'retry-after' ? '0.01' : null) } } : { ok: true, status: 200, json: async () => ({ result: '0x7' }) });
+  const client = rpcClient('http://rpc.test', { fetchImpl: limited, delayMs: 1 });
+  assert.equal(await client.call('eth_blockNumber', []), '0x7');
+  assert.equal(n, 3); assert.equal(client.stats.rateLimits, 2);
+  let k = 0;
+  await assert.rejects(rpcClient('http://rpc.test', { fetchImpl: async () => (k++, { ok: false, status: 429 }), delayMs: 1, limitTries: 3 }).call('eth_blockNumber', []), /429/);
+  assert.equal(k, 4, 'three holds, then the fourth refusal is final');
+});
+
 test('rewards chain: receipts are fetched in batches, one by one when the node refuses batches', async () => {
   for (const batches of [true, false]) {
     const { fetchImpl, calls } = fakeRpc({ logs: [logAt(200), logAt(300)], batches });
@@ -416,6 +434,19 @@ test('rewards chain: the cache grows by new blocks only, and resets for another 
   const reset = await syncRows(rpcClient('http://rpc.test', { fetchImpl: moved.fetchImpl, delayMs: 1 }), { contracts: other, chainId: 4441, cache: next, confirmations: 20 });
   assert.equal(reset.rows.length, 4, 'a new generation re-reads from its own deploy block');
   assert.ok(entriesFromRows(reset.rows, other).length === 4);
+});
+
+test('rewards chain: the scan is checkpointed by segment; a run that stops resumes from its last checkpoint', async () => {
+  const logs = [logAt(150), logAt(350), logAt(550), logAt(650)];
+  const broken = fakeRpc({ logs, head: 720, failAt: 600 });
+  const saved = [];
+  await assert.rejects(syncRows(rpcClient('http://rpc.test', { fetchImpl: broken.fetchImpl, delayMs: 1 }), { contracts: CONTRACTS, chainId: 4441, confirmations: 20, segment: 200, onCheckpoint: (c) => saved.push(c) }), /boom/);
+  assert.deepEqual(saved.map((c) => c.scannedTo), [299, 499], 'two segments landed before the third failed');
+  assert.equal(saved[1].rows.length, 2);
+  const fixed = fakeRpc({ logs, head: 720 });
+  const done = await syncRows(rpcClient('http://rpc.test', { fetchImpl: fixed.fetchImpl, delayMs: 1 }), { contracts: CONTRACTS, chainId: 4441, cache: saved[1], confirmations: 20, segment: 200 });
+  assert.equal(done.scannedTo, 700); assert.equal(done.added, 2); assert.equal(done.rows.length, 4);
+  assert.ok(fixed.calls.getLogs.every(([a]) => a >= 500), 'the rerun began after the checkpoint');
 });
 
 // ------------------------------------------------------------------ the real Liteforge history

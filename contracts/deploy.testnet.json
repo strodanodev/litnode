@@ -85,7 +85,7 @@
       "pool": "zkLTC in the rewards treasury 0xeA09E9B9Acf53462dC4490c9174fdB41B3f62eF2 (26 Sep 2026). Raise it when the litVM allocation lands.",
       "gate": "User decision 27 Sep 2026: rewards run only while 10+ are active and pause below 10. Active = did on-chain work (hosted, attested, finalized, proposed an epoch) in the last 24 h, counted per operator wallet so one person cannot open the gate with ten machines. countBy: \"node\" counts machines instead.",
       "seasonStart": "null = the hour of the first finalized ranked match; set an ISO time to start the season there.",
-      "split": "bps of what is left after each duty's own gas is refunded; witness is per agreeing seat (3 seats).",
+      "split": "bps of each match's allocation; witness is per agreeing seat (3 seats). Gas is not refunded from the pool: GasRefund pays it on chain. The guardian share goes to escalation voters who sided with the result, else to whoever finalized — the host in practice (it sends finalize first), so the host collects 50 until a dispute escalates.",
       "allowlist": "null = every bonded operator earns; a list of operator wallets restricts earning (and the gate count) to them.",
       "waivers": "matchIds whose lone dissent was a genuine report (e.g. a determinism bug), exempt from the lone-dissent forfeit."
     }
