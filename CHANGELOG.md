@@ -3,31 +3,7 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
-
-### Changed
-- **Reward points no longer refund gas from the pool** (`protocol/rewards.js`, docs/REWARDS.md). Since 0.11.25
-  GasRefund pays a final match's gas back on chain; the fold still took each duty's receipt out of the hour's
-  release first, so an operator would have been paid for the same gas twice. The whole allocation now splits
-  host 35 · witness 10 × 3 · publisher 20 · guardian 15; the books still balance, and the `gas back` column is
-  gone from `npm run rewards`.
-- **The docs say who really gets the guardian share.** It goes to the escalation voters who sided with the
-  result, else to whoever finalized — and the node sends finalize from the host first (each seat 20 s × seat
-  later), so until a dispute escalates the host collects 50 % of its matches, not 35.
-
-### Fixed
-- **A lone dissent forfeits the week the match voided, not the week it attested** (`protocol/rewards.js`). A
-  dissent late on a Sunday whose match voided on Monday forfeited the week that was already over and kept the
-  new one.
-- **`npm run rewards` survives the public gateway** (`protocol/rewards-chain.js`, `tools/rewards.mjs`). On
-  19 Oct a sync of the 7.4 million blocks since the 27 Sep cache died at 30 % with HTTP 429 and threw the
-  2.2 million blocks it had read away: a 429 was final, and the cache was written only at the end. Now a 429
-  holds every request on that client until the gateway's Retry-After (else 1 s doubling to a minute; eight in
-  a row give up), the scan reads 200,000-block segments and writes the cache after each, and a run that stops
-  says where it got to; the next continues from there.
-  Tests: `demo/rewards.test.mjs` (the host's 50; gas spent on chain changes nothing; the forfeit week; a 429
-  is waited out; a scan interrupted mid-way resumes from its last checkpoint).
-## [Unreleased — server bundles] — 2026-10-19 — a gauntlet title's match server travels the mesh by hash
+## [0.11.28] — 2026-10-19 — server bundles: a gauntlet title's match server travels the mesh by hash; reward points no longer refund gas
 
 ### Added
 - **Server bundles** (`node/server-bundle.js`, `node/litnode.js`). A title whose match server is a process (Agent
@@ -60,6 +36,29 @@ follows [Keep a Changelog](https://keepachangelog.com/).
   Fighter checkout, the real tool packs the real server and a second node plays a match with the title's bots).
   Docs: `docs/OPERATORS.md` step 6, `docs/BRING-YOUR-BACKEND.md` §6a, `docs/SETTLEMENT-STANDARD.md` §7,
   `docs/HOST-A-NODE.md`.
+
+### Changed
+- **Reward points no longer refund gas from the pool** (`protocol/rewards.js`, docs/REWARDS.md). Since 0.11.25
+  GasRefund pays a final match's gas back on chain; the fold still took each duty's receipt out of the hour's
+  release first, so an operator would have been paid for the same gas twice. The whole allocation now splits
+  host 35 · witness 10 × 3 · publisher 20 · guardian 15; the books still balance, and the `gas back` column is
+  gone from `npm run rewards`.
+- **The docs say who really gets the guardian share.** It goes to the escalation voters who sided with the
+  result, else to whoever finalized — and the node sends finalize from the host first (each seat 20 s × seat
+  later), so until a dispute escalates the host collects 50 % of its matches, not 35.
+
+### Fixed
+- **A lone dissent forfeits the week the match voided, not the week it attested** (`protocol/rewards.js`). A
+  dissent late on a Sunday whose match voided on Monday forfeited the week that was already over and kept the
+  new one.
+- **`npm run rewards` survives the public gateway** (`protocol/rewards-chain.js`, `tools/rewards.mjs`). On
+  19 Oct a sync of the 7.4 million blocks since the 27 Sep cache died at 30 % with HTTP 429 and threw the
+  2.2 million blocks it had read away: a 429 was final, and the cache was written only at the end. Now a 429
+  holds every request on that client until the gateway's Retry-After (else 1 s doubling to a minute; eight in
+  a row give up), the scan reads 200,000-block segments and writes the cache after each, and a run that stops
+  says where it got to; the next continues from there.
+  Tests: `demo/rewards.test.mjs` (the host's 50; gas spent on chain changes nothing; the forfeit week; a 429
+  is waited out; a scan interrupted mid-way resumes from its last checkpoint).
 
 ## [0.11.27] — 2026-10-18 — a relay tunnel that stays dead is restarted on a fresh hostname
 
