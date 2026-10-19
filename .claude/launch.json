@@ -9,6 +9,20 @@
       ],
       "port": 5180,
       "autoPort": true
+    },
+    {
+      "name": "control-plane-ui",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "E:/NPC/LIT/website",
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "3107"
+      ],
+      "port": 3107
     }
   ]
 }
