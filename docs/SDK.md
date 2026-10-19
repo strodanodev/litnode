@@ -96,7 +96,7 @@ attested game is on the ladder, labelled, and stays there.
 
 ```mermaid
 flowchart LR
-  i[init<br/>node.env + identity] --> s[start<br/>supervised, self-updating] --> b[bond<br/>1 tLITVM, your wallet] --> d[delegate<br/>hot key + a little gas] --> p[publish<br/>tunnel, proof, announce] --> e[enroll<br/>the nine-seat pool] --> w[host + witness<br/>commit, attest, settle] --> f[earn, phase 3<br/>per-match fee split]
+  i[init<br/>node.env + identity] --> s[start<br/>supervised, self-updating] --> b[bond<br/>1 tLITVM, your wallet] --> d[delegate<br/>hot key + a little gas] --> p[publish<br/>tunnel, proof, announce] --> e[enroll<br/>the nine-seat pool] --> w[host + witness<br/>commit, attest, settle] --> f[earn<br/>Season Zero points, not paid yet]
 ```
 
 Every step is one command, and the arcade's Nodes page shows the same
@@ -228,6 +228,23 @@ rotates cannot be baked into a build, so the client looks the node up at
 runtime (NodeDirectory, then `/svc`); Pickle Brawl's `web/litnodeBackend.ts`
 is about 150 lines to copy. Section 6c of BRING-YOUR-BACKEND.md.
 
+#### Any operator hosts it (server bundle)
+
+```bash
+npm run bundle:server -- gauntlets/my-game.server.json          # servers/my-game.server.tgz + .json, prints serverHash
+npm run publish:title -- set-build servers/my-game.server.json   # your publisher wallet registers the hash
+# node.env, your node:      GAUNTLET_SERVERS=my-game.v1=servers/my-game.server.tgz   (serves it to the mesh)
+# node.env, any operator:   GAUNTLET_SERVERS=my-game.v1   GAUNTLET_GATEWAY_PORT=8478
+```
+
+A server bundle is your gauntlet server as a hashed artifact that travels
+the mesh like your ruleset: an operator's node fetches it by hash, checks it
+against your registration on `TitleRegistry`, and runs it with no checkout
+and no install. It may not carry operator secrets, machine-local paths or
+an install step. Agent Fighter's match server ships this way
+(`gauntlets/agent-fighter.server.json`). Section 6a of
+BRING-YOUR-BACKEND.md; the operator's side is step 6 of OPERATORS.md.
+
 ### 4C. Build from scratch
 
 ```js
@@ -319,10 +336,10 @@ and slash sizes live in the contract and are read at start.
 
 ### 7. Said plainly
 
-- Testnet contracts, unaudited. No fees, rewards or credits reconcile on
-  chain yet. NodeStake's treasury is now a dedicated rewards treasury
-  (`0xeA09…2eF2`, 26 Sep), but no contract pays anyone from it; the
-  per-match fee split is phase 3.
+- Testnet contracts, unaudited. Nothing is paid on chain yet: Season Zero
+  rewards are points only ([REWARDS.md](REWARDS.md)), counted while 10 or
+  more operators are active. NodeStake's treasury is a dedicated rewards
+  treasury (`0xeA09…2eF2`, 26 Sep), but no contract pays anyone from it.
 - Ranked is casual-only until four operators with fresh bonded nodes carry
   the title. A single studio's node, however well configured, cannot make
   a result official on its own.

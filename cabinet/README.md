@@ -19,15 +19,18 @@ editable in the footer (localStorage). Installable as a PWA.
     #/, #/games     Arcade (landing page) — the arcade window loads the featured
                     title (first playable in config.js) and plays it in the page;
                     the strip below it switches titles; then the library
-    #/home          Home — profile card, rating chart, game library, leaderboard,
-                    characters, inventory (characters/inventory: coming soon)
+    #/home          Home — node status band, profile card, rating chart, game
+                    library, leaderboard, cards (cards: coming soon)
     #/game/<id>     one title — hero, about, controls, mesh info, leaderboard,
                     your record + match history
     #/leaderboards  top-3 rank cards (bracket badge, tier, rating / win rate /
                     streak) + full table per title, player search
-    #/characters    fighter roster with style filter (coming soon, greyed)
-    #/inventory     consumables, pets, tickets (coming soon, greyed)
-    #/node          this node, run-a-node steps, peers
+    #/cards         every fighter, item and pet as one NFT card collection,
+                    filter by kind / held (coming soon, greyed); the old
+                    #/characters and #/inventory links land here
+    #/node          status band, then tabs: Overview (setup checklist, this
+                    node) · Wallet & gas · Network · Activity · Run a node
+    #/build         developer docs: How it works · SDK (short form of docs/SDK.md)
 
 ## Find match
 
@@ -43,20 +46,21 @@ node is a directory, never an authority.
 
 The highlighted band at the top of Home (and the Nodes page) shows:
 
-    UPTIME    24 h ring + 10-minute strip, 7-day heatmap on the Nodes page —
+    UPTIME    24 h ring + 10-minute strip (7-day heatmap: Nodes › Activity) —
               observed by this dashboard while open (localStorage, per node
-              URL). "Process up" is the node's own figure (/health startedAt,
+              URL). "Up" is the node's own figure (/health startedAt,
               uptimeMs).
-    WORK      matches this node settled as host and witness co-signatures,
-              counted from the settled deltas. Real: any node with the same
-              deltas counts the same.
-    ON CHAIN  bond amount, operator wallet balance, operator address — read
-              live from litVM (chain.js, read-only, calldata built with the
-              node's own staking/keccak modules).
+    WORK      with the signed /fleet: the hot key's commits, attests, settles,
+              finals, backstops and anchors since start; always: matches this
+              node settled as host and witness co-signatures, counted from the
+              settled deltas (any node with the same deltas counts the same).
+    ON CHAIN  bond amount, operator wallet balance, hot-key gas (from /fleet),
+              operator address — read live from litVM (chain.js, read-only,
+              calldata built with the node's own staking/keccak modules).
 
-There is no reward figure. There is no rewards contract on litVM; nothing
-accrues; the bond is a cost of misbehaviour, not a yield. A number nothing
-can pay is a claim, so the cabinet does not show one.
+There is no reward figure. There is no rewards contract on litVM (Season
+Zero is points only, docs/REWARDS.md); the bond is collateral, not a yield.
+A number nothing can pay is a claim, so the cabinet does not show one.
 
 ## Deploy
 
@@ -106,9 +110,10 @@ allowlist is `afc.picklebrawl.live`.
                                 client-side from /deltas, same fold as derive.js)
                                 · level/XP from AF's real curve (win 60 / loss 20,
                                 xp_for_next = 80 + level·45, cap 40)
-    SAMPLE (until AF sync)      unlocked fighters · main · items · pets · tickets
-                                — everything labelled "sample" comes from
-                                roster.js INVENTORY_SAMPLE
+    SAMPLE (until AF sync)      which cards are held (fighters, items, pets) ·
+                                main · equipped pet · tickets — everything
+                                labelled "sample" comes from roster.js
+                                COLLECTION_SAMPLE
 
 Player identity: an ed25519 keypair from the node's own `protocol/keys.js`,
 kept in localStorage — the same `playerId` the node sees once games queue and

@@ -1,9 +1,9 @@
-/** Agent Fighter content the dashboard shows: fighters, items, pets.
- *  Names, styles and item lines are the real ones from the AF repo; the
- *  portraits are hotlinked from the hosted build. The player's OWN loadout
- *  (which fighters are unlocked, what is equipped) is account data that
- *  arrives with the Agent Fighter sync — until then INVENTORY_SAMPLE stands
- *  in and is labelled as a sample. */
+/** Agent Fighter content the dashboard shows as CARDS: every fighter, item
+ *  and pet is one NFT card in one collection. Names, styles and item lines
+ *  are the real ones from the AF repo; the portraits are hotlinked from the
+ *  hosted build. The player's OWN collection (which cards they hold, the
+ *  main fighter, the equipped pet) arrives with the Agent Fighter sync —
+ *  until then COLLECTION_SAMPLE stands in and is labelled as a sample. */
 
 export const AF_ASSETS = 'https://agent-fighter.vercel.app';
 export const portraitUrl = (id) => `${AF_ASSETS}/characters/${id}/sprites/_select.png`;
@@ -42,10 +42,10 @@ export const CHARACTERS = [
 
 /** Four consumable lines × three tiers (packages/core/src/items.ts). */
 export const ITEM_LINES = {
-  heal: { label: 'Patch', effect: 'restores health', color: '#5ee38a' },
-  damageMult: { label: 'Overclock', effect: 'damage up', color: '#ff5c6c' },
-  defenseMult: { label: 'Firewall', effect: 'damage taken down', color: '#33c6ff' },
-  meterGain: { label: 'Volt', effect: 'meter gain up', color: '#ffb84d' },
+  heal: { label: 'Patch', effect: 'restores health', color: '#5ee38a', glyph: '✚' },
+  damageMult: { label: 'Overclock', effect: 'damage up', color: '#ff5c6c', glyph: '▲' },
+  defenseMult: { label: 'Firewall', effect: 'damage taken down', color: '#33c6ff', glyph: '◆' },
+  meterGain: { label: 'Volt', effect: 'meter gain up', color: '#ffb84d', glyph: 'ϟ' },
 };
 export const ITEMS = [
   { id: 'patch1', name: 'PATCH COLA', line: 'heal', tier: 1 },
@@ -74,9 +74,9 @@ export const PETS = [
   { id: 'sparkbit', name: 'SPARKBIT', glyph: '⚡' },
 ];
 
-/** Stand-in loadout until the account sync. Everything here is labelled
+/** Stand-in collection until the account sync. Everything here is labelled
  *  "sample" in the UI. */
-export const INVENTORY_SAMPLE = {
+export const COLLECTION_SAMPLE = {
   unlocked: ['analog', 'eliza', '0xzero', 'nezuko', 't800', 'hermes'],
   main: 'analog',
   items: [{ id: 'patch2', qty: 3 }, { id: 'over1', qty: 2 }, { id: 'wall1', qty: 1 }, { id: 'volt3', qty: 1 }],
@@ -84,3 +84,18 @@ export const INVENTORY_SAMPLE = {
   equippedPet: 'sparkbit',
   tickets: 0,
 };
+
+export const KINDS = { fighter: 'Fighters', item: 'Items', pet: 'Pets' };
+
+/** The whole set as cards, one shape for every kind:
+ *  { kind, id, name, color, badge, img?, glyph?, stat, held (0 = not held, n = copies), flag ('main' | 'equipped' | null) }. */
+export function deck(c = COLLECTION_SAMPLE) {
+  return [
+    ...CHARACTERS.map((f) => ({ kind: 'fighter', id: f.id, name: f.name, color: STYLES[f.style]?.color ?? '#999', badge: STYLES[f.style]?.label ?? f.style,
+      img: portraitUrl(f.id), stat: `HP ${f.hp.toLocaleString()}`, held: c.unlocked.includes(f.id) ? 1 : 0, flag: f.id === c.main ? 'main' : null })),
+    ...ITEMS.map((it) => { const L = ITEM_LINES[it.line]; return { kind: 'item', id: it.id, name: it.name, color: L.color, badge: `${L.label} · T${it.tier}`,
+      glyph: L.glyph, stat: L.effect, held: c.items.find((o) => o.id === it.id)?.qty ?? 0, flag: null }; }),
+    ...PETS.map((p) => { const mine = c.pets.find((x) => x.id === p.id), R = mine ? RARITY[mine.rarity] : null; return { kind: 'pet', id: p.id, name: p.name, color: R?.color ?? '#6f8497',
+      badge: R?.label ?? 'Pet', glyph: p.glyph, stat: mine ? `ATK +${mine.aura.atk} · DEF +${mine.aura.def} · CRIT +${mine.aura.crit}` : Object.values(RARITY).map((r) => `${r.label} ${r.pct}%`).join(' · '), held: mine ? 1 : 0, flag: p.id === c.equippedPet ? 'equipped' : null }; }),
+  ];
+}

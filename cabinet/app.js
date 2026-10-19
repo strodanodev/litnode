@@ -1,14 +1,14 @@
 /** litnode arcade — gamer dashboard in front of a litnode.
  *
  *  No build step, no dependencies. Views: home (dashboard), games, one game,
- *  leaderboards, characters, inventory, node; plus a fullscreen play overlay.
+ *  leaderboards, cards, node, build; plus a fullscreen play overlay.
  *
  *  What is real vs. placeholder:
  *    real   — node status, leaderboards, per-player stats, match history and
  *             the rating curve (all derived from the node's settled deltas),
  *             the player key (the node's own ed25519 module).
- *    sample — which fighters are unlocked, items, pets, tickets: account data
- *             that arrives with the Agent Fighter sync. Labelled "sample". */
+ *    sample — which cards (fighters, items, pets) the player holds, tickets:
+ *             account data that arrives with the Agent Fighter sync. Labelled "sample". */
 import { loadPlayer as loadKeypair, createClient, IDENTITY_KEY } from './client.js';
 import { roomCodeFor } from './protocol/pairing.js';
 import { chainHead, ledgerBody, signLedger } from './protocol/log.js';
@@ -16,10 +16,10 @@ import { signSeat, NONCE_RE } from './protocol/challenge.js';
 import { applyDelta, sortDeltas } from './protocol/derive.js';
 import { levelOf as levelFromXp } from './protocol/progression.js';
 import { NODE_URL, GAMES as CONFIG_GAMES } from './config.js';
-import { CHARACTERS, STYLES, ITEMS, ITEM_LINES, PETS, RARITY, INVENTORY_SAMPLE, portraitUrl } from './roster.js';
+import { deck, KINDS, COLLECTION_SAMPLE } from './roster.js';
 import { identicon, fileToAvatar } from './avatar.js';
 import { paintBackdrop } from './bg.js';
-import { sample, loadHistory, slots, uptimePct, hoursOnline, fmtDuration, ring, strip, heatmap } from './uptime.js';
+import { sample, slots, uptimePct, fmtDuration, ring, strip, heatmap } from './uptime.js';
 import { readStake } from './chain.js';
 import * as wallet from './wallet.js';
 import * as air from './air.js';
@@ -263,61 +263,53 @@ function nodeWork() {
 }
 const fmtTok = (n) => (n == null ? '—' : n.toLocaleString(undefined, { maximumFractionDigits: 2 }));
 
-/** The highlighted band: uptime ring + 24 h strip · mesh work · on chain.
- *  No reward figure: there is no rewards contract, and a number nothing can
- *  pay is a claim (BUILD-SPEC honest zeroes). Work counters are real — they
- *  are counted from settled deltas any node can reproduce. */
+/** The status band (Home and Nodes): uptime · mesh work · on chain. No reward figure: nothing pays yet, and a
+ *  number nothing can pay is a claim (BUILD-SPEC honest zeroes). Work counters are real: the hot key's own sends
+ *  from the signed /fleet, and the settled deltas any node can reproduce. */
 function nodePanel({ compact = true } = {}) {
   const h = S.health;
   const u24 = uptimePct(S.uptime, 24 * 6), u7 = uptimePct(S.uptime, 7 * 24 * 6);
   const rw = nodeWork();
   const fresh = S.peers.filter((p) => p.fresh).length;
   const bonded = S.stake?.bonded ?? h?.bonded ?? null;
+  const purse = S.fleet?.chain?.matchBook?.purse ?? null;
+  const since = S.online && h.startedAt ? new Date(h.startedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
   const uptimeCol = `
     <div class="up-ring">${ring(u24.pct, { color: S.online ? '#7ef0a8' : '#ff7b8a', label: '24H UPTIME', sub: u24.observedSlots ? `${u24.observedSlots} × 10 min seen` : 'unobserved' })}</div>
     <div class="up-meta">
-      <div class="kv2"><span class="k">Process up</span><span class="v">${S.online ? fmtDuration(h.uptimeMs) : '—'}</span></div>
-      <div class="kv2"><span class="k">Since</span><span class="v">${S.online && h.startedAt ? new Date(h.startedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</span></div>
-      <div class="kv2"><span class="k">7 d observed</span><span class="v">${u7.pct == null ? '—' : `${u7.pct.toFixed(1)}%`}</span></div>
-      <div class="kv2"><span class="k">Mesh</span><span class="v">${S.online ? `${fresh}/${S.peers.length} fresh` : '—'}</span></div>
+      <div class="kv2"><span class="k">Up</span><span class="v" title="${since ? `since ${esc(since)}` : ''}">${S.online ? fmtDuration(h.uptimeMs) : '—'}</span></div>
+      <div class="kv2"><span class="k">7 days</span><span class="v">${u7.pct == null ? '—' : `${u7.pct.toFixed(1)}%`}</span></div>
+      <div class="kv2"><span class="k">Peers</span><span class="v">${S.online ? `${fresh}/${S.peers.length} fresh` : '—'}</span></div>
     </div>
     ${strip(slots(S.uptime, 24 * 6))}
-    <div class="legend"><i class="up"></i>up <i class="partial"></i>partial <i class="down"></i>down <i class="none"></i>dashboard closed</div>`;
+    <div class="legend"><i class="up"></i>up <i class="partial"></i>partial <i class="down"></i>down <i class="none"></i>unobserved</div>`;
   const sent = S.fleet?.chain?.matchBook?.sent ?? null;
-  const count = (what) => (sent ? sent.filter((x) => x.what === what && x.ok !== false).length : null);
-  const workCol = sent ? `
+  const count = (what) => sent.filter((x) => x.what === what && x.ok !== false).length;
+  const workCol = `<div class="col-k">Mesh work</div>${sent ? `
     <div class="work">
-      <div class="stat"><div class="k">Commits (host)</div><div class="v">${count('commit')}</div></div>
-      <div class="stat"><div class="k">Attests (witness)</div><div class="v">${count('attest')}</div></div>
+      <div class="stat"><div class="k">Commits · host</div><div class="v">${count('commit')}</div></div>
+      <div class="stat"><div class="k">Attests · witness</div><div class="v">${count('attest')}</div></div>
       <div class="stat"><div class="k">Settles · finals</div><div class="v">${count('settle')}<small>· ${count('finalize')}</small></div></div>
-      <div class="stat"><div class="k">Backstop · anchors</div><div class="v">${count('expire') + count('escalate') + count('resolve')}<small>· ${count('propose')}</small></div></div>
+      <div class="stat"><div class="k">Backstops · anchors</div><div class="v">${count('expire') + count('escalate') + count('resolve')}<small>· ${count('propose')}</small></div></div>
     </div>
-    <div class="source">Transactions this node's hot key sent since it started (${sent.length} in the ledger below) · epoch ${h.epoch}</div>` : `
+    <div class="source">Sent by the hot key since start. Settled matches: ${rw.settled} hosted, ${rw.cosigned} witnessed.</div>` : `
     <div class="work">
-      <div class="stat"><div class="k">Settled as host</div><div class="v">${rw.settled}</div></div>
+      <div class="stat"><div class="k">Hosted</div><div class="v">${rw.settled}</div></div>
       <div class="stat"><div class="k">Witnessed</div><div class="v">${rw.cosigned}</div></div>
       <div class="stat"><div class="k">Bond</div><div class="v">${bonded === null ? '—' : bonded ? 'Active' : 'None'}</div></div>
       <div class="stat"><div class="k">Roles</div><div class="v small">${S.online ? esc(h.roles.join(' · ')) : '—'}</div></div>
     </div>
-    <div class="source">${S.online ? `Last mesh work ${rw.latest ? new Date(rw.latest).toLocaleString() : 'none yet'} · epoch ${h.epoch}` : 'Start the node to count work.'}</div>`;
-  const rewardCol = `
-    <div class="reward">
-      <div class="k">On chain · ${esc(CHAIN.name)}</div>
-      <div class="big-tok"><span class="chrome">${S.stake?.amount != null ? fmtTok(S.stake.amount) : '—'}</span><span class="tok">${CHAIN.token} bonded</span></div>
-      <div class="breakdown">
-        <div><span>Hours observed up</span><span>${fmtTok(hoursOnline(S.uptime, 7 * 24 * 6))} h</span><span class="dim">7 d</span></div>
-        <div><span>Settled as host</span><span>${rw.settled}</span><span class="dim">deltas</span></div>
-        <div><span>Witnessed</span><span>${rw.cosigned}</span><span class="dim">co-signs</span></div>
-      </div>
-      <div class="onchain">
-        <div class="kv2"><span class="k">Bonded</span><span class="v">${S.stake?.amount != null ? `${fmtTok(S.stake.amount)} ${CHAIN.token}` : '—'}</span></div>
-        <div class="kv2"><span class="k">Wallet</span><span class="v">${S.stake?.balance != null ? `${fmtTok(S.stake.balance)} ${CHAIN.token}` : '—'}</span></div>
-        <div class="kv2"><span class="k">Operator</span><span class="v mono" title="${esc(S.stake?.operator ?? '')}">${S.stake?.bonded && S.stake.operator ? `${S.stake.operator.slice(0, 6)}…${S.stake.operator.slice(-4)}` : '—'}</span></div>
-      </div>
-      <span class="tag projected">no rewards contract yet — nothing accrues; the bond is a cost of misbehaviour, not a yield. Gas for every commit, settle and attest comes from the hot key below.</span>
-    </div>`;
-  return `<section class="panel hi s12"><div class="panel-h"><h3>Node uptime · mesh work</h3><span class="tag ${S.online ? 'live' : ''}">${S.online ? 'node online' : S.checked ? 'node offline' : 'connecting'}</span>${compact ? moreLink('#/node', 'node') : ''}</div>
-    <div class="panel-b hi-grid"><div>${uptimeCol}</div><div>${workCol}</div><div>${rewardCol}</div></div></section>`;
+    <div class="source">${S.online ? `Last work: ${rw.latest ? new Date(rw.latest).toLocaleString() : 'none yet'}.` : 'Start the node to count work.'}</div>`}`;
+  const chainCol = `<div class="col-k">On chain · ${esc(CHAIN.name)}</div>
+    <div class="big-tok"><span class="chrome">${S.stake?.amount != null ? fmtTok(S.stake.amount) : '—'}</span><span class="tok">${CHAIN.token} bonded</span></div>
+    <div class="onchain">
+      <div class="kv2"><span class="k">Wallet</span><span class="v">${S.stake?.balance != null ? `${fmtTok(S.stake.balance)} ${CHAIN.token}` : '—'}</span></div>
+      ${purse ? `<div class="kv2"><span class="k">Hot-key gas</span><span class="v${purse.low ? ' bad' : ''}">${purse.balance != null ? `${Number(purse.balance).toFixed(4)} zkLTC${purse.matchesLeft != null ? ` · ~${purse.matchesLeft} matches` : ''}` : '—'}</span></div>` : ''}
+      <div class="kv2"><span class="k">Operator</span><span class="v mono" title="${esc(S.stake?.operator ?? '')}">${S.stake?.bonded && S.stake.operator ? `${S.stake.operator.slice(0, 6)}…${S.stake.operator.slice(-4)}` : '—'}</span></div>
+    </div>
+    <div class="source">Nothing is paid yet: the bond is collateral, not yield.</div>`;
+  return `<section class="panel hi s12"><div class="panel-h"><h3>Node status</h3><span class="tag ${S.online ? 'live' : ''}">${S.online ? 'online' : S.checked ? 'offline' : 'connecting'}</span>${compact ? moreLink('#/node', 'details') : ''}</div>
+    <div class="panel-b hi-grid"><div>${uptimeCol}</div><div>${workCol}</div><div>${chainCol}</div></div></section>`;
 }
 
 // ═══════════════════════════════════════════════ pieces ══
@@ -340,14 +332,13 @@ const rankBadge = (n, color) => {
 };
 const TIERS = [[40, 'Pantheon'], [30, 'Titan'], [20, 'Olympian'], [10, 'Contender'], [1, 'Initiate']];
 const tierOf = (level) => TIERS.find(([min]) => level >= min)[1];
-const styleTag = (s) => `<span class="style" style="--sc:${STYLES[s]?.color ?? '#999'}">${esc(STYLES[s]?.label ?? s)}</span>`;
 // The hosted page is a front door: this browser talks to the mesh through a
 // node on THIS machine (https → http://localhost is allowed). No node → say
 // how to get one; the signed release is the download.
 const RELEASES = 'https://github.com/strodanodev/litnode/releases/latest';
 // docs/OPERATORS.md: the one step-by-step page for a new operator (install, wallet bonding, troubleshooting).
 const OPERATOR_GUIDE = 'https://github.com/strodanodev/litnode/blob/master/docs/OPERATORS.md';
-const nodeHint = () => (S.online ? '' : !S.checked ? '<div class="empty">Connecting to the node…</div>' : `<div class="empty">No node on this machine. The arcade reads the mesh through your own node — <a class="link" href="#/download">download the LITNODE Control Plane</a> (Windows), open it, reload. <a class="link" href="#/node">Details ›</a></div>`);
+const nodeHint = () => (S.online ? '' : !S.checked ? '<div class="empty">Connecting to the node…</div>' : `<div class="empty">No node on this machine. <a class="link" href="#/download">Download the Control Plane</a> (Windows), run it, reload. <a class="link" href="#/node">Details ›</a></div>`);
 
 // Universal login (docs/UNIVERSAL-LOGIN.md): AIR signs the player in, the
 // node gives the account a litVM proxy wallet + profile and binds this key.
@@ -444,9 +435,9 @@ function profilePanel() {
     </div>
     <div class="two">
       <div class="big"><div class="icon">◆</div><div><div class="k">Skill rating</div><div class="v">${rating}<small> ${row ? 'SR' : 'unrated'}</small></div></div></div>
-      <div class="big"><div class="icon">🎟</div><div><div class="k">Tickets</div><div class="v">${INVENTORY_SAMPLE.tickets}<small> sample</small></div></div></div>
+      <a class="big" href="#/cards"><div class="icon">▣</div><div><div class="k">Cards</div><div class="v">${DECK.filter((c) => c.held).length}<small> / ${DECK.length} sample</small></div></div></a>
     </div>
-    <div class="source">${S.online ? `Derived from ${t.matches} settled match${t.matches === 1 ? '' : 'es'} on the mesh. Account XP, tickets and loadout sync with Agent Fighter.` : 'Start a node to load your mesh record.'}</div>
+    <div class="source">${S.online ? `Derived from ${t.matches} settled match${t.matches === 1 ? '' : 'es'} on the mesh. Account XP and cards sync with Agent Fighter.` : 'Start a node to load your mesh record.'}</div>
   `, '', 'profile s4');
 }
 
@@ -517,33 +508,26 @@ let lbTab = PRIMARY.rulesetId;
 const lbTabs = () => `<div class="tabs">${GAMES.filter((g) => g.rulesetId).map((g) => `<button class="${g.rulesetId === lbTab ? 'active' : ''}" data-lb="${g.rulesetId}">${esc(g.title)}</button>`).join('')}</div>`;
 const leaderboardPanel = () => panel('Leaderboards', `${lbTabs()}<div style="margin-top:8px">${boardTable(lbTab, 8)}</div>`, moreLink('#/leaderboards'), 's5');
 
-const charCard = (c, { big = false } = {}) => {
-  const owned = INVENTORY_SAMPLE.unlocked.includes(c.id);
-  return `<a class="ch ${c.id === INVENTORY_SAMPLE.main ? 'main' : ''} ${owned ? '' : 'locked'}" href="#/characters" title="${esc(c.name)} · ${esc(STYLES[c.style]?.label ?? c.style)}" style="--sc:${STYLES[c.style]?.color ?? '#999'}">
-    <span class="st">${esc(STYLES[c.style]?.label ?? c.style)}</span>${owned ? '' : '<span class="lock">🔒</span>'}
-    <img src="${portraitUrl(c.id)}" alt="" loading="lazy" />
-    <div class="n">${esc(c.name)}</div>${big ? `<div class="hp">HP ${c.hp.toLocaleString()}${c.id === INVENTORY_SAMPLE.main ? ' · main' : ''}</div>` : ''}
-  </a>`;
-};
-function charactersPanel() {
-  const mine = CHARACTERS.filter((c) => INVENTORY_SAMPLE.unlocked.includes(c.id)).slice(0, 6);
-  return panel('Characters', `<div class="cgrid">${mine.map((c) => charCard(c)).join('')}</div><div class="source">${mine.length} of ${CHARACTERS.length} fighters unlocked · <span class="tag sample">sample</span></div>`, moreLink('#/characters', 'roster'), 's4 soon');
-}
-
-// Characters and inventory are not live yet: greyed (.soon), inert, "coming soon" on hover.
+// Cards are not live yet: greyed (.soon), inert, "coming soon" on hover. Every fighter, item and pet is one
+// card in one collection (roster.js deck); the sample stands in for the player's own until the account sync.
 const SOON_TAG = '<span class="tag soon-tag">coming soon</span>';
-
-const itemCard = (it, qty) => { const L = ITEM_LINES[it.line]; return `<div class="item ${qty ? 'owned' : 'none'}" style="--ic:${L.color}"><div class="ico">T${it.tier}</div><div><div class="n">${esc(it.name)}</div><div class="s">${esc(L.label)} · ${esc(L.effect)}</div></div><div class="q">${qty ? `×${qty}` : ''}</div></div>`; };
-const petCard = (p) => { const def = PETS.find((x) => x.id === p.id); const R = RARITY[p.rarity]; return `<div class="pet ${p.id === INVENTORY_SAMPLE.equippedPet ? 'eq' : ''}" style="--rc:${R.color}"><div class="g">${def.glyph}</div><div><div class="n">${esc(def.name)}${p.id === INVENTORY_SAMPLE.equippedPet ? ' · equipped' : ''}</div><div class="r">${R.label}</div><div class="aura">ATK +${p.aura.atk} · DEF +${p.aura.def} · CRIT +${p.aura.crit}</div></div></div>`; };
-function inventoryPanel() {
-  const items = INVENTORY_SAMPLE.items.map((o) => itemCard(ITEMS.find((i) => i.id === o.id), o.qty)).join('');
-  const pet = INVENTORY_SAMPLE.pets.find((p) => p.id === INVENTORY_SAMPLE.equippedPet);
-  return panel('Inventory', `<div class="igrid" style="grid-template-columns:1fr">${items}</div><div class="section-h"><h4>Pet</h4></div>${pet ? petCard(pet) : '<div class="empty">No pet equipped.</div>'}<div class="source"><span class="tag sample">sample</span> loadout until account sync</div>`, moreLink('#/inventory'), 's3 soon');
+const DECK = deck();
+const nftCard = (c) => `<article class="nft ${c.held ? '' : 'locked'}" style="--cc:${c.color}" title="${esc(c.name)} · ${esc(c.badge)}">
+    <div class="nft-top"><span>${c.kind}</span><span class="nft-badge">${esc(c.badge)}</span></div>
+    <div class="nft-art">${c.img ? `<img src="${esc(c.img)}" alt="" loading="lazy" />` : `<span class="nft-glyph">${c.glyph}</span>`}${c.held ? '' : '<span class="nft-lock">🔒</span>'}</div>
+    <div class="nft-name">${esc(c.name)}</div>
+    <div class="nft-stat">${esc(c.stat)}</div>
+    <div class="nft-foot"><span>${c.held > 1 ? `×${c.held}` : c.held ? 'held' : 'not held'}</span>${c.flag ? `<span class="nft-flag">${c.flag}</span>` : ''}</div>
+  </article>`;
+function cardsPanel() {
+  const held = DECK.filter((c) => c.held);
+  const lead = [...held.filter((c) => c.flag), ...held.filter((c) => !c.flag)].slice(0, 6);   // the main fighter and the equipped pet first
+  return panel('Cards', `<div class="deck sm">${lead.map(nftCard).join('')}</div><div class="source">${held.length} of ${DECK.length} cards held · <span class="tag sample">sample</span></div>`, moreLink('#/cards', 'collection'), 's7 soon');
 }
 
 // ═══════════════════════════════════════════════ views ══
 function renderHome() {
-  view('home').innerHTML = nodePanel() + profilePanel() + statsPanel() + gamesPanel() + leaderboardPanel() + charactersPanel() + inventoryPanel();
+  view('home').innerHTML = nodePanel() + profilePanel() + statsPanel() + gamesPanel() + leaderboardPanel() + cardsPanel();
 }
 const coverArt = (g) => g.cover
   ? `<img class="bgimg" src="${esc(g.cover)}" alt="${esc(g.title)} title screen" />${g.logo ? `<img class="logo" src="${esc(g.logo)}" alt="" />` : ''}`
@@ -733,23 +717,16 @@ function renderLeaderboards() {
     ${panel(g?.title ?? 'Leaderboard', `${lbTabs()}<div style="margin-top:8px">${boardTable(lbTab, 100, lbQuery)}</div>`)}`;
   const q = $('lb-q'); q.addEventListener('input', () => { lbQuery = q.value.trim(); const pos = q.selectionStart; renderLeaderboards(); const q2 = $('lb-q'); q2.focus(); q2.setSelectionRange(pos, pos); });
 }
-let styleFilter = 'all';
-function renderCharacters() {
-  const list = styleFilter === 'all' ? CHARACTERS : CHARACTERS.filter((c) => c.style === styleFilter);
-  view('characters').innerHTML = `<div class="page-h"><h1 class="chrome">Agents</h1><span class="dim">${CHARACTERS.length} fighters · ${INVENTORY_SAMPLE.unlocked.length} unlocked</span>${SOON_TAG}</div>
-    <div class="soon soon-page"><div class="chips" style="margin-bottom:14px"><button class="chip ${styleFilter === 'all' ? 'active' : ''}" data-style="all">All</button>${Object.entries(STYLES).map(([k, v]) => `<button class="chip ${styleFilter === k ? 'active' : ''}" data-style="${k}" style="${styleFilter === k ? `border-color:${v.color};color:${v.color}` : ''}">${v.label}</button>`).join('')}</div>
-    <div class="cgrid big">${list.map((c) => charCard(c, { big: true })).join('')}</div>
-    <div class="source">Portraits are served by the hosted Agent Fighter build. Which fighters you own, and your main, come from your account at sync time.</div></div>`;
-}
-function renderInventory() {
-  const byLine = Object.keys(ITEM_LINES).map((line) => `<div class="section-h"><h4>${ITEM_LINES[line].label} · ${ITEM_LINES[line].effect}</h4></div><div class="igrid">${ITEMS.filter((i) => i.line === line).map((it) => itemCard(it, INVENTORY_SAMPLE.items.find((o) => o.id === it.id)?.qty ?? 0)).join('')}</div>`).join('');
-  view('inventory').innerHTML = `<div class="page-h"><h1 class="chrome">Inventory</h1><span class="dim">loadout until account sync</span>${SOON_TAG}</div>
-    <div class="home soon soon-page">
-      ${panel('Consumables', byLine, '', 's6')}
-      <div class="s6" style="display:flex;flex-direction:column;gap:16px">
-        ${panel('Pets', `<div style="display:grid;gap:8px">${INVENTORY_SAMPLE.pets.map(petCard).join('')}</div><div class="source">Rarity odds: ${Object.values(RARITY).map((r) => `${r.label} ${r.pct}%`).join(' · ')}</div>`)}
-        ${panel('Tickets', `<div class="big"><div class="icon">🎟</div><div><div class="k">Non-transferable</div><div class="v">${INVENTORY_SAMPLE.tickets}</div></div></div><div class="source">Minted by winning a wager match. Redeemable for esports qualification, merch and vouchers.</div>`)}
-      </div>
+let cardKind = 'all', cardHeld = false;
+function renderCards() {
+  const list = DECK.filter((c) => (cardKind === 'all' || c.kind === cardKind) && (!cardHeld || c.held));
+  const tally = (k) => { const all = DECK.filter((c) => c.kind === k); return `${all.filter((c) => c.held).length}<small> / ${all.length}</small>`; };
+  view('cards').innerHTML = `<div class="page-h"><h1 class="chrome">Cards</h1><span class="dim">Every fighter, item and pet becomes an NFT card you own.</span>${SOON_TAG}</div>
+    <div class="soon soon-page">
+      <div class="stats4 deck-sum">${Object.entries(KINDS).map(([k, label]) => `<div class="stat"><div class="k">${label}</div><div class="v">${tally(k)}</div></div>`).join('')}<div class="stat"><div class="k">Tickets</div><div class="v">${COLLECTION_SAMPLE.tickets}</div></div></div>
+      <div class="chips deck-filter">${[['all', 'All'], ...Object.entries(KINDS)].map(([k, label]) => `<button class="chip ${cardKind === k ? 'active' : ''}" data-cards="${k}">${label}</button>`).join('')}<span class="spacer"></span><button class="chip ${cardHeld ? 'active' : ''}" data-cards-held>Held only</button></div>
+      <div class="deck">${list.map(nftCard).join('') || '<div class="empty">No cards here.</div>'}</div>
+      <div class="source">A sample collection until the Agent Fighter sync. Tickets are won in wager matches, cannot be transferred, and redeem for esports qualification, merch and vouchers.</div>
     </div>`;
 }
 const isLoopbackNode = () => /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(nodeUrl());
@@ -793,20 +770,20 @@ async function topUpConnect() {
 const Op = { account: null, info: null, busy: '', error: '', lastTx: null };
 const tok = (wei) => fmtTok(Number(wei / 10n ** 14n) / 10_000);
 function operatorPanel(h) {
-  if (!nodeops.available()) return '<div class="sub dim">Install a wallet (MetaMask) on litVM to bond this node, delegate its announcer or transfer it — or use the CLI: <span class="mono">npm run bond -- &lt;nodeId&gt;</span>.</div>';
+  if (!nodeops.available()) return '<div class="sub dim">Install a browser wallet (MetaMask) on litVM to bond, delegate or transfer this node. CLI: <span class="mono">npm run bond -- &lt;nodeId&gt;</span>.</div>';
   if (Op.busy) return `<div class="sub">${esc(Op.busy)}</div>`;
-  const err = Op.error ? `<div class="sub" style="color:var(--bad,#ff7b8a)">${esc(Op.error)}</div>` : '';
+  const err = Op.error ? `<div class="sub bad">${esc(Op.error)}</div>` : '';
   const tx = Op.lastTx ? `<div class="sub dim">last tx <span class="mono">${esc(Op.lastTx.slice(0, 14))}…</span>${CHAIN.explorer ? ` · <a class="link" target="_blank" rel="noopener" href="${esc(CHAIN.explorer)}/tx/${esc(Op.lastTx)}">explorer</a>` : ''}</div>` : '';
-  if (!Op.account) return `<div class="sub"><button class="btn sm" id="op-connect">Connect operator wallet</button> <span class="dim">the wallet that bonds this node; nothing is sent until you confirm</span></div>${err}`;
+  if (!Op.account) return `<div class="sub"><button class="btn sm" id="op-connect">Connect operator wallet</button> <span class="dim">nothing is sent until you confirm</span></div>${err}`;
   const i = Op.info; const me = Op.account;
   const mine = !!i?.bonded && i.operator === me;
   const ann = h.directory?.announcer?.address?.toLowerCase() ?? null;
   const rows = [
     `<dt>wallet</dt><dd class="mono">${esc(me)}${i?.balance != null ? ` · ${tok(i.balance)} tLITVM` : ''}${i?.gas != null ? ` · ${(Number(i.gas / 10n ** 12n) / 1e6).toFixed(4)} zkLTC` : ''}</dd>`,
-    i && i.gas === 0n ? `<dt>gas</dt><dd><span style="color:var(--red)">no zkLTC — nothing can be signed.</span> Get some at <a href="https://liteforge.hub.caldera.xyz" target="_blank" rel="noopener">liteforge.hub.caldera.xyz</a> (a bond is four small transactions; 0.005 is plenty), then come back.</dd>` : '',
+    i && i.gas === 0n ? `<dt>gas</dt><dd><span class="bad">no zkLTC: nothing can be signed.</span> Get 0.005 (plenty for a bond) at the <a class="link" href="${GAS_FAUCET}" target="_blank" rel="noopener">faucet</a>, then come back.</dd>` : '',
     `<dt>bond</dt><dd>${i ? (i.bonded ? `${tok(i.amount)} tLITVM by <span class="mono">${esc(i.operator.slice(0, 10))}…</span>${mine ? ' (you)' : ''}` : `none · minimum ${tok(i.minStake)} tLITVM`) : 'reading…'}</dd>`,
     ann ? `<dt>announcer</dt><dd class="mono">${esc(ann.slice(0, 10))}… ${i?.announcer === ann ? '<span class="dim">delegated</span>' : '<span class="dim">not delegated</span>'}</dd>` : '',
-    ann && i?.bonded ? `<dt>delegate</dt><dd class="mono">${i.delegate ? `${esc(i.delegate.slice(0, 10))}… <span class="dim">${i.delegate === ann ? 'the node’s hot key' : 'another key'}</span>` : '<span class="dim">not set — the node cannot commit, attest or propose</span>'}</dd>` : '',
+    ann && i?.bonded ? `<dt>delegate</dt><dd class="mono">${i.delegate ? `${esc(i.delegate.slice(0, 10))}… <span class="dim">${i.delegate === ann ? 'the node’s hot key' : 'another key'}</span>` : '<span class="dim">not set: the node cannot commit, attest or propose</span>'}</dd>` : '',
   ].join('');
   const acts = [
     i && !i.bonded ? '<button class="btn sm primary" id="op-bond">Bond this node</button>' : '',
@@ -837,19 +814,19 @@ async function opRun(what) {
 // ---- publisher actions (cabinet/air.js): the AIR account's proxy wallet on THIS node claims titles, adds or revokes builds, hands them over, and bonds the node.
 const Pub = { busy: '', error: '', lastTx: null };
 function publisherPanel(h) {
-  if (!air.configured()) return '<div class="sub dim">Universal login is not configured in this build; publish from the CLI: <span class="mono">npm run publish:title -- register rulesets/&lt;id&gt;.js</span>.</div>';
+  if (!air.configured()) return '<div class="sub dim">Universal login is off in this build. CLI: <span class="mono">npm run publish:title -- register rulesets/&lt;id&gt;.js</span>.</div>';
   if (Pub.busy) return `<div class="sub">${esc(Pub.busy)}</div>`;
-  const err = Pub.error ? `<div class="sub" style="color:var(--bad,#ff7b8a)">${esc(Pub.error)}</div>` : '';
+  const err = Pub.error ? `<div class="sub bad">${esc(Pub.error)}</div>` : '';
   const tx = Pub.lastTx ? `<div class="sub dim">last tx <span class="mono">${esc(Pub.lastTx.slice(0, 14))}…</span>${CHAIN.explorer ? ` · <a class="link" target="_blank" rel="noopener" href="${esc(CHAIN.explorer)}/tx/${esc(Pub.lastTx)}">explorer</a>` : ''}</div>` : '';
   const s = Ai.me.session;
-  if (!s?.address) return `<div class="sub"><button class="btn sm" id="pub-signin">Sign in with AIR</button> <span class="dim">your AIR account gets a litVM wallet on this node; it holds the titles you publish</span></div>${err}`;
-  if (s.custody !== 'here') return `<div class="sub dim">Your litVM wallet <span class="mono">${esc(s.address.slice(0, 10))}…</span> is held by another node. Open that node's cabinet to publish, or transfer the title to a wallet you control.</div>`;
-  if (!h.trust?.titleRegistry) return '<div class="sub dim">This node has no TitleRegistry configured (contracts/deployed.testnet.json); titles cannot be claimed on chain from here.</div>';
+  if (!s?.address) return `<div class="sub"><button class="btn sm" id="pub-signin">Sign in with AIR</button> <span class="dim">your AIR account gets a litVM wallet here to hold the titles you publish</span></div>${err}`;
+  if (s.custody !== 'here') return `<div class="sub dim">Your litVM wallet <span class="mono">${esc(s.address.slice(0, 10))}…</span> is held by another node: publish from that node's arcade, or transfer the title to a wallet you control.</div>`;
+  if (!h.trust?.titleRegistry) return '<div class="sub dim">No TitleRegistry on this node: titles cannot be claimed from here.</div>';
   const me = s.address.toLowerCase();
   const bondedByMe = h.bonded && S.stake?.operator?.toLowerCase() === me;
-  const bondLine = h.bonded === false ? `<div class="sub"><button class="btn sm primary" data-pub="bond">Bond this node from my AIR wallet</button> <span class="dim">approve + stake the minimum from <span class="mono">${esc(s.address.slice(0, 10))}…</span>, delegate the announcer; a title is listed only while its holder runs a bonded host</span></div>`
-    : bondedByMe ? '<div class="sub dim">This node is bonded from your AIR wallet: titles you hold here are listed in the arcade.</div>'
-    : h.bonded ? `<div class="sub dim">This node is bonded from another wallet${S.stake?.operator ? ` (<span class="mono">${esc(S.stake.operator.slice(0, 10))}…</span>)` : ''}: a title your AIR wallet holds is hosted here but not listed until a node bonded from your wallet hosts it.</div>` : '';
+  const bondLine = h.bonded === false ? `<div class="sub"><button class="btn sm primary" data-pub="bond">Bond this node from my AIR wallet</button> <span class="dim">stakes the minimum and delegates the announcer; a title is listed only while its holder runs a bonded host</span></div>`
+    : bondedByMe ? '<div class="sub dim">Bonded from your AIR wallet: titles you hold here are listed.</div>'
+    : h.bonded ? `<div class="sub dim">Bonded from another wallet${S.stake?.operator ? ` (<span class="mono">${esc(S.stake.operator.slice(0, 10))}…</span>)` : ''}: your titles are hosted here but listed only from a node bonded by your wallet.</div>` : '';
   const mine = S.titles.filter((t) => t.hosts?.includes(h.nodeId));
   const rows = mine.length ? mine.map((t) => {
     const owner = t.owner ? (t.owner === me ? '<b>you</b>' : `<span class="mono" title="${esc(t.owner)}">${esc(t.owner.slice(0, 10))}…</span>`) : '<span class="dim">unclaimed</span>';
@@ -862,8 +839,8 @@ function publisherPanel(h) {
       ].filter(Boolean).join(' ') : '';
     return `<tr><td>${esc(t.display?.title ?? t.rulesetId)} <span class="dim mono">${esc(t.rulesetId)}</span></td><td>${owner}</td><td>${t.published ? 'listed' : t.owner ? '<span class="dim">not listed</span>' : ''} ${build}</td><td>${acts}</td></tr>`;
   }).join('') : '';
-  const table = mine.length ? `<table><thead><tr><th>Title on this node</th><th>Holder</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="sub dim">This node hosts no titles. Add one to RULESETS in node.env (docs/HOST-YOUR-TITLE.md), restart, and claim it here.</div>';
-  return `<div class="sub">AIR <b>${esc(Ai.me.email ?? s.name ?? '')}</b> · litVM wallet <span class="mono" title="${esc(s.address)}">${esc(s.address.slice(0, 10))}…</span> · a title is an NFT this wallet holds; transferring it hands the title over</div>${bondLine}${table}${tx}${err}`;
+  const table = mine.length ? `<table><thead><tr><th>Title on this node</th><th>Holder</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="sub dim">This node hosts no titles. Add one to RULESETS in node.env, restart, and claim it here.</div>';
+  return `<div class="sub">AIR <b>${esc(Ai.me.email ?? s.name ?? '')}</b> · litVM wallet <span class="mono" title="${esc(s.address)}">${esc(s.address.slice(0, 10))}…</span> <span class="dim">· titles are NFTs this wallet holds</span></div>${bondLine}${table}${tx}${err}`;
 }
 async function pubRun(what, rid) {
   const h = S.health; if (!h) return;
@@ -889,117 +866,140 @@ const ex = (kind, v, n = 10) => (v ? `<a class="link mono" target="_blank" rel="
 const copyable = (v, n = 12) => (v ? `<span class="mono copy" data-copy="${esc(v)}" title="${esc(v)} — click to copy">${esc(v.slice(0, n))}…</span>` : '—');
 const stateTag = (st) => ({ ok: '<span class="tag live">done</span>', warn: '<span class="tag hosted">pending</span>', todo: '<span class="tag court">to do</span>', na: '<span class="tag">n/a</span>' })[st] ?? '';
 const GAS_FAUCET = 'https://liteforge.hub.caldera.xyz';
+const secs = (s) => (s == null ? '?' : s >= 60 && s % 60 === 0 ? `${s / 60} min` : `${s} s`);
+const REGISTRY = { active: 'active on ReleaseRegistry', pending: 'registered, activation delay running', revoked: 'REVOKED, will not apply', unset: 'no registry configured', unchecked: 'registry not checked yet', unreadable: 'registry unreadable' };
+// The page is one status band and one tab at a time; the tab is remembered per browser.
+const NODE_TABS = { overview: 'Overview', wallet: 'Wallet & gas', network: 'Network', activity: 'Activity', guide: 'Run a node' };
+let nodeTab = NODE_TABS[load('cabinet.nodeTab')] ? load('cabinet.nodeTab') : 'overview';
+const uptimeWeek = () => `${heatmap(S.uptime)}<div class="legend"><i class="up"></i>up <i class="partial"></i>partial <i class="down"></i>down <i class="none"></i>unobserved</div><div class="source">Seen by this page while it is open, in 10-minute slots.</div>`;
+const runANode = () => `<p class="lede">This page reads the mesh through a node on <b>your</b> machine. Like a torrent client, every node serves everyone: it verifies and witnesses matches.</p><ol class="steps">
+    <li><a class="link" href="#/download"><b>Download the Control Plane</b></a> for Windows 10/11 (no admin needed) and check its SHA-256.</li>
+    <li>In first-run setup, pick <b>Quick Tunnel</b> and leave the seed blank. The node starts in the tray and the header turns green.</li>
+    <li>Put a little zkLTC (<a class="link" href="${GAS_FAUCET}" target="_blank" rel="noopener">free faucet</a>) in a fresh wallet on ${esc(CHAIN.name)}. Then, under <b>Wallet &amp; gas</b>: faucet tLITVM, bond, delegate, and top up the hot key.</li>
+    <li>Leave it running. Tunnel, announce, enrolment and witnessing are automatic; apply updates when the Control Plane offers them.</li></ol>
+  <div class="source">Ranked results go on chain once four operators (four wallets) have bonded nodes online, so every operator counts. macOS/Linux: the <a class="link" href="${RELEASES}" target="_blank" rel="noopener">release zips</a>. Troubleshooting: the <a class="link" href="${OPERATOR_GUIDE}" target="_blank" rel="noopener">operator guide</a>.</div>`;
+const seedsTable = () => !seeds.configured() ? '<div class="empty">NodeDirectory is not configured in this build.</div>'
+  : S.seeds.length ? `<div class="tablewrap"><table><thead><tr><th>Operator</th><th>Node</th><th>Address</th><th>Relay</th><th>Announced</th></tr></thead><tbody>${S.seeds.map((s) => `<tr><td class="mono">${s.operator.slice(0, 6)}…${s.operator.slice(-4)}</td><td class="mono" title="${esc(s.nodeId)}">${short(s.nodeId, 12)}</td><td class="mono">${esc(s.url)}</td><td class="mono dim">${esc(s.wsAddr ?? '—')}</td><td class="dim">${new Date(s.updatedAt * 1000).toLocaleString()}</td></tr>`).join('')}</tbody></table></div><div class="source">Bonded nodes that announced on NodeDirectory in the last 7 days. ${S.viaSeed ? `This page reads the mesh through ${esc(S.viaSeed.url)}.` : 'Your own node comes first; seeds are the fallback.'}</div>`
+  : '<div class="empty">No seed has announced, or the chain is unreachable. <button class="link" id="seeds-refresh">Read again</button></div>';
+
 /** The operator's cockpit, from the node's signed /fleet; the older /health rows when a node predates it. */
 function renderNode() {
   const h = S.health, f = S.fleet;
-  const verified = f ? `<span class="tag live" title="digest ${esc(f.digest.slice(0, 12))}… · signed by ${esc(f.nodeId.slice(0, 12))}… at ${esc(f.at)}">signed by the node · ${ago(Date.now() - S.fleetAt)} ago</span>` : S.fleetError ? `<span class="tag court" title="${esc(S.fleetError)}">unverified: ${esc(S.fleetError)}</span>` : '';
-  const legacy = h ? `<dl class="kv">
-      <dt>node id</dt><dd title="${esc(h.nodeId)}">${esc(h.nodeId)}</dd><dt>operator</dt><dd>${esc(h.operator)}</dd><dt>roles</dt><dd>${esc(h.roles.join(', '))}</dd><dt>region</dt><dd>${esc(h.region)}</dd>
-      <dt>address</dt><dd>${esc(h.addr)}</dd><dt>bonded</dt><dd>${h.bonded === null ? 'unknown (offline / no stake contract)' : h.bonded ? 'yes' : 'no — Operator panel below'}</dd>
-      <dt>tunnel</dt><dd>${h.tunnel?.node ? `${esc(h.tunnel.node.mode)} · ${esc(h.tunnel.node.state)}${h.tunnel.node.url ? ` · ${esc(h.tunnel.node.url)}` : ''}${h.tunnel.node.lastError ? ` · ${esc(h.tunnel.node.lastError)}` : ''}` : 'none — LAN address only'}</dd>
-      <dt>relay</dt><dd>${h.wsAddr ? `${esc(h.wsAddr)}${h.tunnel?.relay ? ` (${esc(h.tunnel.relay.state)})` : ''}` : 'none advertised'}</dd>
-      <dt>version</dt><dd>${esc(h.version ?? '?')}${h.update?.available ? ` — <b>${esc(h.update.latest)} available</b>` : h.update?.checkedAt ? ' — up to date' : ''}${h.update?.lastError ? ` <span class="dim">(check failed: ${esc(h.update.lastError)})</span>` : ''}</dd>
-      <dt>cabinet</dt><dd>${esc(CABINET_VERSION)}${h.version && h.version !== CABINET_VERSION ? ` — <b>this copy of the arcade is not the node's (node serves ${esc(h.cabinet?.version ?? h.version)})</b>` : ' — matches the node'}</dd>
-      <dt>reachable</dt><dd>${h.inbound ? (h.inbound.reachable === null ? 'no peers known yet' : h.inbound.reachable ? `yes — ${h.inbound.peers} peer${h.inbound.peers === 1 ? '' : 's'} push gossip to this node` : 'no peer has reached this node in 30 s — fine for a witness; a seed, LAN host or relay needs allow-firewall.cmd or a tunnel') : '—'}</dd>
-      <dt>chain</dt><dd>${h.chain.offline ? 'offline beacon' : `${esc(h.chain.rpc)} · block ${h.chain.head ?? '?'}`}${h.chain.rpcEndpoints?.length > 1 && !h.chain.rpcEndpoints[0].active ? ` · <b>on a fallback endpoint</b> (${esc(h.chain.rpcEndpoints[0].url)}: ${esc(h.chain.rpcEndpoints[0].lastError ?? 'failing')})` : ''}${h.chain.lastError ? ` · ${esc(h.chain.lastError)}` : ''}</dd>
-      <dt>rulesets</dt><dd>${Object.entries(h.rulesets).map(([k, v]) => `${esc(k)} @ ${v.slice(0, 10)}`).join(', ')}</dd><dt>builds held</dt><dd>${h.buildsHeld}</dd>
-    </dl>` : `<div class="empty">No node at <span class="mono">${esc(nodeUrl())}</span>. Start one below, or <button class="link" id="node-edit2">point the cabinet at another node</button>.</div>`;
+  const verified = f ? `<span class="tag live" title="digest ${esc(f.digest.slice(0, 12))}… · signed by ${esc(f.nodeId.slice(0, 12))}… at ${esc(f.at)}">signed by the node · ${ago(Date.now() - S.fleetAt)} ago</span>` : S.fleetError ? `<span class="tag court" title="${esc(S.fleetError)}">unverified</span>` : '';
+  const head = `<div class="page-h"><h1 class="chrome">Nodes</h1><span class="dim">Your node verifies and witnesses matches for the mesh.</span><div class="right">${verified}</div></div>`;
+  if (!h) {
+    view('node').innerHTML = `${head}<div class="home">${nodePanel({ compact: false })}
+      ${panel('Run a node', `${S.checked ? `<div class="empty">No node at <span class="mono">${esc(nodeUrl())}</span>. <button class="link" id="node-edit2">Use another node</button></div>` : ''}${runANode()}`, '', 's12')}
+      ${panel('Seeds on chain', seedsTable(), '', 's12')}</div>`;
+    bindNode();
+    return;
+  }
+  const sf = f?.self, mb = f?.chain.matchBook, purse = mb?.purse ?? null, ann = f?.chain.announcer;
+  const steps = f ? fleetChecklist(f, { cabinetContracts: CONTRACTS.contracts }) : [];
+  const open = steps.filter((st) => st.state === 'todo' || st.state === 'warn').length;
+  const updateBtn = h.update?.available ? (isLoopbackNode() ? '<button class="btn sm primary" id="update-btn">Update node</button>' : '<span class="dim">update from the node’s machine</span>') : '';
 
-  // ---- from /fleet
-  let identity = legacy, checklistHtml = '', purseHtml = '', reachHtml = '', releaseHtml = '', chainHtml = '', workHtml = '', eventsHtml = '', peersHtml = '';
-  if (f) {
-    const sf = f.self, mb = f.chain.matchBook, purse = mb?.purse ?? null, ann = f.chain.announcer;
-    identity = `<dl class="kv">
-      <dt>node id</dt><dd>${copyable(sf.nodeId, 24)} <span class="dim">ed25519 · the key the operator bonds</span></dd>
-      <dt>operator</dt><dd>${esc(sf.operator)} · ${esc(sf.roles.join(', '))} · ${esc(sf.region)}</dd>
-      <dt>operator wallet</dt><dd>${sf.wallet ? ex('address', sf.wallet) : '<span class="dim">not bonded</span>'}${sf.bond?.amount ? ` <span class="dim">· ${fmtTok(Number(BigInt(sf.bond.amount) / 10n ** 14n) / 10_000)} ${CHAIN.token} bonded</span>` : ''}</dd>
-      <dt>hot key</dt><dd>${ann ? ex('address', ann.address) : '—'} <span class="dim">signs commits, attests, announces · never holds the bond</span></dd>
-      <dt>version</dt><dd>node ${esc(sf.version)} · cabinet ${esc(CABINET_VERSION)}${sf.version !== CABINET_VERSION ? ` — <b>this copy of the arcade is not the node's (it serves ${esc(f.cabinet)})</b>` : ''} · protocol ${f.protocol}</dd>
-      <dt>up</dt><dd>${fmtDuration(sf.uptimeMs)} since ${new Date(sf.startedAt).toLocaleString()}</dd>
+  // ---- overview: setup + this node (identity and release in one list)
+  const u = sf?.update;
+  const identity = f ? `<dl class="kv">
+      <dt>node id</dt><dd>${copyable(sf.nodeId, 24)} <span class="dim">the key the operator bonds</span></dd>
+      <dt>operator</dt><dd>${esc(sf.operator)} · ${esc(sf.region)}</dd>
+      <dt>roles</dt><dd>${esc(sf.roles.join(' · '))}</dd>
+      <dt>wallet</dt><dd>${sf.wallet ? ex('address', sf.wallet) : '<span class="dim">not bonded</span>'}</dd>
+      <dt>hot key</dt><dd>${ann ? ex('address', ann.address) : '—'} <span class="dim">pays gas, never holds the bond</span></dd>
+      <dt>version</dt><dd>${esc(sf.version)} · protocol ${f.protocol}${sf.version !== CABINET_VERSION ? ` · <b>this arcade is ${esc(CABINET_VERSION)}</b> (the node serves ${esc(f.cabinet)})` : ''}</dd>
+      <dt>release</dt><dd>${u.latest ? `${u.available ? `<b>${esc(u.latest)} available</b>` : `${esc(u.latest)} is the latest`}${u.applying ? ' · applying…' : ''}${u.registry ? ` · <span class="dim">${esc(REGISTRY[u.registry] ?? u.registry)}</span>` : ''}` : '<span class="dim">no release manifest read yet</span>'}</dd>
+      <dt>update check</dt><dd>${esc(u.channel ?? 'stable')} · ${u.checkedAt ? `${ago(Date.now() - new Date(u.checkedAt).getTime())} ago` : 'never'}${u.lastError ? ` · <span class="bad">${esc(u.lastError)}</span>` : ''}${u.canRollback ? ' · rollback kept' : ''}</dd>
+    </dl>` : `<dl class="kv">
+      <dt>node id</dt><dd>${copyable(h.nodeId, 24)}</dd><dt>operator</dt><dd>${esc(h.operator)} · ${esc(h.region)}</dd><dt>roles</dt><dd>${esc(h.roles.join(' · '))}</dd>
+      <dt>address</dt><dd>${esc(h.addr)}</dd><dt>bonded</dt><dd>${h.bonded === null ? 'unknown' : h.bonded ? 'yes' : 'no — see Wallet &amp; gas'}</dd>
+      <dt>tunnel</dt><dd>${h.tunnel?.node ? `${esc(h.tunnel.node.mode)} · ${esc(h.tunnel.node.state)}${h.tunnel.node.url ? ` · ${esc(h.tunnel.node.url)}` : ''}${h.tunnel.node.lastError ? ` · ${esc(h.tunnel.node.lastError)}` : ''}` : 'none (LAN only)'}</dd>
+      <dt>relay</dt><dd>${h.wsAddr ? `${esc(h.wsAddr)}${h.tunnel?.relay ? ` (${esc(h.tunnel.relay.state)})` : ''}` : 'none'}</dd>
+      <dt>version</dt><dd>${esc(h.version ?? '?')}${h.update?.available ? ` · <b>${esc(h.update.latest)} available</b>` : h.update?.checkedAt ? ' · up to date' : ''}${h.version && h.version !== CABINET_VERSION ? ` · <b>this arcade is ${esc(CABINET_VERSION)}</b>` : ''}</dd>
+      <dt>reachable</dt><dd>${h.inbound ? (h.inbound.reachable === null ? 'no peers known yet' : h.inbound.reachable ? `${h.inbound.peers} peer${h.inbound.peers === 1 ? '' : 's'} push gossip here` : 'nobody reached it in 30 s — fine for a witness; a seed or host needs a tunnel') : '—'}</dd>
+      <dt>chain</dt><dd>${h.chain.offline ? 'offline beacon' : `block ${h.chain.head ?? '?'} · ${esc(h.chain.rpc)}`}${h.chain.lastError ? ` · <span class="bad">${esc(h.chain.lastError)}</span>` : ''}</dd>
+      <dt>rulesets</dt><dd>${Object.entries(h.rulesets).map(([k, v]) => `${esc(k)} @ ${v.slice(0, 10)}`).join(', ')}</dd>
     </dl>`;
-    const steps = fleetChecklist(f, { cabinetContracts: CONTRACTS.contracts });
-    checklistHtml = `<ol class="checklist">${steps.map((st) => `<li class="${st.state}"><span class="st">${stateTag(st.state)}</span><span><b>${esc(st.label)}</b><small>${esc(st.detail)}</small></span></li>`).join('')}</ol>
-      <div class="source">Every step is read from the node and the chain, not remembered. Wallet steps are in the Operator panel; the rest the node does by itself once the step before it is done.</div>`;
-    if (purse) {
-      const price = purse.gasPriceWei ? Number(purse.gasPriceWei) : null;
-      const perMatch = purse.perMatchGas ?? 445_000;
-      const covers = (z) => (price ? Math.floor((Number(z) * 1e18) / (perMatch * price)) : null);
-      const walletOk = nodeops.available();
-      const buttons = TOPUP_AMOUNTS.map((z) => `<button class="btn sm${purse.low && z === '0.05' ? ' primary' : ''}" data-topup="${z}" ${Tu.busy ? 'disabled' : ''}>+ ${z} zkLTC<small>${covers(z) != null ? ` ≈ ${covers(z)} matches` : ''}</small></button>`).join(' ');
-      purseHtml = `<div class="purse ${purse.low ? 'low' : ''}">
-        <div class="big-tok"><span class="chrome">${esc(Tu.hotGas != null ? (Number(Tu.hotGas) / 1e18).toFixed(6) : purse.balance ?? '—')}</span><span class="tok">zkLTC on the hot key${Tu.hotGas != null ? ' <span class="dim">(just read)</span>' : ''}</span></div>
-        <dl class="kv"><dt>covers</dt><dd>~${purse.matchesLeft ?? '?'} matches as ${esc(purse.perMatchRole ?? 'host')} <span class="dim">(${Math.round(perMatch / 1000)}k gas each at ${price ? (price / 1e9).toFixed(2) : '?'} gwei)</span></dd>
-        <dt>hot key</dt><dd>${ex('address', purse.address, 42)} <button class="link" data-copy-now="${esc(purse.address)}">copy</button></dd>
-        <dt>transactions</dt><dd>${mb.sends} sent since start · type-${purse.txType ?? '?'}${mb.lastError ? ` · <span style="color:var(--red)">${esc(mb.lastError)}</span>` : ''}</dd></dl>
-        ${purse.low ? '<div class="sub" style="color:var(--red)">LOW — a host that runs dry mid-match voids it. Top up below.</div>' : ''}
+  const fleetNote = !f && S.fleetError ? `<div class="source">Signed status unavailable: ${esc(S.fleetError)}</div>` : '';
+  const checklistHtml = f ? `<ol class="checklist">${steps.map((st) => `<li class="${st.state}"><span class="st">${stateTag(st.state)}</span><span><b>${esc(st.label)}</b><small>${esc(st.detail)}</small></span></li>`).join('')}</ol>
+      <div class="source">Read live from the node and the chain. Wallet steps are under Wallet &amp; gas; the node does the rest itself.</div>` : '';
+
+  // ---- wallet & gas: the hot key's purse and top-up
+  let purseHtml = '';
+  if (purse) {
+    const price = purse.gasPriceWei ? Number(purse.gasPriceWei) : null;
+    const perMatch = purse.perMatchGas ?? 445_000;
+    const covers = (z) => (price ? Math.floor((Number(z) * 1e18) / (perMatch * price)) : null);
+    const buttons = TOPUP_AMOUNTS.map((z) => `<button class="btn sm${purse.low && z === '0.05' ? ' primary' : ''}" data-topup="${z}" ${Tu.busy ? 'disabled' : ''}>+ ${z} zkLTC<small>${covers(z) != null ? ` ≈ ${covers(z)} matches` : ''}</small></button>`).join(' ');
+    purseHtml = `<div class="purse ${purse.low ? 'low' : ''}">
+        <div class="big-tok"><span class="chrome">${esc(Tu.hotGas != null ? (Number(Tu.hotGas) / 1e18).toFixed(6) : purse.balance ?? '—')}</span><span class="tok">zkLTC${Tu.hotGas != null ? ' <span class="dim">just read</span>' : ''}</span></div>
+        <dl class="kv"><dt>covers</dt><dd>~${purse.matchesLeft ?? '?'} matches as ${esc(purse.perMatchRole ?? 'host')} <span class="dim">· ${Math.round(perMatch / 1000)}k gas at ${price ? (price / 1e9).toFixed(2) : '?'} gwei</span></dd>
+        <dt>hot key</dt><dd>${ex('address', purse.address, 14)} <button class="link" data-copy-now="${esc(purse.address)}">copy</button></dd>
+        <dt>sent</dt><dd>${mb.sends} tx since start${purse.txType ? ` · type-${purse.txType}` : ''}${mb.lastError ? ` · <span class="bad">${esc(mb.lastError)}</span>` : ''}</dd></dl>
+        ${purse.low ? '<div class="sub bad">Low: a host that runs dry mid-match voids it. Top up below.</div>' : ''}
         <div class="topup">
           <div class="k">Top up</div>
-          ${walletOk ? `<div class="row">${buttons}</div>
-            <div class="sub dim">${Op.account ? `from ${esc(Op.account.slice(0, 6))}…${esc(Op.account.slice(-4))}${Tu.walletGas != null ? ` · ${(Number(Tu.walletGas) / 1e18).toFixed(4)} zkLTC in this wallet` : ''}` : `<button class="link" id="topup-connect">connect a wallet</button> — any wallet on ${esc(CHAIN.name)} can pay; the hot key spends it on this node's transactions and can never touch the bond`}</div>`
-          : '<div class="sub dim">No browser wallet here. Use the faucet route below — it needs none.</div>'}
+          ${nodeops.available() ? `<div class="row">${buttons}</div>
+            <div class="sub dim">${Op.account ? `from ${esc(Op.account.slice(0, 6))}…${esc(Op.account.slice(-4))}${Tu.walletGas != null ? ` · ${(Number(Tu.walletGas) / 1e18).toFixed(4)} zkLTC in this wallet` : ''}` : '<button class="link" id="topup-connect">Connect a wallet</button>: any wallet can pay; the hot key can never touch the bond.'}</div>`
+          : '<div class="sub dim">No browser wallet here: use the faucet.</div>'}
           ${Tu.busy ? `<div class="sub">${esc(Tu.busy)}</div>` : ''}
-          ${Tu.tx ? `<div class="sub">sent ${esc(Tu.amount)} zkLTC · ${ex('tx', Tu.tx, 14)} — the node sees it within 30 s</div>` : ''}
-          ${Tu.error ? `<div class="sub" style="color:var(--red)">${esc(Tu.error)}</div>` : ''}
-          <div class="sub dim">No zkLTC yet? Testnet gas is free: <button class="link" data-copy-now="${esc(purse.address)}">copy the hot-key address</button>, open <a class="link" target="_blank" rel="noopener" href="${GAS_FAUCET}">the Caldera faucet</a>, paste it there and claim — it lands on the node directly. (The tLITVM bond token is a different faucet, in the Operator panel.)</div>
+          ${Tu.tx ? `<div class="sub">sent ${esc(Tu.amount)} zkLTC · ${ex('tx', Tu.tx, 14)} · the node sees it within 30 s</div>` : ''}
+          ${Tu.error ? `<div class="sub bad">${esc(Tu.error)}</div>` : ''}
+          <div class="sub dim">Free testnet gas: <button class="link" data-copy-now="${esc(purse.address)}">copy the hot-key address</button> and claim at the <a class="link" target="_blank" rel="noopener" href="${GAS_FAUCET}">Caldera faucet</a>. It lands on the node directly.</div>
         </div>
       </div>`;
-    }
+  }
+
+  // ---- network: reach + chain
+  let reachHtml = '', chainHtml = '';
+  if (f) {
+    const entry = ann?.entry ?? null;
+    const same = entry && entry.url === sf.addr && (entry.wsAddr ?? null) === (sf.wsAddr ?? null);
     reachHtml = `<dl class="kv">
-      <dt>advertised</dt><dd>${esc(sf.addr)}${sf.lanAddr && sf.lanAddr !== sf.addr ? ` <span class="dim">· LAN ${esc(sf.lanAddr)}</span>` : ''}</dd>
+      <dt>address</dt><dd>${esc(sf.addr)}${sf.lanAddr && sf.lanAddr !== sf.addr ? ` <span class="dim">· LAN ${esc(sf.lanAddr)}</span>` : ''}</dd>
       <dt>tunnel</dt><dd>${sf.tunnel ? `${esc(sf.tunnel.mode)} · <b>${esc(sf.tunnel.state)}</b>${sf.tunnel.restarts ? ` · rotated ${sf.tunnel.restarts}×` : ''}${sf.tunnel.lastError && sf.tunnel.state !== 'up' ? ` · ${esc(sf.tunnel.lastError.slice(0, 160))}` : ''}` : '<span class="dim">none (LAN only)</span>'}</dd>
-      <dt>inbound</dt><dd>${sf.inbound.reachable === null ? 'no peers known yet' : sf.inbound.reachable ? `${sf.inbound.peers} peer${sf.inbound.peers === 1 ? '' : 's'} push gossip here` : 'nobody has reached this node in 30 s'}</dd>
-      ${sf.relay ? `<dt>relay</dt><dd><b>${esc(sf.relay.state)}</b>${sf.relay.ms != null ? ` · ${sf.relay.ms} ms` : ''}${sf.relay.url ? ` · ${esc(sf.relay.url)}` : ''} <span class="dim">· port ${sf.relay.port} · checked ${sf.relay.checkedAt ? ago(Date.now() - new Date(sf.relay.checkedAt).getTime()) + ' ago' : 'never'}</span>${sf.relay.lastError ? ` · <span style="color:var(--red)">${esc(sf.relay.lastError)}</span>` : ''}</dd>` : ''}
-      <dt>directory</dt><dd>${ann?.entry ? `${esc(ann.entry.url)}${ann.entry.wsAddr ? ` · relay ${esc(ann.entry.wsAddr)}` : ''} <span class="dim">· announced ${ann.entry.updatedAt ? new Date(ann.entry.updatedAt).toLocaleString() : '?'}</span>` : ann && !('entry' in ann) ? '<span class="dim">entry not reported by this node version</span>' : '<span class="dim">no entry on NodeDirectory</span>'}${ann?.lastTx ? ` · tx ${ex('tx', ann.lastTx)}` : ''}${ann?.lastError ? ` · <span style="color:var(--red)">${esc(ann.lastError)}</span>` : ''}</dd>
-      <dt>mesh</dt><dd>${f.mesh.active} active · ${f.mesh.known} known · ${f.mesh.bonded} bonded · ${f.mesh.eligible} eligible${f.mesh.incompatible ? ` · ${f.mesh.incompatible} incompatible` : ''} · versions ${Object.entries(f.mesh.versions).map(([v, n]) => `${esc(v)}×${n}`).join(' ')}</dd>
+      <dt>inbound</dt><dd>${sf.inbound.reachable === null ? 'no peers known yet' : sf.inbound.reachable ? `${sf.inbound.peers} peer${sf.inbound.peers === 1 ? '' : 's'} push gossip here` : 'nobody reached this node in 30 s'}</dd>
+      ${sf.relay ? `<dt>relay</dt><dd><b>${esc(sf.relay.state)}</b>${sf.relay.ms != null ? ` · ${sf.relay.ms} ms` : ''}${sf.relay.url ? ` · ${esc(sf.relay.url)}` : ''} <span class="dim">· port ${sf.relay.port} · checked ${sf.relay.checkedAt ? `${ago(Date.now() - new Date(sf.relay.checkedAt).getTime())} ago` : 'never'}</span>${sf.relay.lastError ? ` · <span class="bad">${esc(sf.relay.lastError)}</span>` : ''}</dd>` : ''}
+      <dt>directory</dt><dd>${entry ? `${same ? 'matches this node' : `${esc(entry.url)}${entry.wsAddr ? ' + relay' : ''}`} <span class="dim">· announced ${entry.updatedAt ? new Date(entry.updatedAt).toLocaleString() : '?'}</span>` : ann && !('entry' in ann) ? '<span class="dim">not reported by this node version</span>' : '<span class="dim">no entry on NodeDirectory</span>'}${ann?.lastTx ? ` · tx ${ex('tx', ann.lastTx)}` : ''}${ann?.lastError ? ` · <span class="bad">${esc(ann.lastError)}</span>` : ''}</dd>
+      <dt>mesh</dt><dd>${f.mesh.active} active · ${f.mesh.known} known · ${f.mesh.bonded} bonded · ${f.mesh.eligible} eligible${f.mesh.incompatible ? ` · ${f.mesh.incompatible} incompatible` : ''} <span class="dim">· ${Object.entries(f.mesh.versions).map(([v, n]) => `${esc(v)}×${n}`).join(' ')}</span></dd>
       <dt>gossip</dt><dd>${f.mesh.gossip.outPerMin}↑ ${f.mesh.gossip.inPerMin}↓ per min · ${(f.mesh.gossip.outBytesPerMin / 1024 / 60).toFixed(1)} KB/s out · ${(f.mesh.gossip.inBytesPerMin / 1024 / 60).toFixed(1)} KB/s in</dd>
-    </dl>`;
-    const u = sf.update;
-    releaseHtml = `<dl class="kv">
-      <dt>running</dt><dd>${esc(sf.version)}${u.applying ? ' · applying…' : ''}</dd>
-      <dt>latest</dt><dd>${u.latest ? `${esc(u.latest)}${u.available ? ' — <b>available</b>' : ' — this is it'}${u.date ? ` <span class="dim">· ${new Date(u.date).toLocaleString()}</span>` : ''}` : '<span class="dim">no release manifest read yet</span>'}</dd>
-      <dt>registry gate</dt><dd>${esc(u.registry ?? 'not reported by this node version')} <span class="dim">· ${{ active: 'the zip hash is registered and active on ReleaseRegistry — a node may apply it', pending: 'registered, activation delay not over', revoked: 'REVOKED — will not be applied', unset: 'no registry configured', unchecked: 'not looked at yet', unreadable: 'the chain did not answer' }[u.registry] ?? ''}</span></dd>
-      <dt>channel</dt><dd>${esc(u.channel ?? 'stable')} · checked ${u.checkedAt ? ago(Date.now() - new Date(u.checkedAt).getTime()) + ' ago' : 'never'}${u.lastError ? ` · <span style="color:var(--red)">${esc(u.lastError)}</span>` : ''}${u.canRollback ? ' · previous build kept (rollback possible)' : ''}</dd>
     </dl>`;
     const c = f.chain, cs = c.contracts ?? {};
     chainHtml = `<dl class="kv">
-      <dt>rpc</dt><dd>${esc(c.rpc)} · <b>${c.rpcMs ?? '?'} ms</b> avg (last ${c.rpcLastMs ?? '?'}) · ${c.rpcFailures}/${c.rpcCalls} failed${c.lastError ? ` · <span style="color:var(--red)">${esc(c.lastError)}</span>` : ''}</dd>
-      <dt>head</dt><dd>${c.head ?? '—'} · lag ${c.lagS ?? '?'} s${c.recentBlocks?.length ? ` · ${ex('block', String(c.recentBlocks.at(-1).number), 12)}` : ''}</dd>
-      <dt>generation</dt><dd>${cs.generation ?? (c.contracts ? '?' : 'not reported by this node version')} on the node · ${CONTRACTS.generation ?? '?'} in this cabinet</dd>
-      ${['NodeStake', 'NodeDirectory', 'MatchBook', 'EpochAnchor', 'ReleaseRegistry', 'TitleRegistry', 'PlayerProfile'].map((k) => cs[k] ? `<dt>${k}</dt><dd>${ex('address', cs[k], 42)}${CONTRACTS.contracts[k]?.address && CONTRACTS.contracts[k].address.toLowerCase() !== cs[k].toLowerCase() ? ` <span style="color:var(--red)">≠ this cabinet's ${esc(CONTRACTS.contracts[k].address.slice(0, 10))}…</span>` : ''}</dd>` : '').join('')}
-      ${mb ? `<dt>settlement</dt><dd>cursor ${mb.cursor} · ${mb.events} events held · hosting ${mb.hosting} · seated ${mb.seated} · windows settle ${mb.windows?.settleWindow ?? '?'} s / attest ${mb.windows?.attestWindow ?? '?'} s / escalation ${mb.windows?.escalationWindow ?? '?'} s</dd>` : ''}
+      <dt>rpc</dt><dd>${esc(c.rpc)} · <b>${c.rpcMs ?? '?'} ms</b> · ${c.rpcFailures}/${c.rpcCalls} failed${c.lastError ? ` · <span class="bad">${esc(c.lastError)}</span>` : ''}</dd>
+      <dt>head</dt><dd>${c.recentBlocks?.length ? ex('block', String(c.recentBlocks.at(-1).number), 12) : esc(c.head ?? '—')} · lag ${c.lagS ?? '?'} s</dd>
+      <dt>generation</dt><dd>${cs.generation ?? (c.contracts ? '?' : 'not reported')} on the node · ${CONTRACTS.generation ?? '?'} here</dd>
+      ${mb ? `<dt>matchbook</dt><dd>hosting ${mb.hosting} · seated ${mb.seated} · ${mb.events} events · cursor ${mb.cursor}</dd>
+      <dt>windows</dt><dd>settle ${secs(mb.windows?.settleWindow)} · attest ${secs(mb.windows?.attestWindow)} · escalation ${secs(mb.windows?.escalationWindow)}</dd>` : ''}
+      ${['NodeStake', 'NodeDirectory', 'MatchBook', 'EpochAnchor', 'ReleaseRegistry', 'TitleRegistry', 'PlayerProfile'].map((k) => cs[k] ? `<dt>${k}</dt><dd>${ex('address', cs[k], 14)}${CONTRACTS.contracts[k]?.address && CONTRACTS.contracts[k].address.toLowerCase() !== cs[k].toLowerCase() ? ` <span class="bad">≠ this arcade's ${esc(CONTRACTS.contracts[k].address.slice(0, 10))}…</span>` : ''}</dd>` : '').join('')}
     </dl>`;
-    const sent = mb?.sent ?? [];
-    workHtml = `${sent.length ? `<table><thead><tr><th>When</th><th>What</th><th>Match</th><th>Transaction</th><th class="num">Gas</th><th>Result</th></tr></thead><tbody>${[...sent].reverse().slice(0, 15).map((x) => `<tr><td class="dim">${new Date(x.at).toLocaleTimeString()}</td><td>${esc(x.what)}</td><td class="mono">${x.matchId ? esc(x.matchId.slice(0, 12)) + '…' : '—'}</td><td>${ex('tx', x.tx, 14)}</td><td class="num">${x.gasUsed?.toLocaleString() ?? '—'}</td><td>${x.ok === true ? '<span class="tag live">mined</span>' : x.ok === false ? '<span class="tag court">reverted</span>' : '<span class="tag">pending</span>'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No transactions from this key since the node started. Commits, settles and attests appear here as ranked matches are played.</div>'}
-      ${f.recent.length ? `<div class="source">Recent finals on chain: ${f.recent.slice(-5).reverse().map((r) => `<a class="link mono" href="#/match/${esc(r.matchId)}" title="match receipt">${esc(r.matchId.slice(0, 10))}…</a> ${esc(r.status)}${r.tx ? ' ' + ex('tx', r.tx, 8) : ''}`).join(' · ')}</div>` : ''}
-      ${f.rooms.length ? `<div class="source">Rooms held now: ${f.rooms.map((r) => `<span class="mono">${esc(r.room)}</span> ${esc(r.state)}${r.ours ? ' (host)' : r.seated ? ' (seat)' : ''}`).join(' · ')}</div>` : ''}`;
-    eventsHtml = f.events.length ? `<div class="events">${[...f.events].reverse().slice(0, 12).map((e) => `<div><time>${new Date(e.t).toLocaleTimeString()}</time><span class="mono dim">${esc(e.type)}</span><span>${esc(describeEvent(e))}</span></div>`).join('')}</div>` : '<div class="empty">Nothing yet.</div>';
-    peersHtml = f.peers.length ? `<table><thead><tr><th>Operator</th><th>Node</th><th>Version</th><th>Roles</th><th>Quality</th><th>Ping</th><th>Bonded</th><th>Address</th></tr></thead><tbody>${[...f.peers].sort((a, b) => b.quality.score - a.quality.score).map((p) => `<tr><td>${esc(p.operator)}</td><td class="mono" title="${esc(p.nodeId)}">${esc(p.nodeId.slice(0, 12))}…</td><td>${esc(p.version ?? '?')}${p.protocol !== f.protocol ? ' <span class="tag court">protocol</span>' : ''}</td><td class="dim">${esc(p.roles.join(', '))}</td><td><span class="tag ${p.quality.grade === 'A' || p.quality.grade === 'B' ? 'live' : p.quality.grade === 'C' ? 'hosted' : 'court'}">${p.quality.grade} ${p.quality.score}</span>${p.fresh ? '' : ` <span class="dim">silent ${Math.round(p.ageS)} s</span>`}</td><td>${p.link?.emaMs != null ? `${p.link.emaMs} ms${p.link.loss ? ` · ${Math.round(p.link.loss * 100)}% loss` : ''}` : p.link?.inboundMs != null ? `←${p.link.inboundMs} ms <span class="dim">(they reach us)</span>` : '<span class="dim">via mesh</span>'}</td><td>${p.bonded === null ? '?' : p.bonded ? 'yes' : 'no'}</td><td class="mono dim">${esc(p.addr ?? '—')}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No peers heard yet.</div>';
   }
-  const peersLegacy = S.peers.length ? `<table><thead><tr><th>Node</th><th>Operator</th><th>Region</th><th>Roles</th><th>Fresh</th><th>Bonded</th><th>Rulesets</th></tr></thead><tbody>${S.peers.map((p) => `<tr><td class="mono" title="${esc(p.nodeId)}">${esc(p.nodeId.slice(0, 12))}…</td><td>${esc(p.operator)}</td><td>${esc(p.region ?? '')}</td><td class="dim">${esc((p.roles ?? []).join(', '))}</td><td>${p.fresh ? 'yes' : 'no'}</td><td>${p.bonded === null ? '?' : p.bonded ? 'yes' : 'no'}</td><td class="dim">${esc((p.rulesets ?? []).join(', '))}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No peers heard yet.</div>';
-  const updateMore = h?.update?.available ? (isLoopbackNode() ? '<button class="btn sm primary" id="update-btn">Update node</button>' : '<span class="dim">update from the node\'s own machine</span>') : '';
-  view('node').innerHTML = `<div class="page-h"><h1 class="chrome">Nodes</h1><span class="dim">run a node while you play — it verifies and witnesses matches for the mesh</span></div>
-    <div class="home">
-      ${nodePanel({ compact: false })}
-      ${panel('This node', identity, verified, 's6')}
-      ${f ? panel('Setup', checklistHtml, '', 's6') : panel('7-day uptime', `${heatmap(S.uptime)}<div class="legend"><i class="up"></i>up <i class="partial"></i>partial <i class="down"></i>down <i class="none"></i>dashboard closed</div><div class="source">Observed by this dashboard while it is open, 10-minute slots.</div>`, '', 's6')}
-      ${f && purseHtml ? panel('Hot key · gas', purseHtml, '', 's6') : ''}
-      ${f ? panel('Reach · directory', reachHtml, '', 's6') : ''}
-      ${h ? panel('Operator', operatorPanel(h), '', 's6') : ''}
-      ${h ? panel('Publisher', publisherPanel(h), '', 's6') : ''}
-      ${f ? panel('Release', releaseHtml, updateMore, 's6') : ''}
-      ${f ? panel('Chain · contracts', chainHtml, `<span class="dim">${esc(CHAIN.name)} · <a class="link" target="_blank" rel="noopener" href="${esc(CHAIN.explorer)}">explorer</a></span>`, 's6') : ''}
-      ${f ? panel('Settlement work · this key', workHtml, '', 's12') : ''}
-      ${f ? panel('Events', eventsHtml, '', 's6') : ''}
-      ${f ? panel('7-day uptime', `${heatmap(S.uptime)}<div class="legend"><i class="up"></i>up <i class="partial"></i>partial <i class="down"></i>down <i class="none"></i>dashboard closed</div><div class="source">Observed by this dashboard while it is open, 10-minute slots.</div>`, '', 's6') : ''}
-      ${panel('Run a node', `<p>The arcade is a peer network: this page talks to the mesh through a node on <b>your</b> machine, the way a torrent client is the peer. Every node verifies and witnesses matches for everyone.</p><ol class="steps">
-          <li><a class="link" href="#/download"><b>Download the LITNODE Control Plane</b></a> for Windows 10/11 and run the installer (no administrator needed; check the SHA-256 on that page first).</li>
-          <li>The first-run guide asks for a name, your region and reachability: pick <b>Quick Tunnel</b> to be publicly reachable (it sets up <span class="mono">cloudflared</span> for you) and leave the seed blank. Your node starts in the tray; this page's header turns green and the <b>Setup</b> panel above shows what is left.</li>
-          <li>Have a <b>fresh</b> browser wallet on ${esc(CHAIN.name)} with a little zkLTC for gas (<a class="link" href="${GAS_FAUCET}" target="_blank" rel="noopener">free faucet</a>). Then, in the Operator panel: faucet tLITVM, bond, delegate and fund the announcer; top up the hot key (Hot key panel).</li>
-          <li>Leave it running. Enrolment, the tunnel, the announce and the witness work are the node's own job; apply updates when the Control Plane offers one.</li>
-          <li>Ranked results go on chain once <b>four operators</b> (four wallets) have fresh bonded nodes, so every new operator counts. Troubleshooting, and macOS/Linux with the <a class="link" href="${RELEASES}" target="_blank" rel="noopener">release zips</a>: <a class="link" href="${OPERATOR_GUIDE}" target="_blank" rel="noopener">the operator guide</a>.</li></ol>`, '', 's6')}
-      ${panel('Seeds on chain', seeds.configured() ? (S.seeds.length ? `<table><thead><tr><th>Operator</th><th>Node</th><th>Address</th><th>Relay</th><th>Announced</th></tr></thead><tbody>${S.seeds.map((s) => `<tr><td class="mono">${s.operator.slice(0, 6)}…${s.operator.slice(-4)}</td><td class="mono" title="${esc(s.nodeId)}">${short(s.nodeId, 12)}</td><td class="mono">${esc(s.url)}</td><td class="mono dim">${esc(s.wsAddr ?? '—')}</td><td class="dim">${new Date(s.updatedAt * 1000).toLocaleString()}</td></tr>`).join('')}</tbody></table><div class="source">Read from NodeDirectory on ${esc(CHAIN.name)}: bonded nodes that announced an address in the last 7 days. ${S.viaSeed ? `This page is reading the mesh through ${esc(S.viaSeed.url)}.` : 'Your own node comes first; these are the fallback.'}</div>` : '<div class="empty">No seed has announced yet, or the chain is unreachable. <button class="link" id="seeds-refresh">Read again</button></div>') : '<div class="empty">NodeDirectory is not configured in this build (config.js CHAIN.NodeDirectory).</div>', '', 's12')}
-      ${panel('Peers', f ? peersHtml : peersLegacy, f ? `<span class="dim">measured on this node's gossip push, every second</span>` : '', 's12')}
-    </div>`;
+  const peersHtml = f ? (f.peers.length ? `<div class="tablewrap"><table><thead><tr><th>Operator</th><th>Node</th><th>Version</th><th>Roles</th><th>Quality</th><th>Ping</th><th>Bonded</th><th>Address</th></tr></thead><tbody>${[...f.peers].sort((a, b) => b.quality.score - a.quality.score).map((p) => `<tr><td>${esc(p.operator)}</td><td class="mono" title="${esc(p.nodeId)}">${esc(p.nodeId.slice(0, 12))}…</td><td>${esc(p.version ?? '?')}${p.protocol !== f.protocol ? ' <span class="tag court">protocol</span>' : ''}</td><td class="dim">${esc(p.roles.join(', '))}</td><td><span class="tag ${p.quality.grade === 'A' || p.quality.grade === 'B' ? 'live' : p.quality.grade === 'C' ? 'hosted' : 'court'}">${p.quality.grade} ${p.quality.score}</span>${p.fresh ? '' : ` <span class="dim">silent ${Math.round(p.ageS)} s</span>`}</td><td>${p.link?.emaMs != null ? `${p.link.emaMs} ms${p.link.loss ? ` · ${Math.round(p.link.loss * 100)}% loss` : ''}` : p.link?.inboundMs != null ? `←${p.link.inboundMs} ms <span class="dim">(they reach us)</span>` : '<span class="dim">via mesh</span>'}</td><td>${p.bonded === null ? '?' : p.bonded ? 'yes' : 'no'}</td><td class="mono dim">${esc(p.addr ?? '—')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No peers heard yet.</div>')
+    : S.peers.length ? `<div class="tablewrap"><table><thead><tr><th>Node</th><th>Operator</th><th>Region</th><th>Roles</th><th>Fresh</th><th>Bonded</th><th>Rulesets</th></tr></thead><tbody>${S.peers.map((p) => `<tr><td class="mono" title="${esc(p.nodeId)}">${esc(p.nodeId.slice(0, 12))}…</td><td>${esc(p.operator)}</td><td>${esc(p.region ?? '')}</td><td class="dim">${esc((p.roles ?? []).join(', '))}</td><td>${p.fresh ? 'yes' : 'no'}</td><td>${p.bonded === null ? '?' : p.bonded ? 'yes' : 'no'}</td><td class="dim">${esc((p.rulesets ?? []).join(', '))}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No peers heard yet.</div>';
+
+  // ---- activity: what the hot key sent, the node's events
+  const sent = mb?.sent ?? [];
+  const workHtml = f ? `${sent.length ? `<div class="tablewrap"><table><thead><tr><th>When</th><th>What</th><th>Match</th><th>Transaction</th><th class="num">Gas</th><th>Result</th></tr></thead><tbody>${[...sent].reverse().slice(0, 15).map((x) => `<tr><td class="dim">${new Date(x.at).toLocaleTimeString()}</td><td>${esc(x.what)}</td><td class="mono">${x.matchId ? esc(x.matchId.slice(0, 12)) + '…' : '—'}</td><td>${ex('tx', x.tx, 14)}</td><td class="num">${x.gasUsed?.toLocaleString() ?? '—'}</td><td>${x.ok === true ? '<span class="tag live">mined</span>' : x.ok === false ? '<span class="tag court">reverted</span>' : '<span class="tag">pending</span>'}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No transactions from this key since start. Commits, settles and attests appear here as ranked matches are played.</div>'}
+      ${f.recent.length ? `<div class="source">Recent finals: ${f.recent.slice(-5).reverse().map((r) => `<a class="link mono" href="#/match/${esc(r.matchId)}" title="match receipt">${esc(r.matchId.slice(0, 10))}…</a> ${esc(r.status)}${r.tx ? ' ' + ex('tx', r.tx, 8) : ''}`).join(' · ')}</div>` : ''}
+      ${f.rooms.length ? `<div class="source">Rooms held: ${f.rooms.map((r) => `<span class="mono">${esc(r.room)}</span> ${esc(r.state)}${r.ours ? ' (host)' : r.seated ? ' (seat)' : ''}`).join(' · ')}</div>` : ''}` : '';
+  const eventsHtml = f ? (f.events.length ? `<div class="events">${[...f.events].reverse().slice(0, 12).map((e) => `<div><time>${new Date(e.t).toLocaleTimeString()}</time><span class="mono dim">${esc(e.type)}</span><span>${esc(describeEvent(e))}</span></div>`).join('')}</div>` : '<div class="empty">Nothing yet.</div>') : '';
+
+  const tabs = {
+    overview: [f ? panel('Setup', checklistHtml, `<span class="tag ${open ? 'hosted' : 'live'}">${open ? `${open} open` : 'all done'}</span>`, 's6') : panel('7-day uptime', uptimeWeek(), '', 's6'),
+      panel('This node', identity + fleetNote, updateBtn, 's6')],
+    wallet: [purse ? panel('Hot key · gas', purseHtml, '', 's6') : '', panel('Operator', operatorPanel(h), '', 's6'), panel('Publisher', publisherPanel(h), '', purse ? 's12' : 's6')],
+    network: [f ? panel('Reach', reachHtml, '', 's6') : '', f ? panel('Chain', chainHtml, `<a class="more" target="_blank" rel="noopener" href="${esc(CHAIN.explorer)}">explorer ›</a>`, 's6') : '',
+      panel('Peers', peersHtml, f ? '<span class="dim">ping measured on gossip, every second</span>' : '', 's12'), panel('Seeds on chain', seedsTable(), '', 's12')],
+    activity: [f ? panel('Settlement work', workHtml, '', 's12') : '', f ? panel('Events', eventsHtml, '', 's6') : '', panel('7-day uptime', uptimeWeek(), '', f ? 's6' : 's12')],
+    guide: [panel('Run a node', runANode(), '', 's12')],
+  };
+  const alert = { overview: open > 0, wallet: !!purse?.low };
+  const count = { network: (f ? f.peers : S.peers).length };
+  const nav = `<div class="subnav" role="tablist">${Object.entries(NODE_TABS).map(([k, label]) => `<button role="tab" aria-selected="${nodeTab === k}" class="${nodeTab === k ? 'on' : ''}" data-node-tab="${k}">${label}${count[k] != null ? `<small>${count[k]}</small>` : ''}${alert[k] ? '<i class="alert" title="needs attention"></i>' : ''}</button>`).join('')}</div>`;
+  view('node').innerHTML = `${head}<div class="home">${nodePanel({ compact: false })}</div>${nav}<div class="home">${tabs[nodeTab].join('')}</div>`;
+  bindNode();
+}
+function bindNode() {
   $('node-edit2')?.addEventListener('click', editNode);
   $('update-btn')?.addEventListener('click', updateNode);
   for (const w of ['connect', 'faucet', 'bond', 'delegate', 'hotkey', 'transfer']) $(`op-${w}`)?.addEventListener('click', () => opRun(w));
@@ -1058,7 +1058,8 @@ function parseRoute() {
   const mr = h.match(/^#\/match\/([\w:.-]{1,128})/);
   if (mr) return { name: 'match', matchId: mr[1] };
   const name = (h.match(/^#\/(\w+)/)?.[1]) ?? 'games';
-  return ['home', 'games', 'leaderboards', 'characters', 'inventory', 'node', 'build', 'download'].includes(name) ? { name } : { name: 'games' };
+  if (name === 'characters' || name === 'inventory') return { name: 'cards', legacy: true };   // the old pages, merged into Cards
+  return ['home', 'games', 'leaderboards', 'cards', 'node', 'build', 'download'].includes(name) ? { name } : { name: 'games' };
 }
 function render() {
   renderWorking();
@@ -1067,8 +1068,7 @@ function render() {
     case 'games': renderGames(); break;
     case 'game': renderGame(route.game); break;
     case 'leaderboards': renderLeaderboards(); break;
-    case 'characters': renderCharacters(); break;
-    case 'inventory': renderInventory(); break;
+    case 'cards': renderCards(); break;
     case 'node': renderNode(); break;
     case 'build': renderBuild(view('build')); break;
     case 'match': renderMatch(route.matchId); break;
@@ -1077,6 +1077,7 @@ function render() {
 }
 function navigate() {
   route = parseRoute();
+  if (route.legacy) window.history.replaceState(null, '', '#/cards');   // `history` here is the match-history fold
   if (route.name !== 'games' && inWindow()) exit();
   for (const s of document.querySelectorAll('.view')) s.hidden = s.dataset.view !== route.name;
   for (const a of document.querySelectorAll('#nav a')) a.classList.toggle('active', a.dataset.view === route.name || (route.name === 'game' && a.dataset.view === 'games'));
@@ -1084,13 +1085,14 @@ function navigate() {
   if (route.name !== 'game') viewing = null;
   render();
   if (route.name === 'games' && !current) autoloadArcade();
+  if (route.name === 'node' && S.online && !S.fleet) pollNode();   // /fleet is read only on this page: now, not on the next tick
   window.scrollTo(0, 0);
 }
 window.addEventListener('hashchange', navigate);
 
 // One delegated click handler for everything rendered from templates.
 document.addEventListener('click', (e) => {
-  const t = e.target.closest('[data-aw-start],[data-aw-pick],[data-aw-fs],[data-aw-tab],[data-play],[data-queue],[data-mm-stop],[data-mm-reset],[data-mm-launch],[data-lb],[data-style],#name-btn,#avatar-btn,#wallet-btn,#air-btn,#air-link,#air-out,#me-chip,#dash-lock-btn');
+  const t = e.target.closest('[data-aw-start],[data-aw-pick],[data-aw-fs],[data-aw-tab],[data-play],[data-queue],[data-mm-stop],[data-mm-reset],[data-mm-launch],[data-lb],[data-cards],[data-cards-held],[data-node-tab],#name-btn,#avatar-btn,#wallet-btn,#air-btn,#air-link,#air-out,#me-chip,#dash-lock-btn');
   if (!t) return;
   if (t.id === 'wallet-btn') { signInWithWallet(); return; }
   if (t.dataset.awStart) { e.preventDefault(); const g = GAMES.find((x) => x.id === t.dataset.awStart); if (g) { pickArcade(g.id); play(g, null, 'window'); $('aw')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }
@@ -1105,7 +1107,9 @@ document.addEventListener('click', (e) => {
   // node will require, the participant order the log is recorded in.
   else if ('mmLaunch' in t.dataset) { if (MM.game && MM.check?.ok) play(MM.game, { matchId: MM.match.matchId, host: MM.match.host, hostAddr: MM.host?.addr ?? null, witness: MM.check.witness, wsAddr: MM.relay ?? MM.host?.wsAddr ?? null, beacon: MM.match.beacon, beaconSource: MM.match.beaconSource ?? null, participants: MM.match.participants, mode: MM.match.mode ?? null, buildHash: MM.match.buildHash ?? null, rulesetId: MM.match.rulesetId ?? MM.game.rulesetId ?? null }); }
   else if (t.dataset.lb) { lbTab = t.dataset.lb; render(); }
-  else if (t.dataset.style) { styleFilter = t.dataset.style; render(); }
+  else if (t.dataset.cards) { cardKind = t.dataset.cards; render(); }
+  else if ('cardsHeld' in t.dataset) { cardHeld = !cardHeld; render(); }
+  else if (t.dataset.nodeTab) { nodeTab = t.dataset.nodeTab; store('cabinet.nodeTab', nodeTab); render(); }
   else if (t.id === 'name-btn') setName();
   else if (t.id === 'air-btn' || t.id === 'air-link' || t.id === 'dash-lock-btn') signInWithAir();
   else if (t.id === 'me-chip' && air.configured() && player.kp && !Ai.me.session?.address) { e.preventDefault(); signInWithAir(); }
