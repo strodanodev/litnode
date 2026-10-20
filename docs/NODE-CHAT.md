@@ -10,7 +10,10 @@ that moment into the ledger the chain already commits to. Planned 21 Oct 2026.
 that §2 states loosely: the rate limit is "at most three lines whose timestamps fall in
 any fifteen-second window", checked over the lines' own `at` so every node refuses the
 same flood in any order; and seen-by counts peer **nodes** (the sender's heartbeat leads
-every push and reply), not sockets. Phases B and C are not started.
+every push and reply), not sockets. **Phase B built 21 Oct 2026** on the website
+repo's `control-plane-phase1` branch (`NodeConsole.tsx` `NodeChat`, `fleet.ts`,
+`node-console.css`), verified against a two-node offline fixture and a 0.11.28 node;
+it ships with the next Control Plane MSI. Phase C is not started.
 
 Decisions taken (change them here before building, not in code):
 
