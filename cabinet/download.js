@@ -5,15 +5,15 @@
  *  A new Control Plane build changes only CONTROL_PLANE below: version, the litnode it embeds, the
  *  download url, the installer's file name, SHA-256 (its release's SHA256SUMS.txt) and size. */
 export const CONTROL_PLANE = {
-  version: '0.1.14',
-  litnode: '0.11.26',         // the node it installs; it then updates itself through signed, registered releases
+  version: '0.1.15',
+  litnode: '0.11.29',         // the node it installs; it then updates itself through signed, registered releases
   // A GitHub release that is NOT marked Latest (tag control-plane-v<version>): nodes take their updates from
   // the Latest release, so this one is invisible to them. `gh release create … --latest=false`.
-  url: 'https://github.com/strodanodev/litnode/releases/download/control-plane-v0.1.14/LITNODE-Control-Setup-0.1.14-litnode-0.11.26.msi',
-  release: 'https://github.com/strodanodev/litnode/releases/tag/control-plane-v0.1.14',
+  url: 'https://github.com/strodanodev/litnode/releases/download/control-plane-v0.1.15/LITNODE-Control-Setup-0.1.15-litnode-0.11.29.msi',
+  release: 'https://github.com/strodanodev/litnode/releases/tag/control-plane-v0.1.15',
   host: 'GitHub',              // where `url` points, said on the button's caption
-  file: 'LITNODE-Control-Setup-0.1.14-litnode-0.11.26.msi',
-  sha256: '265061B1C4AADB74DA3A559D4201DF2970612FDA556442A47EF3A902C43EBD80',
+  file: 'LITNODE-Control-Setup-0.1.15-litnode-0.11.29.msi',
+  sha256: '785BBE61D69B047DF4B2C2E2B386BC50E7F4BDE1A46716D24DFEB52D7AF94C9A',
   sizeMB: 167,
   platform: 'Windows 10/11 · x64',
 };
