@@ -3,7 +3,7 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [0.11.29] — unreleased — node chat: one public line between operators, over the gossip
+## [0.11.29] — 2026-10-21 — node chat: one public line between operators, over the gossip
 
 ### Added
 - **Node chat** (`protocol/chat.js`, `node/litnode.js`; docs/NODE-CHAT.md). One global, public, plain-text line between
