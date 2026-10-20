@@ -118,7 +118,27 @@ position is yours to choose — a stable hash of `nodeId` gives a stable layout.
 ### `recent[]` — the last 20 decided matches from the chain log: `{ matchId (bytes32 key), status, block, tx, at }`
 ### `events[]` — the last 50 node events worth a line (never the per-second ticks): `{ t, type, …data }`.
 Types you will see: `placed settled attested chain-final backstop tx tx-failed gas-low witness dispute ruleset stakes bond
-tunnel announced update incompatible peer.forgotten seed-refused proposed enrolled`.
+tunnel announced update incompatible peer.forgotten seed-refused proposed enrolled chat`.
+
+---
+
+### `chat[]` — node chat (docs/NODE-CHAT.md), since litnode 0.11.29
+
+The ring this node holds, oldest first, newest last (at most 200 lines or 24 hours):
+`{ id, at, signer, operator, wallet, bonded, text, seenBy, mine }`.
+
+- `signer` is the node key that signed the line; `operator` its heartbeat label (null when that peer has aged out);
+  `wallet` and `bonded` come from the stake table (`bonded` null = no NodeStake configured, so no tier).
+  Show the label **with** the wallet short: a label is not an identity.
+- `text` is plain text, 1..280 characters, newlines allowed. Render it as text: no links, no markup.
+- `seenBy` = how many peer nodes have echoed this line back in their gossip; for `mine` lines it is the delivery
+  receipt ("pending" at 0, "seen by N peers" after).
+- A node before 0.11.29 has no `chat` key: show "update the node to chat".
+
+To speak: `POST http://127.0.0.1:<PORT>/chat` with `{ "text": "…" }`, loopback only (the same rule as `POST /update`).
+Answers `202 { ok, id, at, envelope }`, `400` for text the mesh would refuse, `429` past three lines in fifteen
+seconds, `403` when this node is not bonded (an unbonded key is held by peers but never forwarded, so the node
+refuses to send into the void). Poll `/fleet` as before; the line appears in `chat[]` with `mine: true`.
 
 ---
 

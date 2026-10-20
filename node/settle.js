@@ -85,6 +85,7 @@ export function createSettlement({
   relayKeys = [],                      // relay pubkeys THIS host accepts
   hostRelayKeys = () => [],            // hostId → relay pubkeys that host advertised (witness path)
   onSettled = null,                    // (delta, storedLedger) → after a RANKED, PLACED result settled here (MatchBook.settle)
+  chatStamp = null,                    // () → this node's chat ring at settle time (docs/NODE-CHAT.md §2.5); stored as ledger `meta.chat`, outside the result
 }) {
   if (!sandbox) throw new Error('settlement needs the title sandbox');
   /** The build a submission names, or the current one when it names none. */
@@ -212,7 +213,11 @@ export function createSettlement({
   const finish = async (body, sub, binding) => {
     body.resultHash = commit(body);
     const delta = { ...body, hostSig: await sign(HOST_TAG, body, identity.privateKey), cosigners: [], cosigs: {}, disputes: [] };
-    const stored = { ...sub, descriptor: binding.envelope ?? null };
+    // `meta` is what the ledger carries beside the match and outside the result: the submission's own (a client's
+    // room chat, say) plus this host's node-chat stamp. It rides ledgerHash on chain and is custodied by the
+    // witnesses; replay and resultFields never read it, so a witness holding a different ring still agrees.
+    const meta = { ...(sub.meta && typeof sub.meta === 'object' && !Array.isArray(sub.meta) ? sub.meta : {}), ...(chatStamp ? { chat: chatStamp() } : {}) };
+    const stored = { ...sub, descriptor: binding.envelope ?? null, ...(Object.keys(meta).length ? { meta } : {}) };
     put(dirs.ledgers, sub.matchId, stored);
     put(dirs.deltas, sub.matchId, delta);
     deltas.set(sub.matchId, delta);

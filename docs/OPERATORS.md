@@ -255,7 +255,11 @@ or the terminal dashboard (`l`).
 - Use a **fresh wallet** for this pilot. The node never asks for your
   wallet key; only the CLI bond command reads it, from the shell.
 - Never paste a private key into chat, an issue, a file or a log. If you
-  did, treat that wallet as burned and make a new one.
+  did, treat that wallet as burned and make a new one. That includes the
+  **node chat** (litnode 0.11.29+, the panel under Activity in the Control
+  Plane and `npm run fleet`): every line there is public, signed by your
+  node's key, held by every peer for a day and stamped into the ledgers you
+  settle. Plain text only; treat any link pasted there as hostile.
 - `data/<OPERATOR>/identity.json` is your node's key. Back it up.
 - If players sign in through your node with AIR, the node creates and
   keeps their litVM proxy-wallet keys in its `data` folder. Treat that

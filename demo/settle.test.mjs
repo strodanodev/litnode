@@ -18,7 +18,7 @@ import { createNode } from '../node/litnode.js';
 import { PROTOCOL_VERSION } from '../protocol/version.js';
 import { generateKeypair, sign } from '../protocol/keys.js';
 import { verifyProof } from '../protocol/epoch.js';
-import { resultHash } from '../protocol/result.js';
+import { resultHash, resultFields } from '../protocol/result.js';
 import { HOST_TAG, RELAY_TAG } from '../node/settle.js';
 import { chainHead } from '../protocol/log.js';
 import { placeMatch, playPlaced, until } from './lib/mesh.mjs';
@@ -46,6 +46,7 @@ test('settle: placed + signed → verified delta → witness co-sign → officia
   assert.equal(desc.protocol, PROTOCOL_VERSION);
   assert.equal(desc.buildHash, manifest.buildHash, 'the descriptor pins the build');
   const sub = await playPlaced(desc, kps, { title, engine, manifest, balance });
+  assert.equal((await post(`${host.addr}/chat`, { text: 'gg incoming' })).status, 202, 'the host says something before it settles (docs/NODE-CHAT.md §2.5)');
   const r = await post(`${host.addr}/ledger`, sub);
   const text = await r.text();
   assert.equal(r.status, 200, text);
@@ -125,6 +126,12 @@ test('settle: placed + signed → verified delta → witness co-sign → officia
 
   // ---- AUDIT PROBE 4: a host-signed delta with altered scores — the witness recomputes and DISPUTES
   const ledger = await (await fetch(`${host.addr}/ledger/${desc.matchId}`)).json();
+  // docs/NODE-CHAT.md §2.5: the ledger carries the host's chat ring as `meta.chat`, OUTSIDE the result — committed by
+  // ledgerHash on chain, custodied by the witnesses, never part of what a witness recomputes
+  assert.ok(ledger.meta?.chat && ledger.meta.chat.count >= 1 && /^[0-9a-f]{64}$/.test(ledger.meta.chat.root) && /^[0-9a-f]{64}$/.test(ledger.meta.chat.newest) && Number.isInteger(ledger.meta.chat.hour), `the host stamped its chat ring into the ledger: ${JSON.stringify(ledger.meta)}`);
+  assert.ok(!('meta' in resultFields({ ...signed, meta: ledger.meta })), 'the commitment has no meta field');
+  assert.equal(resultHash({ ...signed, meta: ledger.meta }), signed.resultHash, 'the commitment ignores meta');
+  assert.equal((await wit.settlement.cosign(signed, { ...ledger, meta: { chat: { hour: 0, root: 'ff'.repeat(32), newest: null, count: 0 } } })).ok, true, 'a witness holding another ring still agrees');
   const forged = await reSign(signed, host.identity, { scores: { [kps[0].publicKey]: 999999, [kps[1].publicKey]: 0 } });
   const v = await wit.settlement.cosign(forged, ledger);
   assert.equal(v.ok, false); assert.match(v.reason, /result differs: scores/);

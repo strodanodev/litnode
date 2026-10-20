@@ -67,6 +67,12 @@ export function screen(f) {
   L.push('');
   for (const e of f.events.slice(-6)) { const { t, type, ...rest } = e; L.push(`  ${new Date(t).toISOString().slice(11, 19)} ${pad(type, 14)} ${JSON.stringify(rest).slice(0, 100)}`); }
   L.push('');
+  // node chat (docs/NODE-CHAT.md): the last five lines of the ring this node holds — public, signed by each node's key
+  if (Array.isArray(f.chat)) {
+    L.push(`chat ${f.chat.length} held${f.chat.length ? '' : ' (nobody has said anything in the last day)'}`);
+    for (const l of f.chat.slice(-5)) L.push(`  ${new Date(l.at).toISOString().slice(11, 19)} ${pad((l.mine ? 'you' : l.operator ?? short(l.signer, 10)) + (l.bonded === false ? ' (unbonded)' : ''), 18)} ${l.text.slice(0, 90)}${l.mine ? `  · seen by ${l.seenBy}` : ''}`);
+    L.push('');
+  }
   L.push(`graph ${f.graph.nodes.length} nodes · ${f.graph.edges.length} edges (${f.graph.edges.filter((e) => e.measured).length} measured here) · digest ${short(f.digest, 12)} · proof ok`);
   return L.join('\n');
 }

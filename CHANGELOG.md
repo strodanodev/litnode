@@ -3,6 +3,36 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.11.29] — unreleased — node chat: one public line between operators, over the gossip
+
+### Added
+- **Node chat** (`protocol/chat.js`, `node/litnode.js`; docs/NODE-CHAT.md). One global, public, plain-text line between
+  the mesh's operators, with no server, no account and no contract: a message is one more signed envelope
+  (`seal('chat', { v, at, text }, nodeKey)`) on the gossip every node already pushes each tick, verified with the same
+  cache as a heartbeat before it is held or forwarded, and derived-id'd over signer, time and text so the same line
+  from two peers is one line. Every table a stranger can add to has a ceiling, as the queue's do: 280 characters,
+  a ring of 200 lines or 24 hours in memory, three lines per key per fifteen seconds (over the lines' own timestamps,
+  so every node refuses the same flood whatever order gossip delivered it in), a day's clock window, 64 envelopes
+  looked at per message; with NodeStake a bonded key is forwarded, an unbonded key is held at a cap of 16 and never
+  forwarded, a key the stake table never listed is dropped. Refusals are counted under `/health.gossipLimits.refused.chat`.
+  A tick pushes the last two minutes plus `chatNewest`; a reply carries the whole ring to a pusher that is further
+  behind than that, so a restarted node is caught up in its first round trip. `seenBy` counts the peer nodes that
+  echoed a line back: the sender's receipt, and the only one. `POST /chat { text }` on loopback speaks from the
+  node's own key (`403` when the node is not bonded); `/fleet.chat` serves the ring under the signed digest; each
+  line held is an event of type `chat` on the Logs stream. `npm run fleet` prints the last five lines.
+- **Ledger `meta`** (`node/settle.js`). The ledger a host stores and serves (`/ledger/:id`, the bytes `ledgerHash`
+  commits to on chain) now carries a `meta` section beside the match: the submission's own `meta` if it sent one, plus
+  `meta.chat = { hour, root, newest, count }`, this host's chat ring at settle time. Host-asserted, chain-timestamped
+  through the `Settled` event, custodied by the drawn witnesses for the season, and **outside the result**: replay and
+  `resultFields` never read it, so a witness holding a different ring agrees on the same match (`demo/settle.test.mjs`).
+  Old nodes ignore the extra key; old ledgers have none.
+
+### Tests
+- `demo/chat.test.mjs`: the pure parts; a line travels three nodes and comes back as its receipt, under the signed
+  `/fleet` digest; forgeries, oversize, future-dated, padded and burst lines refused and never forwarded; the ring's
+  ceiling and the catch-up rule; with a mocked NodeStake, bonded travels, unbonded is held but not forwarded, a
+  stranger is dropped, an unbonded node cannot speak. `demo/fleet.test.mjs`: `chat` in the exact key set.
+
 ## [0.11.28] — 2026-10-19 — server bundles: a gauntlet title's match server travels the mesh by hash; reward points no longer refund gas
 
 ### Added

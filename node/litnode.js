@@ -16,6 +16,8 @@ import { generateKeypair, seal, opened, verify } from '../protocol/keys.js';
 import { snapshot as buildSnapshot, HEARTBEAT_TAG, epochOf, EPOCH_MS } from '../protocol/snapshot.js';
 import { applyStakes } from '../protocol/staking.js';
 import { pair, QUEUE_TAG, bucketOf, isStale } from '../protocol/pairing.js';
+import { CHAT_TAG, chatBody, chatId, chatProblem, chatRateOk, chatRoot, CHAT_PAST_MS, CHAT_RING, CHAT_UNBONDED_RING, CHAT_PUSH_WINDOW_MS, CHAT_PER_MESSAGE, CHAT_SEEN_MAX } from '../protocol/chat.js';
+import { hourOf } from '../protocol/epoch.js';
 import { install as installDoh } from './dns.js';
 import { placement } from '../protocol/placement.js';
 import { createChain } from './chain.js';
@@ -489,6 +491,7 @@ export async function createNode({
       return d;
     },
     hostRelayKeys: (hostId) => heartbeats.get(hostId)?.relayKeys ?? [],
+    chatStamp: () => chatStamp(), // defined below; only called at settle time
   });
   const canSettle = roles.some((r) => ['host', 'settler', 'relay'].includes(r));
   const isWitness = roles.includes('witness');
@@ -699,8 +702,9 @@ export async function createNode({
   const UNBONDED_PUSH_EVERY = 10;  // ticks between our pushes to an unbonded peer (it still gets everything in our replies)
   const verifiedSigs = new Map();  // `tag|sig` → digest of what was signed: an envelope is verified once, not on every push
   const evicted = new Map();       // nodeId → when it was dropped as unbonded over the cap
-  const guard = { heartbeat: { badSig: 0, full: 0, evicted: 0 }, queue: { badSig: 0, window: 0, unknownTitle: 0, full: 0 } };
-  guard.reported = JSON.stringify({ heartbeat: guard.heartbeat, queue: guard.queue }); // nothing refused yet: nothing to report
+  const guard = { heartbeat: { badSig: 0, full: 0, evicted: 0 }, queue: { badSig: 0, window: 0, unknownTitle: 0, full: 0 }, chat: { badSig: 0, malformed: 0, window: 0, rate: 0, full: 0, unbonded: 0, unknown: 0 } };
+  const guardJson = () => JSON.stringify({ heartbeat: guard.heartbeat, queue: guard.queue, chat: guard.chat });
+  guard.reported = guardJson(); // nothing refused yet: nothing to report
   /** opened(), remembered: the same sig over the same body (signer, tag) is not verified twice. */
   const checked = async (tag, env) => {
     if (!env?.body || !env.signer || typeof env.sig !== 'string') return false;
@@ -741,18 +745,62 @@ export async function createNode({
     const unbonded = [...envelopeCache.values()].filter((e) => isUnbonded(e.body.nodeId)).sort((a, b) => (b.body.epoch ?? 0) - (a.body.epoch ?? 0));
     for (const e of unbonded.slice(MAX_UNBONDED_KEYS)) evict(e.body.nodeId);
   };
+  // ---------------------------------------------------------------- node chat (docs/NODE-CHAT.md)
+  // One global line between operators, riding the gossip above: id → { env, at, seenBy }. Held for CHAT_RING
+  // messages or CHAT_PAST_MS, in memory only; a restarted node gets the ring back in its first gossip reply.
+  const chat = new Map();
+  /** With NodeStake: 'bonded' speaks and is forwarded, 'unbonded' is held at a small cap and never forwarded,
+   *  'unknown' (a key the stake table has not listed) is dropped — it is re-pushed for two minutes and in every
+   *  reply, so a bonded node whose standing is read a tick later is heard then. A dev mesh has no stake table: everyone speaks. */
+  const chatTier = (signer) => (signer === nodeId ? 'bonded' : !nodeStake || !stakes ? 'bonded' : !(signer in stakes) ? 'unknown' : stakes[signer].active ? 'bonded' : 'unbonded');
+  const chatForwardable = (c) => chatTier(c.env.signer) === 'bonded';
+  const chatPrune = (now = Date.now()) => {
+    for (const [id, c] of chat) if (c.at < now - CHAT_PAST_MS) chat.delete(id);
+    while (chat.size > CHAT_RING) { let oldest = null; for (const [id, c] of chat) if (!oldest || c.at < oldest.at) oldest = { id, at: c.at }; chat.delete(oldest.id); }
+  };
+  const chatNewest = () => { let m = 0; for (const c of chat.values()) if (chatForwardable(c) && c.at > m) m = c.at; return m; };
+  /** What a tick pushes: the forwardable messages of the last CHAT_PUSH_WINDOW_MS; `all` = the whole forwardable ring (catch-up). */
+  const chatEnvelopes = (all = false, now = Date.now()) => [...chat.values()].filter((c) => chatForwardable(c) && (all || c.at > now - CHAT_PUSH_WINDOW_MS)).map((c) => c.env);
+  const mergeChat = async (list, from = null) => {
+    const now = Date.now();
+    for (const env of (Array.isArray(list) ? list : []).slice(0, CHAT_PER_MESSAGE)) {
+      const why = chatProblem(env, { now });
+      if (why) { guard.chat[why]++; continue; }
+      const id = chatId(env);
+      const cur = chat.get(id);
+      if (cur) { if (from && cur.seenBy.size < CHAT_SEEN_MAX) cur.seenBy.add(from); continue; }
+      const tier = chatTier(env.signer);
+      if (tier === 'unknown') { guard.chat.unknown++; continue; }
+      if (tier === 'unbonded' && [...chat.values()].filter((c) => !chatForwardable(c)).length >= CHAT_UNBONDED_RING) { guard.chat.unbonded++; continue; }
+      if (!(await checked(CHAT_TAG, env))) { guard.chat.badSig++; continue; } // verified before the rate limit: a forgery cannot spend a real key's budget
+      const raced = chat.get(id); // a push and a reply carrying the same message are absorbed concurrently; the verify above yielded
+      if (raced) { if (from && raced.seenBy.size < CHAT_SEEN_MAX) raced.seenBy.add(from); continue; }
+      if (!chatRateOk([...chat.values()].filter((c) => c.env.signer === env.signer).map((c) => c.at), env.body.at)) { guard.chat.rate++; continue; }
+      if (chat.size >= CHAT_RING && [...chat.values()].every((c) => c.at >= env.body.at)) { guard.chat.full++; continue; } // older than everything a full ring holds
+      chat.set(id, { env, at: env.body.at, seenBy: new Set(from ? [from] : []) });
+      chatPrune(now);
+      emit('chat', { id, signer: env.signer, operator: env.signer === nodeId ? operator : heartbeats.get(env.signer)?.operator ?? null, at: env.body.at, text: env.body.text, mine: env.signer === nodeId });
+    }
+  };
+  /** The ring for /fleet, newest last, with what a dashboard shows beside each line. */
+  const chatLines = () => [...chat.entries()].sort((a, b) => a[1].at - b[1].at).map(([id, c]) => ({
+    id, at: c.at, signer: c.env.signer, operator: c.env.signer === nodeId ? operator : heartbeats.get(c.env.signer)?.operator ?? null,
+    wallet: stakes?.[c.env.signer]?.operator ?? null, bonded: stakes ? !!stakes[c.env.signer]?.active : null, text: c.env.body.text, seenBy: c.seenBy.size, mine: c.env.signer === nodeId,
+  }));
+  /** This node's ring at one moment, for the ledger it settles (node/settle.js `meta.chat`): host-asserted, chain-timestamped via ledgerHash. */
+  const chatStamp = () => { const ids = [...chat.keys()]; let newest = null; for (const [id, c] of chat) if (!newest || c.at > newest.at) newest = { id, at: c.at }; return { hour: hourOf(Date.now()), root: chatRoot(ids), newest: newest?.id ?? null, count: ids.length }; };
   /** Titles this node could place: what it holds and what any peer advertises. */
   const knownTitles = () => {
     const t = new Set(loaded.keys());
     for (const b of heartbeats.values()) for (const rid of Object.keys(b.manifests ?? {})) t.add(rid);
     return t;
   };
-  const guardStatus = () => ({ peerKeys: envelopeCache.size, maxPeerKeys: MAX_PEER_KEYS, unbonded: [...envelopeCache.keys()].filter(isUnbonded).length, maxUnbonded: MAX_UNBONDED_KEYS, evicted: evicted.size, queue: queueEnvelopes.size, maxQueue: MAX_QUEUE, verifyCache: verifiedSigs.size, refused: { heartbeat: { ...guard.heartbeat }, queue: { ...guard.queue } } });
+  const guardStatus = () => ({ peerKeys: envelopeCache.size, maxPeerKeys: MAX_PEER_KEYS, unbonded: [...envelopeCache.keys()].filter(isUnbonded).length, maxUnbonded: MAX_UNBONDED_KEYS, evicted: evicted.size, queue: queueEnvelopes.size, maxQueue: MAX_QUEUE, chat: chat.size, maxChat: CHAT_RING, verifyCache: verifiedSigs.size, refused: { heartbeat: { ...guard.heartbeat }, queue: { ...guard.queue }, chat: { ...guard.chat } } });
   // Refusals are counted, and reported once a minute at most: a flood must not become a flood of log lines.
   let guardReportAt = 0;
   const guardReport = () => {
     if (Date.now() - guardReportAt < 60_000) return;
-    const now = JSON.stringify({ heartbeat: guard.heartbeat, queue: guard.queue });
+    const now = guardJson();
     if (now === guard.reported) return;
     guardReportAt = Date.now(); guard.reported = now;
     log(`gossip limits: refused ${now}`); emit('gossip.guard', guardStatus());
@@ -840,6 +888,9 @@ export async function createNode({
       // Forward what we know: our own sealed heartbeat plus cached envelopes we received.
       payload.heartbeats.push(...envelopeCache.values());
       payload.queue.push(...queueEnvelopes.values());
+      // Node chat: the last two minutes, and how far our ring reaches so a peer that is behind gets the rest in its reply.
+      chatPrune();
+      payload.chat = chatEnvelopes(); payload.chatNewest = chatNewest();
       // Advertise what we settled so witnesses can come and check it, and the
       // placements we froze so peers converge on them.
       // v0.2 path only: with MatchBook the chain is the index and the payload cannot grow with history (§3).
@@ -938,7 +989,7 @@ export async function createNode({
   const absorb = async (msg, meta = null) => {
     if (meta) {
       const sig = msg.heartbeats?.find((e) => e?.body?.nodeId !== nodeId)?.sig ?? null;
-      emit('gossip.in', { from: meta.from, via: meta.via, bytes: meta.bytes, heartbeats: msg.heartbeats?.length ?? 0, queue: msg.queue?.length ?? 0, deltas: msg.deltas?.length ?? 0, matches: msg.matches?.length ?? 0, sig });
+      emit('gossip.in', { from: meta.from, via: meta.via, bytes: meta.bytes, heartbeats: msg.heartbeats?.length ?? 0, queue: msg.queue?.length ?? 0, deltas: msg.deltas?.length ?? 0, matches: msg.matches?.length ?? 0, chat: msg.chat?.length ?? 0, sig });
     }
     const list = (x) => (Array.isArray(x) ? x.slice(0, MAX_PER_MESSAGE) : []);
     const now = Date.now();
@@ -969,6 +1020,9 @@ export async function createNode({
       queueEnvelopes.set(k, env); entries.push(env);
     }
     await mergeQueue(entries);
+    // seen-by is counted per peer NODE: the sender's own heartbeat leads every push and every reply, so its key names
+    // the peer whether the message came by push (a socket address) or by reply (a URL)
+    if (Array.isArray(msg.chat)) await mergeChat(msg.chat, meta ? (msg.heartbeats?.[0]?.signer ?? meta.from) : null);
     for (const env of list(msg.matches)) await absorbMatch(env);
     if (isWitness && !mbook) for (const ad of msg.deltas ?? []) void witnessOne(ad); // with MatchBook, witnessing is chain-driven (node/matchbook.js)
     if (mbook && Array.isArray(msg.hints)) mbook.absorbHints(msg.hints);
@@ -1237,7 +1291,7 @@ export async function createNode({
         snapshotRoot: s.root, epoch: s.epoch, versions, urls: peersKnown.size, unreachable: [...unreachable.keys()], gossip: trafficNow() },
       peers, graph: { nodes: [{ nodeId, operator, self: true, fresh: true }, ...peers.map((p) => ({ nodeId: p.nodeId, operator: p.operator, self: false, fresh: p.fresh }))], edges },
       rooms, queue: [...waiting.values()].map((w) => ({ ...w, buckets: [...w.buckets].sort() })), titles: titlesNow().map((t) => ({ rulesetId: t.rulesetId, display: t.display, hosts: t.hosts.length, bondedHosts: t.bondedHosts, published: t.published })),
-      recent: mbook ? mbook.recent(20) : [], events: recent.slice(-50), guardian: guardianFleet(),
+      recent: mbook ? mbook.recent(20) : [], events: recent.slice(-50), guardian: guardianFleet(), chat: chatLines(),
     };
   };
 
@@ -1329,7 +1383,8 @@ export async function createNode({
         const from = req.socket.remoteAddress ?? '?';
         inbound.set(from, Date.now());
         trafficNote('in', text.length);
-        await absorb(text ? JSON.parse(text) : {}, { from, bytes: text.length, via: 'push' });
+        const msg = text ? JSON.parse(text) : {};
+        await absorb(msg, { from, bytes: text.length, via: 'push' });
         // Answer with everything we push, deltas included: a peer that can
         // reach us while we cannot reach it (NAT, a second subnet) must still
         // learn what we settled, or it can never witness it.
@@ -1339,7 +1394,21 @@ export async function createNode({
           deltas: mbook ? [] : settlement.list().map((d) => ({ matchId: d.matchId, rulesetId: d.rulesetId, buildHash: d.buildHash, hostId: d.hostId, addr, cosigners: d.cosigners })),
           hints: mbook ? mbook.hints() : [],
           matches: matchEnvelopes(),
+          // the chat window — or the whole ring when the pusher's newest is further behind ours than the window (a restart, a partition)
+          chat: chatEnvelopes(Number.isFinite(msg?.chatNewest) && chatNewest() - msg.chatNewest > CHAT_PUSH_WINDOW_MS), chatNewest: chatNewest(),
         });
+      }
+      // Node chat: this machine speaks from the node's own key (docs/NODE-CHAT.md). Anyone reads it on /fleet.chat.
+      if (req.method === 'POST' && url.pathname === '/chat') {
+        if (!isLoopback(req)) return json(res, 403, { error: 'chat is sent from the node\'s own machine only' });
+        if (stakes && !stakes[nodeId]?.active) return json(res, 403, { error: 'bond this node to chat: an unbonded key is not forwarded' });
+        let env;
+        try { const b = await readBody(req).catch(() => ({})); env = await seal(CHAT_TAG, chatBody(b?.text), identity); } catch (e) { return json(res, 400, { error: e.message }); }
+        const before = guard.chat.rate;
+        await mergeChat([env]);
+        const id = chatId(env);
+        if (!chat.has(id)) return json(res, guard.chat.rate > before ? 429 : 400, { error: guard.chat.rate > before ? 'too fast: three messages per fifteen seconds' : 'not held' });
+        return json(res, 202, { ok: true, id, at: env.body.at, envelope: env });
       }
       if (req.method === 'POST' && url.pathname === '/queue') {
         const env = await readBody(req);
@@ -1701,7 +1770,7 @@ export async function createNode({
   return {
     nodeId, addr, port: actualPort, identity,
     snapshot: currentSnapshot, matches: matchesNow, installRuleset, installServer, servers: serverStatus, chain, settlement, matchBook: mbook,
-    rulesets: () => buildHashes(), peers: () => heartbeats, inbound, operator, roles, region, startedAt,
+    rulesets: () => buildHashes(), peers: () => heartbeats, inbound, operator, roles, region, startedAt, chat: chatLines,
     version, updater, restart, tunnels, upnp: upnpCtl, get wsAddr() { return wsAddr; }, get announcer() { return announcer; }, seeds: () => chainSeeds, seedChecks, admitSeed, sandbox, refused, incompatible, protocol: PROTOCOL_VERSION, peersKnown,
     get gauntlet() { return gauntlet; },
     async stop() { clearInterval(stallTimer); clearInterval(timer); clearInterval(tunnelWatch?.timer); clearInterval(updateTimer); clearInterval(directoryTimer); clearTimeout(announceRetry); clearInterval(relayTimer); await publisherServices?.stop(); await gauntlet?.stopAll(); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); server.closeAllConnections?.(); await new Promise((r) => server.close(r)); },
