@@ -106,6 +106,20 @@ fixed before play, signed in a descriptor, and the submission must match it
 (`placed: true`, `descriptorHash` in the commitment). An unplaced submission
 settles casual, `placed: false`, and never reaches official standings.
 
+What the host binds to (0.11.31): the placement in its own book, or — once
+an earlier rival for the same players replaced it, its 15 minutes ran out,
+or the node restarted — the signed descriptor the client carries back from
+`GET /match` (`envelope`) as the submission's `descriptor`, verified as a
+witness verifies it: signature, protocol, the placing key bonded in the
+live stake table or at the descriptor's pinned block, the beacon this node
+holds for the bucket, and an id the beacon derives for the two players.
+Where the result then goes is the chain's call: a commit under the ledger's
+id is settled on chain; none, and the result stays on the host; a commit
+under another id for the same players (a placement replaced after a client
+had fetched it) is never settled and expires on its own after the settle
+window. The book is not persisted: the ledger is the proof of placement,
+the chain is the record of the commit.
+
 Only a host with three drawn witnesses under other operators commits on
 chain; with fewer online the match plays casual-only and the arcade says so
 before the queue.

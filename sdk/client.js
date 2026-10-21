@@ -132,8 +132,10 @@ export function createRecorder({ matchId, participants, rulesetId, buildHash, mo
     entries: () => entries.slice(),
     /** What each player signs (protocol 3). */
     body: () => ledgerBody({ matchId, ticks: entries.length, head, buildHash }),
-    /** The unsigned submission; add `signatures` from every player. */
-    submission: ({ signatures = {}, hydration = null, expected = null } = {}) => ({ matchId, rulesetId, buildHash, mode, participants: order, entries: entries.slice(), ...(Object.keys(signatures).length ? { signatures } : {}), ...(hydration ? { hydration } : {}), ...(expected ? { expected } : {}) }),
+    /** The unsigned submission; add `signatures` from every player. `descriptor`: the placement's signed envelope
+     *  (`match.descriptor` from the shell, `envelope` on GET /match): with it the host binds the ledger even after its
+     *  own book replaced, pruned or lost the placement. */
+    submission: ({ signatures = {}, hydration = null, expected = null, descriptor = null } = {}) => ({ matchId, rulesetId, buildHash, mode, participants: order, entries: entries.slice(), ...(Object.keys(signatures).length ? { signatures } : {}), ...(hydration ? { hydration } : {}), ...(expected ? { expected } : {}), ...(descriptor ? { descriptor } : {}) }),
   };
 }
 
@@ -146,14 +148,15 @@ export const headMatches = (rec) => chainHead(rec.entries()) === rec.head;
 /** Collect both players' signatures and settle on the host node.
  *  `signers` maps playerId → { sign(body) } (the shell for this player, your
  *  transport's relay of the other player's signature, or localSigner in
- *  tests). Returns the node's delta. */
-export async function settle({ nodeUrl, recorder, signers, fetchImpl = globalThis.fetch, hydration = null }) {
+ *  tests). `descriptor`: the placement's signed envelope (`shell.match.descriptor`), carried so the host binds the
+ *  ledger even once its book no longer holds the placement. Returns the node's delta. */
+export async function settle({ nodeUrl, recorder, signers, fetchImpl = globalThis.fetch, hydration = null, descriptor = null }) {
   const body = recorder.body();
   const signatures = {};
   // Each entry is a signer ({ sign(body) } — the shell, localSigner) or the signature itself, e.g. the
   // other player's, carried over your transport as a hex string or { sig }.
   for (const [playerId, s] of Object.entries(signers)) { const r = typeof s === 'string' ? s : typeof s?.sign === 'function' ? await s.sign(body) : s; signatures[playerId] = r?.sig ?? r; }
-  const sub = recorder.submission({ signatures, hydration });
+  const sub = recorder.submission({ signatures, hydration, descriptor });
   const r = await fetchImpl(`${String(nodeUrl).replace(/\/+$/, '')}/ledger`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(sub) });
   const j = await r.json();
   if (!r.ok) throw new Error(j.error ?? `ledger: ${r.status}`);

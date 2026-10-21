@@ -514,13 +514,34 @@ export async function createNode({
     onSettled: async (delta, ledger) => {
       const e = matchBook.get(delta.matchId);
       if (e) { e.settled = true; if (e.committed && !e.commitTx) await Promise.race([e.committed, new Promise((r) => setTimeout(r, 15_000))]); } // a match settled within seconds of placement: let the commit go first
+      else {
+        // The book no longer holds this placement (an earlier rival replaced it, its 15 minutes ran out, the node
+        // restarted) and the ledger bound to the signed descriptor it carried. The chain decides where the result goes:
+        // a commit under THIS id (sent before the book lost it) is settled on chain below; none, and it settles here
+        // only. A commit under a rival id for the same players (the book replaced this placement after a client had
+        // already fetched it) is never settled and expires on its own: the seats void it after the settle window.
+        const st = mbook ? mbook.statusOf(matchIdBytes32(delta.matchId)) : null;
+        const rival = [...matchBook.values()].find((x) => x.commitTx && (delta.participants ?? []).some((p) => x.descriptor.participants?.includes(p)));
+        log(`settled ${delta.matchId.slice(0, 12)} from the ledger's own descriptor: the match book no longer holds it; ${!mbook ? 'no MatchBook here' : st !== 'none' ? `the chain holds its commit (${st})` : `no commit on chain under this id${rival ? `, ${rival.descriptor.matchId.slice(0, 12)} for the same players is committed instead and expires on its own` : ''}: it settles locally only`}`);
+      }
       return mbook?.settle(delta, ledger);
     },
     descriptorFor: (matchId) => { const e = matchBook.get(matchId); return e ? { descriptor: e.descriptor, envelope: e.envelope } : null; },
+    /** A descriptor envelope a ledger carries, for a placement this node's book does not hold: the witness path
+     *  always, the host path once the book replaced, pruned or lost the placement it served (0.11.31). */
     verifyDescriptor: async (env) => {
       const d = env?.body;
-      if (!d?.matchId || d.computedBy !== env.signer || !(await opened(MATCH_TAG, env))) return null;
-      if (stakes && !stakes[d.computedBy]?.active) return null;
+      const refuse = (why) => { log(`descriptor ${String(d?.matchId ?? '?').slice(0, 12)} from ${String(d?.computedBy ?? '?').slice(0, 8)} refused: ${why}`); return null; };
+      if (!d?.matchId || !d.host || d.computedBy !== env.signer) return refuse('malformed');
+      if (!(await checked(MATCH_TAG, env))) return refuse('bad signature');
+      if ((d.protocol ?? 1) !== PROTOCOL_VERSION) return refuse(`protocol ${d.protocol ?? 1}`);
+      // Bonded: in the live table, or — for a placer no heartbeat reaches now (it restarted, the placement outlived
+      // its 15 minutes here) or whose bond moved since — at the block the placement pinned.
+      if (stakes && !stakes[d.computedBy]?.active) { const st = await chain.standingAt(d.computedBy, d.beaconBlock ?? null); if (!st?.active) return refuse(`placer not bonded${st ? ` at ${st.at}` : ''}`); }
+      // The beacon must be this node's own for that bucket when this node has one from the same source (the chain, or
+      // the offline mesh's local string): a bonded key cannot name a beacon — a seed — of its choosing.
+      const bc = Number.isInteger(d.bucket) ? chain.beaconFor(d.bucket) : null;
+      if (bc && bc.source === d.beaconSource && bc.beacon !== d.beacon) return refuse(`beacon is not this node's ${bc.source} beacon for bucket ${d.bucket}`);
       return d;
     },
     hostRelayKeys: (hostId) => heartbeats.get(hostId)?.relayKeys ?? [],
@@ -1147,14 +1168,16 @@ export async function createNode({
       for (const p of m.participants) held.add(p);
       const d = describe(m, s);
       if (!d.host) continue; // nobody eligible yet; try again next call
-      matchBook.set(m.matchId, { descriptor: d, envelope: null, disputes: [], commitTx: null });
+      const entry = { descriptor: d, envelope: null, disputes: [], commitTx: null };
+      matchBook.set(m.matchId, entry);
       // Placed players leave the queue: the entries they posted while waiting (one per bucket) would otherwise pair
       // again as each bucket closed — a commit transaction the host pays for and a match nobody plays, per bucket
       // (seen end to end: three commits for one match). Every node prunes on the same rule, so the queues agree.
       for (const p of m.participants) for (const k of [...queue.keys()]) if (k.endsWith(`|${p}`)) { queue.delete(k); queueEnvelopes.delete(k); }
       emit('placed', { matchId: m.matchId, bucket: m.bucket, rulesetId: m.rulesetId, host: d.host, witness: d.witness, panel: d.panel, beacon: d.beaconSource, snapshotRoot: d.snapshotRoot, participants: m.participants });
       gauntlet?.onPlaced({ ...d, participants: m.participants, mode: m.mode ?? null });
-      seal(MATCH_TAG, d, identity).then((env) => { const e = matchBook.get(m.matchId); if (e) e.envelope = env; }).catch(() => {});
+      // The signature lands a moment later; GET /match waits for it, so no client is served a placement without its envelope.
+      entry.sealing = seal(MATCH_TAG, d, identity).then((env) => { entry.envelope = env; }).catch(() => {});
       commitIfHost(m.matchId);
     }
     return [...matchBook.values()].map((e) => ({ ...e.descriptor, disputes: e.disputes, commitTx: e.commitTx ?? null, commitSkipped: e.commitSkipped ?? null }));
@@ -1468,7 +1491,11 @@ export async function createNode({
       }
       if (req.method === 'GET' && url.pathname === '/match') {
         const pid = url.searchParams.get('playerId');
-        const all = matchesNow();
+        // Each entry carries its signed envelope: the client sends it back as the submission's `descriptor`, so the
+        // ledger binds even once this book has replaced, pruned or (a restart) lost the placement (settle.js bind).
+        const now = matchesNow();
+        await Promise.all(now.map((m) => matchBook.get(m.matchId)?.sealing)); // a placement computed this very tick: its signature is a moment away
+        const all = now.map((m) => ({ ...m, envelope: matchBook.get(m.matchId)?.envelope ?? null }));
         return json(res, 200, { matches: pid ? all.filter((m) => m.participants.includes(pid)) : all });
       }
       // ---------------------------------------------------------- settlement

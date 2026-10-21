@@ -60,6 +60,7 @@ import { buildTree, leafOf, proofFor, proposeCalldata, hourOf, freezeAt } from '
 import { resultHash as commit, cosignBody, verification, isOfficial } from '../protocol/result.js';
 import { PROTOCOL_VERSION } from '../protocol/version.js';
 import { matchIdBytes32 } from '../protocol/matchbook.js';
+import { matchIdFor } from '../protocol/pairing.js';
 
 export const COSIGN_TAG = 'cosign';
 export const DISPUTE_TAG = 'dispute';
@@ -128,8 +129,19 @@ export function createSettlement({
   /** Resolve the placement a submission claims. Ranked must be placed. */
   const bind = async (sub, { envelope = null } = {}) => {
     const local = descriptorFor(sub.matchId);
-    let desc = local?.descriptor ?? null, env = local?.envelope ?? null;
-    if (!desc && envelope) { desc = await verifyDescriptor(envelope); env = desc ? envelope : null; }
+    let desc = local?.descriptor ?? null, env = local?.envelope ?? null, source = desc ? 'book' : null;
+    if (!desc && envelope) {
+      // Not in this node's book — the witness path always; the host path once an earlier rival replaced the placement,
+      // its TTL ran out or the node restarted after a client had fetched it (0.11.31) — but the submission carries the
+      // signed descriptor the client was served. It binds when the envelope verifies (signature, protocol, the placing
+      // key bonded at the pinned block: verifyDescriptor) and names THIS match: the id the beacon derives for these
+      // players (protocol/pairing.js matchIdFor), so a bonded key cannot sign a ranked placement for a beacon — a
+      // seed — of its own choosing.
+      const d = await verifyDescriptor(envelope);
+      const derived = d?.beacon && d.participants?.length === 2 ? matchIdFor(d.rulesetId, d.participants[0], d.participants[1], d.beacon) : null;
+      if (d && d.matchId === sub.matchId && ((d.mode ?? 'casual') !== 'ranked' || derived === d.matchId)) { desc = d; env = envelope; source = 'envelope'; }
+      else if (d) log(`descriptor ${d.matchId.slice(0, 12)} refused: ${d.matchId !== sub.matchId ? `names another match than the ledger (${String(sub.matchId).slice(0, 12)})` : 'its id is not what its beacon derives for these players'}`);
+    }
     if (!desc) {
       if (sub.mode === 'ranked') throw new Error('ranked: no placement descriptor for this match (the mesh did not place it)');
       return { placed: false, descriptor: null, envelope: null, seed: h('seed', sub.matchId), descriptorHash: null };
@@ -139,7 +151,7 @@ export function createSettlement({
     if (!sameSet(desc.participants, sub.participants)) throw new Error('participants differ from the placement');
     if (desc.buildHash && sub.buildHash && desc.buildHash !== sub.buildHash) throw new Error('build differs from the placement');
     if (desc.protocol != null && desc.protocol !== PROTOCOL_VERSION) throw new Error(`descriptor protocol ${desc.protocol} ≠ ${PROTOCOL_VERSION}`);
-    return { placed: true, descriptor: desc, envelope: env, seed: h('seed', desc.beacon, sub.matchId), descriptorHash: descriptorHash(desc), buildHash: desc.buildHash ?? sub.buildHash ?? null };
+    return { placed: true, source, descriptor: desc, envelope: env, seed: h('seed', desc.beacon, sub.matchId), descriptorHash: descriptorHash(desc), buildHash: desc.buildHash ?? sub.buildHash ?? null };
   };
 
   // ---------------------------------------------------------------- hydration
@@ -250,7 +262,7 @@ export function createSettlement({
     const mode = sub.mode ?? 'casual';
     if (new Set(sub.participants).size !== sub.participants.length) throw new Error('duplicate participant');
     if (mode === 'ranked' && !sub.participants.every(isKey)) throw new Error('ranked: participants must be player keys');
-    const binding = await bind({ ...sub, mode });
+    const binding = await bind({ ...sub, mode }, { envelope: sub.descriptor ?? null }); // `descriptor`: the envelope the client fetched from GET /match
     if (binding.placed && binding.descriptor.host !== nodeId) throw new Error(`placement names host ${binding.descriptor.host.slice(0, 12)}, not this node`);
 
     if (sub.kind === 'attested') {

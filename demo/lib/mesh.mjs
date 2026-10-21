@@ -51,5 +51,6 @@ export async function playPlaced(descriptor, kps, { title, engine, manifest, bal
   const hm = hydrationManifest({ agents: [agents[P[0]], agents[P[1]]], mode, balanceVersion: balance.version });
   const body = ledgerBody({ matchId: descriptor.matchId, ticks: log.length, head: log.head, buildHash: manifest.buildHash, hydrationHash: hm.manifestHash });
   const signatures = Object.fromEntries(await Promise.all(P.map(async (p) => [p, await signLedger(body, byKey[p])])));
-  return { matchId: descriptor.matchId, rulesetId: descriptor.rulesetId, buildHash: manifest.buildHash, mode, participants: P, entries: log.entries(), signatures, hydration: { agents } };
+  // `descriptor`: the signed envelope GET /match served with the placement — a client carries it back (0.11.31)
+  return { matchId: descriptor.matchId, rulesetId: descriptor.rulesetId, buildHash: manifest.buildHash, mode, participants: P, entries: log.entries(), signatures, hydration: { agents }, ...(descriptor.envelope ? { descriptor: descriptor.envelope } : {}) };
 }

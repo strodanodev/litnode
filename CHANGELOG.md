@@ -3,6 +3,54 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.11.31] — 2026-10-21 — a ranked ledger binds to the placement the client was served, not to the host's memory of it
+
+Audit `audit/audit-2026-10-21.md` §4.1 finding 5, both halves, and the `hydration.test.mjs` race the same review traced.
+No protocol change, no contract change; a client on 0.11.30 still settles while the host's book holds the placement.
+
+### Fixed
+- **Host-side binding outlives the match book** (`node/settle.js` `bind`, `node/litnode.js`). The host bound a ranked
+  ledger only to the placement in its in-memory `matchBook` — gone once an earlier rival for the same players replaced
+  it (the mesh-wide tie-break: same bucket, smaller id wins), once its 15 minutes ran out (a long gauntlet match), or on
+  a restart — while the witness path already accepted the signed descriptor envelope stored with the ledger. A match
+  the host had paid to commit was refused with "ranked: no placement descriptor". Now `GET /match` serves each
+  placement's signed envelope (`envelope`, awaited when the placement was computed that very tick), the client sends it
+  back as the submission's `descriptor` (`sdk/client.js` `settle({ descriptor })` and `recorder.submission`, the
+  cabinet's `cabinet:init` `match.descriptor`, `demo/lib/mesh.mjs`), and when the book no longer holds the placement
+  the host binds to the envelope the way a witness does. Two checks now guard BOTH paths, since a client-supplied
+  envelope is as untrusted as a gossiped one: the id must be what the beacon derives for the two players
+  (`protocol/pairing.js` `matchIdFor`), and the beacon must be this node's own for that bucket when it holds one from
+  the same source (the chain, or the offline mesh's local string) — a bonded key cannot sign a placement for a seed of
+  its choosing. A refused envelope is logged with its reason.
+- **The placing key is checked at the pinned block** (`node/chain.js` `standingAt`, `verifyDescriptor`). A placer no
+  heartbeat reaches any more (it restarted; the placement outlived the book's TTL; its bond moved since) was absent
+  from the live stake table and its descriptor refused — the witness half of finding 5. Its standing is now read at
+  the descriptor's `beaconBlock`; an RPC that holds no state that far back answers at `latest`, labelled; reads are
+  cached per key and block.
+- **Where a result goes once the book let its placement go** is the chain's call, not the book's. A commit on chain
+  under the ledger's id (the host committed before the book lost it: after a restart the `Committed` event is replayed
+  from `matchbook-events.jsonl`; after the TTL the commit simply stands) is settled on chain as before. No commit under
+  that id, and the result settles on the host only, logged. A commit under a *rival* id for the same players — the book
+  replaced the placement after a client had already fetched it — is never settled and expires on its own: the seats
+  void it with `expire` after the settle window, as a commit the host never settled always has. The `matchBook` is
+  deliberately NOT persisted across restarts: the ledger carries the proof of placement and the chain carries the
+  commit, and a book written back would re-adopt placements whose rivals and TTLs had moved on.
+- **`demo/hydration.test.mjs` is deterministic across nodes.** Its mock chain minted a fresh block on every
+  `eth_getBlockByNumber`, so the host and the witness pinned different "first blocks after the bucket end", derived
+  different match ids for the same pair and bucket, and the witness's smaller id replaced the host's placement after
+  the client had fetched it — the flake that only showed in full runs. One block per height now: the height a function
+  of the clock, hash and timestamp a function of the height, a block asked for by number the same block whoever asks.
+  Ten runs in a row green.
+
+### Tests
+- `demo/binding.test.mjs` (new, in `npm test`): a placement an earlier rival replaced in the host's book — without the
+  envelope the ledger is refused as before, with a ground envelope (an id its beacon does not derive) it is refused,
+  with the envelope the client was served it binds to the placement it played and the witness co-signs; a host restart
+  empties the book and the ledger still binds and is co-signed, both results official; on a stake-backed chain a placer
+  no heartbeat reaches binds when it was bonded at the pinned block and the standing is read at that block, a key bonded
+  at no block does not; `chain.standingAt` reads at the block, falls back to `latest` on a pruned-state error, caches,
+  and is null offline.
+
 ## [0.11.30] — 2026-10-21 — hardening: the six high findings of the 21 Oct audit
 
 The end-to-end audit (`audit/audit-2026-10-21.md`, atlas `audit/atlas-2026-10-21.html`) found six paths any key on the
