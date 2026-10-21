@@ -35,8 +35,26 @@ pragma solidity ^0.8.24;
 ///             fraction of its bond. Too few eligible nodes to seat nine →
 ///             void, nobody slashed (the honest answer when the network is
 ///             too small to adjudicate).
-///   EXPIRE    anyone: a commit never settled, or an escalation nobody fed
-///             the ledger, is voided after its window. No state is forever.
+///   EXPIRE    anyone: a commit never settled, an escalation nobody fed
+///             the ledger, or a seated escalation nobody resolved within a
+///             second escalation window (a resolve that keeps reverting — a
+///             stake token whose transfer fails — must not pin a match), is
+///             voided after its window. No state is forever.
+///
+/// Generation 4 (audit 2026-10-21 §4.2 findings 3 and 5):
+///   - enroll() requires the key to be witnessEligible NOW and the pool to
+///     hold fewer than `maxPool` keys (an admin parameter, at most
+///     MAX_POOL_CAP), so escalate()'s walk over the pool — two external
+///     reads per key — has a ceiling that fits a block;
+///   - prune(nodeKey), by anyone, drops an enrolled key that is no longer
+///     ACTIVE on NodeStake (unbonding, withdrawn, slashed below minStake).
+///     A key inside its eligibility age after a top-up stays: pruning it
+///     would let anyone evict an operator for adding stake, and the draw
+///     skips it until it is eligible again anyway;
+///   - expire() has an Escalated branch (above); totalWindow() counts that
+///     resolve window, so NodeStake.unbondingPeriod still outlasts every
+///     slash;
+///   - version() returns 4.
 ///
 /// What the contract cannot check, stated: that the committed panel is the
 /// one placement.js would have drawn (the client refuses to launch a match
@@ -99,6 +117,10 @@ contract MatchBook {
     /// The witness pool for escalation draws: keys whose operators opted in.
     bytes32[] private _pool;
     mapping(bytes32 => uint256) private _poolIndex; // key → index+1
+    /// The pool's ceiling (admin). escalate() reads two stake views per
+    /// pooled key (demo/gen4-vm.test.mjs measures a full default pool).
+    uint256 public maxPool = 256;
+    uint256 public constant MAX_POOL_CAP = 1024;
 
     event Committed(bytes32 indexed matchId, bytes32 indexed rulesetId, bytes32 indexed hostKey, bytes32 descriptorHash, bytes32[3] panel);
     event Settled(bytes32 indexed matchId, bytes32 indexed rulesetId, bytes32 indexed hostKey, bytes32 resultHash, bytes32 ledgerHash, bytes32 buildHash, bytes32[] participants, int64[] scores, bytes32[] custodians);
@@ -109,6 +131,7 @@ contract MatchBook {
     event Finalized(bytes32 indexed matchId, bytes32 indexed rulesetId, bytes32 finalHash, Status status);
     event Enrolled(bytes32 indexed nodeKey, bool enrolled);
     event ParamsUpdated(address stake, Params params, address admin);
+    event MaxPoolUpdated(uint256 maxPool);
 
     error NotAdmin();
     error NotAllowed();
@@ -123,6 +146,9 @@ contract MatchBook {
     error SeedNotReady(uint64 drawBlock);
     error SeedExpired(uint64 drawBlock);
     error BadParams();
+    error NotEligible();
+    error PoolFull(uint256 maxPool);
+    error StillActive();
 
     constructor(INodeStakeV3 stake_, Params memory p, address admin_) { _setParams(stake_, p, admin_); }
 
@@ -130,17 +156,33 @@ contract MatchBook {
 
     /// NodeStake.unbondingPeriod must exceed this (BUILD-SPEC §2.2): the
     /// attest window can be extended once, and the escalation window runs
-    /// twice (feeding the ledger, then the nine).
-    function totalWindow() external view returns (uint64) { return params.settleWindow + 2 * params.attestWindow + 2 * params.escalationWindow; }
+    /// three times (feeding the ledger, the nine voting, then resolve()
+    /// before expire() may void it).
+    function totalWindow() external view returns (uint64) { return params.settleWindow + 2 * params.attestWindow + 3 * params.escalationWindow; }
 
     // ------------------------------------------------------------ pool
 
+    /// Join the escalation pool: from the key's operator or delegate, while
+    /// the key is witnessEligible, and while the pool has room.
     function enroll(bytes32 nodeKey) external {
         if (!stake.mayActFor(nodeKey, msg.sender)) revert NotAllowed();
-        if (_poolIndex[nodeKey] == 0) { _pool.push(nodeKey); _poolIndex[nodeKey] = _pool.length; emit Enrolled(nodeKey, true); }
+        if (_poolIndex[nodeKey] != 0) return;
+        if (!stake.witnessEligible(nodeKey)) revert NotEligible();
+        if (_pool.length >= maxPool) revert PoolFull(maxPool);
+        _pool.push(nodeKey); _poolIndex[nodeKey] = _pool.length; emit Enrolled(nodeKey, true);
     }
     function withdraw(bytes32 nodeKey) external {
         if (!stake.mayActFor(nodeKey, msg.sender)) revert NotAllowed();
+        _remove(nodeKey);
+    }
+    /// Anyone: drop an enrolled key that is no longer active on NodeStake.
+    function prune(bytes32 nodeKey) external {
+        if (_poolIndex[nodeKey] == 0) return;
+        (, , bool active) = stake.standingOf(nodeKey);
+        if (active) revert StillActive();
+        _remove(nodeKey);
+    }
+    function _remove(bytes32 nodeKey) internal {
         uint256 i = _poolIndex[nodeKey];
         if (i == 0) return;
         bytes32 last = _pool[_pool.length - 1];
@@ -149,6 +191,7 @@ contract MatchBook {
         emit Enrolled(nodeKey, false);
     }
     function pool() external view returns (bytes32[] memory) { return _pool; }
+    function poolSize() external view returns (uint256) { return _pool.length; }
 
     // ------------------------------------------------------------ lifecycle
 
@@ -280,11 +323,14 @@ contract MatchBook {
         }
     }
 
-    /// No state is forever: a commit the host never settled, or an
-    /// escalation nobody fed the ledger within its window (or whose seed
-    /// block aged out), is voided by anyone. Nobody is slashed here — a host
-    /// that abandons matches, or custodians that withhold a ledger, are the
-    /// custody challenger's business (§11.5).
+    /// No state is forever: a commit the host never settled, an escalation
+    /// nobody fed the ledger within its window (or whose seed block aged
+    /// out), or a seated escalation that nobody resolved within one more
+    /// escalation window after the vote closed (resolve() reverting — a
+    /// stake token whose transfer fails — included), is voided by anyone.
+    /// Nobody is slashed here — a host that abandons matches, or custodians
+    /// that withhold a ledger, are the custody challenger's business (§11.5).
+    /// expire() makes no external call, so nothing outside can pin it.
     function expire(bytes32 matchId) external {
         Match storage m = matches[matchId];
         if (m.status == Status.Committed) {
@@ -293,6 +339,8 @@ contract MatchBook {
             bool fed = block.timestamp <= m.finalizedAt + params.escalationWindow;
             bool seedAlive = block.number <= m.drawBlock || blockhash(m.drawBlock) != bytes32(0);
             if (fed && seedAlive) revert WindowOpen();
+        } else if (m.status == Status.Escalated) {
+            if (block.timestamp <= m.escalatedAt + 2 * params.escalationWindow) revert WindowOpen();
         } else revert WrongStatus(m.status);
         _void(matchId, m);
     }
@@ -373,5 +421,14 @@ contract MatchBook {
         emit ParamsUpdated(address(stake_), p, admin_);
     }
     function setParams(INodeStakeV3 stake_, Params calldata p, address admin_) external onlyAdmin { _setParams(stake_, p, admin_); }
+    /// The pool ceiling. Lowering it below the current size only stops new
+    /// enrolments; nobody already in is evicted.
+    function setMaxPool(uint256 maxPool_) external onlyAdmin {
+        if (maxPool_ == 0 || maxPool_ > MAX_POOL_CAP) revert BadParams();
+        maxPool = maxPool_;
+        emit MaxPoolUpdated(maxPool_);
+    }
+    /// Generation tag: 4. A generation-3 MatchBook has no version() and reverts.
+    function version() external pure returns (uint16) { return 4; }
     function adminIsContract() external view returns (bool) { return admin.code.length > 0; }
 }

@@ -15,8 +15,15 @@ pragma solidity ^0.8.24;
 ///
 /// Readers ignore entries whose node is not actively bonded, so an
 /// unbonded key cannot squat in the list.
+///
+/// Generation 4 (audit 2026-10-21 §4.2 finding 2): announce() requires the
+/// key to be ACTIVE with at least NodeStake.minStake() bonded — v3 needed
+/// only operator standing, so one wei of stake bought a permanent slot in
+/// an append-only list every reader walks. Readers page through the list
+/// with keysPage(offset, limit) + count() instead of one unbounded keys().
 interface INodeStakeReader {
     function standingOf(bytes32 nodeKey) external view returns (address operator, uint256 amount, bool active);
+    function minStake() external view returns (uint256);
 }
 
 contract NodeDirectory {
@@ -34,6 +41,7 @@ contract NodeDirectory {
     error NotOperator();
     error NotAllowed();
     error BadUrl();
+    error NotBonded();
 
     constructor(INodeStakeReader stake_) { stake = stake_; }
 
@@ -45,10 +53,12 @@ contract NodeDirectory {
         emit AnnouncerSet(nodeKey, announcer);
     }
 
-    /// Publish the current addresses. `wsAddr` may be empty.
+    /// Publish the current addresses. `wsAddr` may be empty. The key must be
+    /// actively bonded at or above minStake (generation 4).
     function announce(bytes32 nodeKey, string calldata url, string calldata wsAddr) external {
-        (address op, , ) = stake.standingOf(nodeKey);
+        (address op, uint256 amount, bool active) = stake.standingOf(nodeKey);
         if (msg.sender != op && msg.sender != announcerOf[nodeKey]) revert NotAllowed();
+        if (!active || amount < stake.minStake()) revert NotBonded();
         if (bytes(url).length < 8 || bytes(url).length > 200 || bytes(wsAddr).length > 200) revert BadUrl();
         _entries[nodeKey] = Entry(url, wsAddr, uint64(block.timestamp), msg.sender);
         if (!_listed[nodeKey]) { _listed[nodeKey] = true; _keys.push(nodeKey); }
@@ -60,8 +70,26 @@ contract NodeDirectory {
         return (e.url, e.wsAddr, e.updatedAt, e.announcer);
     }
 
-    /// Every key that ever announced. Readers filter by NodeStake.active and
-    /// by updatedAt themselves — the list is append-only and cheap to read.
-    function keys() external view returns (bytes32[] memory) { return _keys; }
+    /// Generation tag: 4. A generation-3 NodeDirectory has no version() and reverts.
+    function version() external pure returns (uint16) { return 4; }
+
+    /// Keys [offset, offset + limit) in announce order; shorter (or empty)
+    /// past the end. Readers walk it with count() and filter by
+    /// NodeStake.active and updatedAt themselves — the list is append-only.
+    function keysPage(uint256 offset, uint256 limit) external view returns (bytes32[] memory page) {
+        uint256 n = _keys.length;
+        if (offset >= n) return new bytes32[](0);
+        uint256 end = limit > n - offset ? n : offset + limit;
+        page = new bytes32[](end - offset);
+        for (uint256 i = offset; i < end; i++) page[i - offset] = _keys[i];
+    }
     function count() external view returns (uint256) { return _keys.length; }
+
+    /// Every key that ever announced, whole. KEPT FOR COMPATIBILITY ONLY:
+    /// readers already in the field (sdk/bridge resolveNode in publishers'
+    /// servers, tools/authority.mjs, node releases up to 0.11.x) call keys()
+    /// on whatever NodeDirectory contracts.json names, and would lose
+    /// discovery at the generation flip without it. New readers page with
+    /// keysPage (protocol/directory.js readDirectoryKeys).
+    function keys() external view returns (bytes32[] memory) { return _keys; }
 }

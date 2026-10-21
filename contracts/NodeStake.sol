@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.24;
 
-/// @title NodeStake v3 — the LOCKED bond an operator posts to host a node.
+import "./Ed25519.sol";
+
+/// @title NodeStake v4 — the LOCKED bond an operator posts to host a node.
 /// @notice Deploy target: litVM Liteforge testnet, chain 4441. Stakes the
 /// LITVM token (a testnet mock until the real token exists on Liteforge).
 ///
@@ -37,6 +39,24 @@ pragma solidity ^0.8.24;
 ///                    contract cannot check that, so it exposes
 ///                    adminIsContract() and the deploy tool warns loudly.
 ///
+/// v4 (generation 4, audit 2026-10-21 §4.2 finding 1):
+///
+///   PROOF OF KEY     the FIRST binding of a node key is bond(nodeKey, amount,
+///                    sig): `sig` is an ed25519 signature BY THE NODE KEY over
+///                    "litnode-bond-v1" ‖ 0x00 ‖ abi.encodePacked(uint256
+///                    chainid, address(this), address operator), verified on
+///                    chain (Ed25519.sol), and `amount` must reach minStake.
+///                    v3's stake() let the first caller of any amount own a
+///                    key forever — a key is public in gossip before it
+///                    bonds, so one wei of faucet token squatted it.
+///   TOP-UP ONLY      stake(nodeKey, amount) now only adds to a key that is
+///                    already bound, from its operator; an unbound key reverts
+///                    NotBound. A withdrawn bond keeps its operator, who
+///                    re-bonds with stake() (no new proof needed: the key
+///                    already chose that wallet).
+///   version()        returns 4; generation-3 contracts have no such function
+///                    and revert, which is how tools tell them apart.
+///
 /// standingOf(nodeKey) keeps the v2 signature — every reader (NodeDirectory,
 /// NodeBadge, EpochAnchor, protocol/staking.js) keeps working.
 ///
@@ -58,6 +78,8 @@ contract NodeStake {
     }
 
     uint64 public constant MAX_TERM = 365 days;
+    /// The domain tag of the bond proof (protocol/staking.js BOND_TAG).
+    bytes public constant BOND_TAG = "litnode-bond-v1";
     uint16 public constant BPS = 10_000;
 
     IERC20Minimal public immutable token;
@@ -72,6 +94,7 @@ contract NodeStake {
     mapping(address => bool) public adjudicators;   // contracts allowed to slash
     uint256 public totalActive;                     // sum of bonded amounts of nodes not unbonding (for stake-weighted quorum)
 
+    event Bound(bytes32 indexed nodeKey, address indexed operator);
     event Staked(bytes32 indexed nodeKey, address indexed operator, uint256 amount, uint256 total, uint64 bondedSince, uint64 lastStakedAt);
     event OperatorTransferred(bytes32 indexed nodeKey, address indexed from, address indexed to);
     event DelegateSet(bytes32 indexed nodeKey, address indexed delegate);
@@ -91,6 +114,10 @@ contract NodeStake {
     error StillLocked(uint64 until);
     error AlreadyUnbonding();
     error BadParams();
+    error NotBound();
+    error AlreadyBound(address operator);
+    error BadProof();
+    error BelowMinimum(uint256 minStake);
 
     constructor(IERC20Minimal token_, uint256 minStake_, uint64 lockTerm_, uint64 eligibilityAge_, uint64 unbondingPeriod_, address admin_, address treasury_) {
         if (admin_ == address(0) || treasury_ == address(0)) revert ZeroAddress();
@@ -112,16 +139,46 @@ contract NodeStake {
 
     // ------------------------------------------------------------ operator
 
-    /// Bond `amount` behind `nodeKey`. First staker becomes the key's operator;
-    /// a later top-up must come from the same address. The LOCK counts from
-    /// the first stake of this bond (a bond withdrawn and re-staked starts a
-    /// new lock — otherwise unbond-and-rebond would skip it). The ELIGIBILITY
-    /// AGE counts from the latest stake or top-up: added stake waits again.
+    /// Generation tag: 4. A generation-3 NodeStake has no version() and reverts.
+    function version() external pure returns (uint16) { return 4; }
+
+    /// The exact bytes the node key signs to let `operator` bond it here.
+    function bondMessage(address operator) public view returns (bytes memory) {
+        return abi.encodePacked(BOND_TAG, bytes1(0x00), block.chainid, address(this), operator);
+    }
+
+    /// FIRST binding of `nodeKey`: the caller becomes its operator if the key
+    /// itself signed bondMessage(msg.sender) (`sig` = R ‖ S, 64 bytes) and
+    /// `amount` reaches minStake. The proof names this chain, this contract
+    /// and this wallet, so it cannot be replayed for another operator, on
+    /// another deployment or another chain. The LOCK and the ELIGIBILITY AGE
+    /// count from here.
+    function bond(bytes32 nodeKey, uint256 amount, bytes calldata sig) external {
+        if (amount == 0) revert ZeroAmount();
+        if (amount < minStake) revert BelowMinimum(minStake);
+        Node storage n = nodes[nodeKey];
+        if (n.operator != address(0)) revert AlreadyBound(n.operator);
+        if (!Ed25519.verify(nodeKey, sig, bondMessage(msg.sender))) revert BadProof();
+        n.operator = msg.sender;
+        emit Bound(nodeKey, msg.sender);
+        _add(n, nodeKey, amount);
+    }
+
+    /// Add `amount` to a key this wallet already operates (a top-up, or a
+    /// re-bond after withdraw). The LOCK counts from the first stake of this
+    /// bond (a bond withdrawn and re-staked starts a new lock — otherwise
+    /// unbond-and-rebond would skip it). The ELIGIBILITY AGE counts from the
+    /// latest stake or top-up: added stake waits again. An unbound key
+    /// reverts NotBound: the first binding is bond(), with the key's proof.
     function stake(bytes32 nodeKey, uint256 amount) external {
         if (amount == 0) revert ZeroAmount();
         Node storage n = nodes[nodeKey];
-        if (n.operator == address(0)) n.operator = msg.sender;
-        else if (n.operator != msg.sender) revert NotOperator();
+        if (n.operator == address(0)) revert NotBound();
+        if (n.operator != msg.sender) revert NotOperator();
+        _add(n, nodeKey, amount);
+    }
+
+    function _add(Node storage n, bytes32 nodeKey, uint256 amount) internal {
         if (n.unbondAt != 0) revert AlreadyUnbonding();
         if (n.bondedSince == 0) n.bondedSince = uint64(block.timestamp);
         n.lastStakedAt = uint64(block.timestamp);

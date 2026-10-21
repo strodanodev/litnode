@@ -62,6 +62,24 @@ export async function verify(tag, body, signatureHex, publicKeyHex) {
   } catch { return false; }
 }
 
+/** Sign RAW BYTES — no tag, no canonical JSON. Only for messages that carry
+ *  their own domain separation in the bytes themselves, such as the
+ *  generation-4 NodeStake bond proof ("litnode-bond-v1" ‖ 0x00 ‖ chain,
+ *  contract, operator; protocol/staking.js bondMessage), which a contract
+ *  verifies byte for byte. Returns the 64-byte signature as hex. */
+export async function signRaw(bytes, privateKeyHex) {
+  const key = await importPrivate(privateKeyHex);
+  return toHex(new Uint8Array(await needSubtle().sign({ name: 'Ed25519' }, key, bytes)));
+}
+
+/** Verify a raw-bytes signature; never throws. */
+export async function verifyRaw(bytes, signatureHex, publicKeyHex) {
+  try {
+    const key = await importPublic(publicKeyHex);
+    return await needSubtle().verify({ name: 'Ed25519' }, key, fromHex(signatureHex), bytes);
+  } catch { return false; }
+}
+
 /** A signed envelope: { body, signer, sig }. `signer` is the public key and the
  *  identifier the body names must equal it wherever identity matters
  *  (queue entries, heartbeats) — callers check that; this checks the math. */
