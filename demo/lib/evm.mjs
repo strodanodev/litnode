@@ -82,6 +82,14 @@ export async function createEvm({ accounts = 24, startTime = 1_800_000_000, star
       ifaces.set(r.created.toLowerCase(), iface);
       return r.created.toLowerCase();
     },
+    /** Deploy a contract compiled elsewhere (a test harness): its ABI and bytecode hex. */
+    deployRaw: async (abi, bytecode, args = [], from = 0) => {
+      const iface = new ethers.Interface(abi);
+      const data = '0x' + bytecode.replace(/^0x/, '') + (args.length ? iface.encodeDeploy(args).slice(2) : '');
+      const r = await run(from, null, data);
+      ifaces.set(r.created.toLowerCase(), iface);
+      return r.created.toLowerCase();
+    },
     /** A state-changing call from account `from`; returns { logs: decoded, gas }. opts.value sends native coin with it. */
     send: async (from, to, fn, args = [], { value = 0n } = {}) => {
       const iface = ifaces.get(to);
