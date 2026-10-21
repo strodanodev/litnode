@@ -7,8 +7,10 @@
  *                                        which kind of title yours is, and the plan
  *    npm run bridge -- key [--file ~/.litnode/bridge-key.json] [--kind replayable|attested --ruleset id.v1]
  *                                        create/print the bridge key and the node.env line that authorizes it
- *    npm run bridge -- submit <submission.json> [--node http://127.0.0.1:7801]
- *                                        sign one unsigned submission and settle it
+ *    npm run bridge -- submit <submission.json> [--node http://127.0.0.1:7801] [--log <file>]
+ *                                        sign one unsigned submission and settle it (--log: an attested
+ *                                        title's input log, sent to a protocol-4 node; its sha256 must be
+ *                                        report.commitments.inputsHash)
  *    npm run bridge -- watch --adapter jsonl|http|agent-fighter|./my-adapter.mjs --source <file|url>
  *                     [--kind …] [--ruleset …] [--node …] [--poll 5000] [--once] [--state <file>]
  *                                        follow your backend and settle each finished match
@@ -63,10 +65,10 @@ const adapterOptions = () => ({ source: flags.source ?? process.env.BRIDGE_SOURC
 const commands = {
   async resolve() {
     const r = await resolveNode({ rulesetId: flags.ruleset ?? null, log });
-    out({ ok: true, ...r }, [`${r.url} · node ${r.nodeId} · operator ${r.operator} · announced ${new Date(r.updatedAt * 1000).toISOString()} (${r.candidates} candidate(s))`]);
+    out({ ok: true, ...r }, [`${r.url} · node ${r.nodeId} · operator ${r.operator} · protocol ${r.protocol} · announced ${new Date(r.updatedAt * 1000).toISOString()} (${r.candidates} candidate(s))`]);
   },
 
-  async help() { out({ commands: Object.keys(commands) }, readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(1, 22).map((l) => l.replace(/^ \*\s?/, ''))); },
+  async help() { const head = readFileSync(new URL(import.meta.url), 'utf8').split('\n'); out({ commands: Object.keys(commands) }, head.slice(1, head.findIndex((l) => l.includes('*/'))).map((l) => l.replace(/^ \*\s?/, ''))); },
 
   async assess() {
     const yes = (v) => String(v ?? '').toLowerCase().startsWith('y');
@@ -98,7 +100,8 @@ const commands = {
     const sub = readJson(positional[0]);
     const kp = await loadOrCreateKey(keyFile());
     let signed; try { signed = await prepare(sub, kp); } catch (e) { fail(1, e.message); }
-    const r = await submit(nodeUrl(), signed);
+    const inputLog = flags.log ? (existsSync(String(flags.log)) ? readFileSync(String(flags.log)) : fail(1, `file not found: ${flags.log}`)) : null;
+    let r; try { r = await submit(nodeUrl(), signed, { inputLog }); } catch (e) { if (e instanceof RangeError || /hashes to/.test(e.message)) fail(1, e.message); throw e; }
     const c = r.status !== 'refused' ? await check(nodeUrl(), r.matchId) : null;
     out({ ok: r.status !== 'refused', ...r, delta: undefined, check: c }, [`${r.matchId}: ${r.status}${r.error ? ` — ${r.error}` : ''}`, ...(c ? [c.verdict] : []), ...(r.status === 'refused' && /not a relay this host trusts|not an authorized court/.test(r.error ?? '') ? [`fix: add \`${nodeEnvLine(signed.kind === 'attested' ? 'attested' : 'replayable', signed.rulesetId, kp.publicKey)}\` to the node's node.env and restart it`] : [])]);
     if (r.status === 'refused') process.exitCode = 1;
