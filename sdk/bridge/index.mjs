@@ -19,8 +19,10 @@
  *  This module is the library: keys, signing, submission shapes, a
  *  cursor-based watcher over any source (`adapter`), an HTTP intake, and
  *  the read-back that says what the mesh made of a match. `sdk/bridge/cli.mjs`
- *  wraps it. No dependencies beyond protocol/. Nothing here handles a
- *  wallet key; the bridge key is an ed25519 identity, not a wallet. */
+ *  wraps it. No dependencies beyond protocol/ and sdk/court/ (the court
+ *  client a studio can also import on its own: signing, discovery, settle).
+ *  Nothing here handles a wallet key; the bridge key is an ed25519
+ *  identity, not a wallet. */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
@@ -29,7 +31,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { generateKeypair, sign, verify } from '../../protocol/keys.js';
 import { chainHead, ledgerBody, LEDGER_TAG } from '../../protocol/log.js';
 import { roomCodeFor } from '../../protocol/pairing.js';
-import { RELAY_TAG, ATTEST_TAG } from '../../node/settle.js';
+import { RELAY_TAG } from '../../node/settle.js';
+import { signReport, checkReport, settle as courtSettle, findSettler } from '../court/index.js';
 
 export const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), '..', '..'));
 export const DEFAULT_KEY_FILE = join(homedir(), '.litnode', 'bridge-key.json');
@@ -77,10 +80,12 @@ export function validateAttested(sub) {
   if (typeof sub.matchId !== 'string' || !sub.matchId) e.push('matchId (string) required');
   if (typeof sub.rulesetId !== 'string' || !/^[a-z0-9][a-z0-9-]*\.v\d+$/.test(sub.rulesetId)) e.push('rulesetId must look like name.v1');
   if (sub.mode != null && !['ranked', 'casual'].includes(sub.mode)) e.push('mode must be ranked or casual');
-  if (!Array.isArray(sub.participants) || sub.participants.length < 2) e.push('participants: ≥2 ids');
+  // ≥1: a single-seat title (FLOOD CONTROL) is one participant and teams [[p], []]; the ruleset's manifest says how many it takes.
+  if (!Array.isArray(sub.participants) || sub.participants.length < 1) e.push('participants: ≥1 id');
   if (!Array.isArray(sub.teams) || sub.teams.length !== 2) e.push('teams: exactly two arrays');
   else { const flat = sub.teams.flat(); if (flat.length !== (sub.participants?.length ?? -1) || flat.some((p) => !sub.participants.includes(p))) e.push('teams must partition participants'); }
   if (!sub.report || typeof sub.report !== 'object') e.push('report (object) required — what your ruleset validates');
+  else e.push(...checkReport(sub.report, Array.isArray(sub.participants) ? sub.participants : null)); // settlement v4 commitments / stats, when present
   return e;
 }
 
@@ -97,10 +102,9 @@ export async function signRelay(sub, kp) {
   return { ...sub, relay: { id: kp.publicKey, sig: await sign(RELAY_TAG, body, kp.privateKey) } };
 }
 
-/** Sign an attested submission as the court. */
+/** Sign an attested submission as the court (sdk/court signReport). */
 export async function signAttest(sub, kp) {
-  const sig = await sign(ATTEST_TAG, { matchId: sub.matchId, rulesetId: sub.rulesetId, report: sub.report }, kp.privateKey);
-  return { ...sub, kind: 'attested', attestor: { id: kp.publicKey, sig } };
+  return { ...sub, kind: 'attested', attestor: await signReport(sub, kp) };
 }
 
 /** Sign whichever kind it is, after validating. Throws on a bad shape. */
@@ -139,58 +143,41 @@ export const bindToPlacement = (sub, room, rooms) => {
 
 /** Find a live node hosting `rulesetId` from NodeDirectory on chain — the
  *  bootstrap every node and the hosted arcade use — so a publisher's
- *  server is never pinned to a tunnel hostname that rotates. Reads keys(),
- *  each entry, each standing; keeps bonded, fresh entries, newest first;
- *  prefers one whose /titles lists the ruleset and that proves its key.
- *  Defaults come from contracts/deployed.testnet.json. */
-export async function resolveNode({ rulesetId = null, rpc = null, nodeDirectory = null, nodeStake = null, fetchImpl = fetch, log = () => {} } = {}) {
+ *  server is never pinned to a tunnel hostname that rotates. sdk/court
+ *  findSettler does the work (bonded, fresh, newest first; /health lists
+ *  the ruleset and a settling role; /whoami proves the key; RPC fail-over
+ *  and 429 backoff); this supplies contracts/deployed.testnet.json as the
+ *  defaults. Returns { url, nodeId, operator, updatedAt, candidates, tried, … }. */
+export async function resolveNode({ rulesetId = null, rpc = null, nodeDirectory = null, nodeStake = null, fetchImpl = fetch, log = () => {}, ...discovery } = {}) {
   const deployedPath = join(ROOT, 'contracts', 'deployed.testnet.json');
   const deployed = existsSync(deployedPath) ? JSON.parse(readFileSync(deployedPath, 'utf8')) : {};
   rpc ??= deployed.rpc; nodeDirectory ??= deployed.NodeDirectory?.address; nodeStake ??= deployed.NodeStake?.address;
   if (!rpc || !nodeDirectory || !nodeStake) throw new Error('resolveNode: rpc, NodeDirectory and NodeStake are required (contracts/deployed.testnet.json)');
-  const { keysCall, entryOfCall, decodeKeys, decodeEntry, liveSeeds } = await import('../../protocol/directory.js');
-  const { standingCall, decodeStanding } = await import('../../protocol/staking.js');
-  const { checkChallenge, newNonce } = await import('../../protocol/challenge.js');
-  let id = 0;
-  const call = async (c) => { const r = await fetchImpl(rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method: 'eth_call', params: [c, 'latest'] }), signal: AbortSignal.timeout(15_000) }); const j = await r.json(); if (j.error) throw new Error(j.error.message); return j.result; };
-  const keys = decodeKeys(await call(keysCall(nodeDirectory)));
-  const entries = {}, stakes = {};
-  for (const k of keys) { entries[k] = decodeEntry(await call(entryOfCall(nodeDirectory, k))); stakes[k] = decodeStanding(await call(standingCall(nodeStake, k))); }
-  const seeds = liveSeeds(entries, stakes);
-  const tried = [];
-  for (const s of seeds) {
-    try {
-      const nonce = newNonce();
-      const who = await (await fetchImpl(`${s.url}/whoami?nonce=${nonce}`, { signal: AbortSignal.timeout(8000) })).json();
-      const c = await checkChallenge(who, { expectNodeId: s.nodeId, nonce });
-      if (!c.ok) { tried.push({ url: s.url, reason: `proof ${c.reason}` }); continue; }
-      if (rulesetId) {
-        const h = await (await fetchImpl(`${s.url}/health`, { signal: AbortSignal.timeout(8000) })).json();
-        if (!h.rulesets?.[rulesetId]) { tried.push({ url: s.url, reason: `does not host ${rulesetId}` }); continue; }
-        if (!(h.roles ?? []).includes('settler')) { tried.push({ url: s.url, reason: 'no settling role' }); continue; }
-      }
-      log(`resolved ${s.url} (${s.nodeId.slice(0, 12)}…) from NodeDirectory`);
-      return { url: s.url, nodeId: s.nodeId, operator: s.operator, updatedAt: s.updatedAt, candidates: seeds.length, tried };
-    } catch (e) { tried.push({ url: s.url, reason: e.message }); }
-  }
-  throw new Error(`no live node${rulesetId ? ` hosting ${rulesetId}` : ''} on NodeDirectory (${seeds.length} seed(s): ${tried.map((t) => `${t.url}: ${t.reason}`).join('; ') || 'none announced'})`);
+  const generation = nodeDirectory === deployed.NodeDirectory?.address ? deployed.generation ?? null : null;
+  const r = await findSettler({ rulesetId, rpc, contracts: { NodeDirectory: nodeDirectory, NodeStake: nodeStake, generation }, fetch: fetchImpl, ...discovery });
+  log(`resolved ${r.url} (${r.nodeId.slice(0, 12)}…) from NodeDirectory`);
+  return r;
 }
 
 // ------------------------------------------------------------------ submit
 
-/** POST /ledger, idempotently: a match the node already settled is
- *  reported as 'already', never re-sent. Returns
- *  { status: 'settled'|'already'|'refused', matchId, delta?, error? }. */
-export async function submit(nodeUrl, signed, { fetchImpl = fetch } = {}) {
-  const base = trim(nodeUrl);
-  try {
-    const have = await fetchImpl(`${base}/delta/${encodeURIComponent(signed.matchId)}`, { signal: AbortSignal.timeout(8000) });
-    if (have.ok) return { status: 'already', matchId: signed.matchId, delta: await have.json() };
-  } catch { /* fall through to submit */ }
+/** POST /ledger, idempotently, through sdk/court settle: a match the node
+ *  already settled is reported as 'already', never re-sent; transient
+ *  failures (timeouts, 429, 5xx) are retried with backoff. Returns
+ *  { status: 'settled'|'already'|'refused', matchId, delta?, error? }.
+ *  `inputLog` (attested, settlement v4): the exact log bytes whose sha256 is
+ *  report.commitments.inputsHash; sent only to a node on protocol >= 4.
+ *  A node that cannot be reached at all throws (followNode re-resolves on
+ *  that), so a submission is never recorded as done when it was not. */
+export async function submit(nodeUrl, signed, { fetchImpl = fetch, retries = 2, backoffMs = 500, inputLog = null } = {}) {
   const { placed, ...body } = signed; // `placed` is bridge bookkeeping, not part of the wire shape
-  const r = await fetchImpl(`${base}/ledger`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(60_000) });
-  const j = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
-  return r.ok ? { status: 'settled', matchId: signed.matchId, delta: j } : { status: 'refused', matchId: signed.matchId, error: j.error ?? `HTTP ${r.status}` };
+  const r = await courtSettle(body, { node: trim(nodeUrl), fetch: fetchImpl, retries, backoffMs, timeoutMs: 60_000, log: inputLog });
+  if (r.status === 'unreachable') {
+    // An HTTP answer (429/5xx after the retries) is a node that is there and busy; no answer is a node that moved.
+    if (r.httpStatus) throw new Error(`node ${r.node} answered ${r.httpStatus}: ${r.error}`);
+    throw Object.assign(new TypeError(`fetch failed: ${r.error}`), { cause: { code: /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET/.exec(r.error ?? '')?.[0] ?? 'ECONNREFUSED' } });
+  }
+  return { status: r.status, matchId: signed.matchId, ...(r.delta ? { delta: r.delta } : {}), ...(r.error ? { error: r.error } : {}) };
 }
 
 /** What the mesh made of a match: the delta, its proof, and a verdict in
