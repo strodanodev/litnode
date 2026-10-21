@@ -1,6 +1,6 @@
 ---
 name: host-a-title
-description: Put an open-source game on the litVM Games mesh — scaffold a title from the SDK template, make it deterministic and conformant, bundle it, host it on a bonded litnode, and get it listed in the arcade. Use when a developer wants their game, assets or agents recognised in the litVM Games ecosystem.
+description: Put an existing game on the litVM Games mesh — write its title file (replayable or attested, with a stat schema), make it deterministic and conformant, bundle it, host it on a bonded litnode, claim it on TitleRegistry and get it listed in the arcade. Use when the game and its client ALREADY EXIST (or are someone else's) and what is missing is the title file and hosting. If the client must be written too, use build-a-title; if the game has its own backend to wire in, use migrate-a-title.
 ---
 
 # Host a title on the litVM Games mesh
@@ -13,11 +13,17 @@ first; it is the rulebook, and every rule in it is enforced by code you can run.
 
 ## Procedure
 
-1. **Decide the kind.** Can the outcome be recomputed from a per-tick input
-   log with integer/seeded math? Yes → *replayable* (`defineTitle`). No
-   (floating-point physics, closed engine, no input log) → *attested*
-   (`defineAttestedTitle`; the title's own signer reports outcomes; Pickle
-   Brawl in `rulesets/pickle-brawl.v1.js` is the reference). Prefer replayable.
+1. **Decide the kind and the proof level** (`docs/SETTLEMENT-STANDARD.md` §1).
+   Can the outcome be recomputed from a per-tick input log with
+   integer/seeded math? Yes → *replayable* (`defineTitle`): L3 `verified`
+   once both players sign. No (floating-point physics, closed engine, no
+   input log) → *attested* (`defineAttestedTitle`; the title's court signs
+   outcome reports): L1 `attested`, or L2 `checkable` when the court
+   replays a log it commits and a verifier bundle is registered
+   (`migrate-a-title` covers that path). Pickle Brawl
+   (`titles/pickle-brawl.adapter.js`) and FLOOD CONTROL
+   (`titles/flood-control.adapter.js`) are the attested references.
+   Prefer replayable.
 
 2. **Scaffold.** `npm run create-title -- <name>.v1 "<Display Name>"` writes
    `titles/<name>.v1.mjs`, a complete replayable sample (TUG). The rulesetId
@@ -31,6 +37,12 @@ first; it is the rulebook, and every rule in it is enforced by code you can run.
    `defineBalance` with **bounded** ranges; never read raw stats. Fill
    `display: { title, url, description, cover?, accent?, controls? }` —
    without it the node hosts but the arcade does not list.
+   **Stats** (settlement v4): `services.stats.schema: { name: 'sum'|'max'|'min'|'last' }`;
+   a replayable title exports `stats(state, participants)` reading integer
+   counters kept in the state; an attested one gets `stats(report)` =
+   `report.stats` for free. **Court keys:** an attested title lists its
+   court's ed25519 pubkey(s) in `attestors`; every node then accepts the
+   court with no `COURTS` entry.
 
 4. **Check.** `npm run conformance -- titles/<name>.v1.mjs` (bundles in
    memory). Fix every FAIL; the node refuses the same failures at load. Do not
@@ -43,7 +55,9 @@ first; it is the rulebook, and every rule in it is enforced by code you can run.
 6. **Host.** `RULESETS=./rulesets/<name>.v1.js npm run node` (or add it to
    `node.env` RULESETS, comma-separated, on an operator install). Confirm
    `GET /health` shows the rulesetId and `GET /titles` lists it with its
-   display. Bond the node (`npm run bond`); unbonded hosts are never placed.
+   display. Bond the node (`npm run host -- bond` with `OPERATOR_KEY` in the
+   operator's own shell, or the arcade's Nodes page); unbonded hosts are
+   never placed.
    To bring the node itself up — configure, run supervised, bond, publish,
    verify — use the `host-a-node` skill (`npm run host -- init --rulesets
    ./rulesets/<name>.v1.js …`).

@@ -1,6 +1,6 @@
 ---
 name: migrate-a-title
-description: Wire a game that already runs on its own backend (relay, match server, results database) into litnode settlement — assess replayable vs attested, write or port the ruleset, create the bridge key, configure the node (RELAY_KEYS/COURTS), run the bridge as a webhook or watcher, backfill history, and verify what the mesh made of each match. Use when a publisher with existing infrastructure wants their matches on the litVM ladder without rewriting their game.
+description: Wire a game that already runs on its own backend (relay, match server, court, results database) into litnode settlement — assess replayable vs attested, write or port the ruleset (stat schema, court attestors), sign and settle with sdk/court or the bridge, commit and attach the court's input log, ship a verifier bundle to reach L2 checkable, backfill history, and verify what the mesh made of each match. Use when a publisher with existing infrastructure wants their matches on the litVM ladder without rewriting their game.
 ---
 
 # Migrate an existing title onto the mesh
@@ -13,7 +13,9 @@ what changes is that one message per finished match reaches a node.
 ## Ground rules
 
 - **Never weaken a label.** A result is `players`, `relay`, `host` or
-  `attested` because of what backs it; the bridge cannot upgrade it. Say
+  `attested`, and its proof level `verified`, `checkable`, `attested` or
+  `host`, because of what backs it; the node derives both and the bridge
+  cannot upgrade them (`docs/SETTLEMENT-STANDARD.md` §1, §5). Say
   which one the publisher gets and why. OFFICIAL means finalized on
   `MatchBook`: placed, players-signed, three witnesses under other
   operators attested the same hash, nobody dissented (`/match/:id/chain`,
@@ -25,9 +27,14 @@ what changes is that one message per finished match reaches a node.
   and never printed in full; the publisher's database credentials are
   read by their adapter from their own environment; `BRIDGE_TOKEN` is set
   by them. You never ask for, echo, or write any of them.
-- **The node operator adds the key.** `RELAY_KEYS` / `COURTS` go in the
-  node's `node.env` and need a restart; if you are not operating that
+- **The court's key belongs in the ruleset.** Put the court's pubkey in the
+  adapter's `attestors`: every node then accepts it with no per-operator
+  `COURTS` line. `RELAY_KEYS` (relays) and `COURTS` (an override) still go
+  in a node's `node.env` and need a restart; if you are not operating that
   node, hand the exact line over and wait.
+- **Identity.** Inside the arcade a participant is the player's ed25519 key
+  (the join ticket's `sub`, `cabinet:init`). A prefixed id (`pb:`, `fc:`,
+  `afc:`) is casual-only and never binds to a profile.
 
 ## Procedure
 
@@ -40,11 +47,36 @@ what changes is that one message per finished match reaches a node.
    bundle the engine with it if it is a package (`tools/bundle-ruleset.mjs`
    is the Agent Fighter example). Attested: write `validate(report)` and
    `scores(report, participants, teams)` covering everything a node can
-   check. Then `npm run conformance` and `npm run bundle:title`; note
+   check, plus `attestors: [<court pubkey>]` and a
+   `services.stats.schema` for what the court observes (`report.stats`).
+   Then `npm run conformance -- titles/<id>.mjs` and
+   `npm run bundle:title -- titles/<id>.mjs` (an adapter that imports a
+   package: `node tools/bundle-ruleset.mjs titles/<id>.adapter.js`); note
    `buildHash` from `rulesets/<id>.json`.
 3. **Bridge key.** `npm run bridge -- key --kind <kind> --ruleset <id> --json`.
-   Give the operator the `nodeEnv` line; confirm after restart that
-   `GET /health` shows it under `trust.relayKeys` or `trust.courts`.
+   For an attested court, put the public key in the adapter's `attestors`
+   and rebundle; otherwise give the operator the `nodeEnv` line and confirm
+   after restart that `GET /health` shows it under `trust.relayKeys` or
+   `trust.courts`.
+3b. **Attested, the v4 way: `sdk/court`.** A court that already runs code
+   (a Vercel function, a court process) imports `sdk/court` instead of
+   copying signing code: `signReport` / `attest`, `findSettler`
+   (NodeDirectory + NodeStake discovery from the arcade's `/contracts.json`,
+   RPC fallback, 429 back-off) and `settle(envelope, { log })` →
+   `settled | already | refused | unreachable` (`sdk/court/README.md`).
+   Add `report.commitments = { logFormat, inputsHash, finalHash, verifierHash }`
+   (`makeCommitments` computes `inputsHash` from the exact log bytes, never
+   by hand; `null` where there is no log) and `report.stats`. `settle`
+   attaches the log (≤ 512 KiB) only when the node says `protocol >= 4`.
+3c. **Reaching L2 `checkable`.** Package the court's headless replay as a
+   verifier bundle: a spec like the server's (`gauntlets/*.server.json`)
+   with an entry exporting `verify(logBytes, spec) → { finalHash, result }`,
+   then `npm run bundle:verifier -- <spec.json> --root <checkout>` prints
+   `verifierHash`. The court puts it in `commitments.verifierHash`; the
+   publisher registers it (`npm run publish:title -- set-build
+   verifiers/<id>.verifier.json`; until then an operator may accept it with
+   `VERIFIERS=<id>:<hash>`). Results then settle `proof: 'checkable'` on any
+   node that holds the log.
 4. **Choose the wiring** with the publisher:
    - their server can call a URL at match end → `bridge serve` (webhook,
      `BRIDGE_TOKEN`), they POST the unsigned submission;
@@ -83,8 +115,9 @@ what changes is that one message per finished match reaches a node.
 5. **Test one match.** For a placed match, the receipt at
    `arcade.litvm.games/#/match/<matchId>` shows each on-chain step re-checked
    from the browser; use it to show the publisher what they got. Submit a real finished match (`bridge submit
-   <file>` or through the wiring); `bridge check <matchId>` must find it
-   with the expected attestation. A refusal names the fix.
+   <file> [--log <logfile>]` or through the wiring); `bridge check <matchId>`
+   must find it with the expected attestation, and `GET /delta/<matchId>`
+   shows `proof`, `commitments` and `stats`. A refusal names the fix.
 6. **Run it as a service** beside the node (`install-service` pattern in
    `host-a-node`, or their own supervisor). `--state` keeps the cursor;
    restarts re-send nothing.
@@ -104,8 +137,12 @@ what changes is that one message per finished match reaches a node.
 
 ## Reference instances
 
-- Agent Fighter (replayable, Supabase): `tools/af-watch.mjs`,
-  `tools/lib/af-submission.mjs`, `sdk/bridge/adapters/agent-fighter.mjs`.
+- Agent Fighter (replayable, Supabase): `sdk/bridge/adapters/agent-fighter.mjs`
+  (`bridge watch --adapter agent-fighter`) and `tools/lib/af-submission.mjs`;
+  the older `tools/af-watch.mjs` signs with a different relay key file, so
+  switching between them changes the relay identity in `RELAY_KEYS`.
+- FLOOD CONTROL (attested, a replaying court on Vercel): `titles/flood-control.adapter.js`;
+  its court client is the template `sdk/court` was extracted from.
 - Pickle Brawl (attested, its own court, migrated 21 Sep 2026):
   `titles/pickle-brawl.adapter.js`, `demo/attested.test.mjs`; the court
   signs locally and resolves the node from chain

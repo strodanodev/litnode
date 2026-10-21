@@ -31,7 +31,9 @@ const result = await check(source);
 for (const c of result.checks) if (!c.ok) console.error(`${c.warn ? 'warn' : 'FAIL'}  ${c.name}  — ${c.detail}`);
 if (!result.ok) { console.error('\nnot conformant — nothing written. Fix the checks above; no node will load this.'); process.exit(1); }
 
-const title = (await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)).default;
+// The manifest the SANDBOX read: the title never runs in this process (it used to be imported natively here, after the
+// sandboxed suite, so a title that branched on its environment ran on the bundler's machine; audit 2026-10-21 §4.4).
+const title = { manifest: result.manifest };
 const id = title.manifest.rulesetId;
 if (basename(entry).replace(/\.m?js$/, '') !== id) console.error(`note: file is ${basename(entry)} but rulesetId is ${id}; writing ${id}.js`);
 mkdirSync(outDir, { recursive: true });

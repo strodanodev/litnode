@@ -1,6 +1,6 @@
 ---
 name: build-a-title
-description: Build a new game for the litVM Games mesh from scratch — a deterministic title file the node replays, a browser client on sdk/client.js that runs the same file, records inputs, gets the player's ledger signature from the arcade shell and settles on the host node, a transport of the publisher's choosing, and a bonded node that hosts and lists it. Use when a developer is starting a game and wants it born on the mesh, with no settlement backend of their own.
+description: Build a new game for the litVM Games mesh from scratch — a deterministic title file the node replays (with per-match stats every witness recomputes), a browser client on sdk/client.js that runs the same file, records inputs, gets the player's ledger signature from the arcade shell and settles on the host node, a transport of the publisher's choosing, and a bonded node that hosts and lists it. Use when the browser client has to be WRITTEN too — a developer starting a game that should be born on the mesh with no backend. If the game and its client already exist, use host-a-title (or migrate-a-title when it has its own backend).
 ---
 
 # Build a title from scratch
@@ -25,16 +25,27 @@ path, client included.
   developer holds for tests. The game code never sees a private key.
 - **Verify by settlement.** A feature is done when a match round-trips:
   queue → placement → play → `settle()` → `GET /delta/<matchId>` shows
-  `attestation: 'players'` and the delta's `finalStateRoot` equals the
-  client's `sim.root()`.
+  `attestation: 'players'`, `proof: 'verified'` and the delta's
+  `finalStateRoot` equals the client's `sim.root()`.
+- **Proof levels** (`docs/SETTLEMENT-STANDARD.md` §1): a replayable title
+  whose players both sign is L3 `verified`, the only level that reaches
+  the official ladder. An unsigned casual match is L0 `host`.
 
 ## Procedure
 
-1. **Title.** `npm run create-title -- <id>.v1 "<Name>"`; put the rules in
-   `init/step/done/serialize/view/scores`; `inputSchema` documents the
-   input vector; `defineBalance` for character stats; `display` with the
-   client's URL. `npm run conformance`, then `npm run bundle:title`. Keep
-   `buildHash` from `rulesets/<id>.v1.json`.
+1. **Title.** `npm run create-title -- <id>.v1 "<Name>"` (writes
+   `titles/<id>.v1.mjs`; `--out <dir>` puts it elsewhere); put the rules in
+   `init/step/done/serialize/view/scores` — `serialize()` must include every
+   field `step()` reads; `inputSchema` documents the input vector;
+   `defineBalance` for character stats; `display` with the client's URL.
+   **Stats** (settlement v4): keep per-match counters as integers IN the
+   state, declare `services.stats.schema` (`{ name: 'sum'|'max'|'min'|'last' }`,
+   names `[a-zA-Z][a-zA-Z0-9]{0,31}`, not matches/wins/ticks) and export
+   `stats(state, participants)` → `{ player: { name: int } }`; the template
+   shows it (`pulls`, `bestPull`). Then
+   `npm run conformance -- titles/<id>.v1.mjs` and
+   `npm run bundle:title -- titles/<id>.v1.mjs`. Keep `buildHash` from
+   `rulesets/<id>.v1.json`.
 2. **Client skeleton** (`docs/BUILD-FROM-SCRATCH.md` §2): import the title
    module and `sdk/client.js`; `parseLaunch` + `connectShell` (fall back to
    standalone when no `cabinet:init` arrives); `matchSeed(match)`;
@@ -47,14 +58,15 @@ path, client included.
    the other player's ledger signature can cross it at match end.
 4. **Match end.** `rec.body()` → `shell.sign(body)` (or `localSigner`) on
    each client; the submitting client calls `settle({ nodeUrl: match.hostAddr,
-   recorder, signers })`. Handle `already` (the other client submitted
-   first) as success.
+   recorder, signers })`. If the other client submitted first, the node
+   answers with that delta and `existing: true`: treat it as success.
 5. **Standalone test.** Two `localSigner`s, an in-process node
    (`demo/publisher.test.mjs` "client sdk" test is the template): the
    delta's scores and `finalStateRoot` must equal the local sim's.
 6. **Host and list.** `host-a-node` skill: `npm run host -- init … --rulesets
    ./rulesets/<id>.v1.js`, `start --detach`, `status`; `GET /titles` lists
-   the display. Bond the node; unbonded hosts are never placed. Then claim
+   the display. Bond the node (`npm run host -- bond`, with `OPERATOR_KEY`
+   in the operator's own shell); unbonded hosts are never placed. Then claim
    the title from the same wallet: `PUBLISHER_KEY=0x… npm run publish:title
    -- register rulesets/<id>.v1.js` — an ERC-721 the wallet holds; the mesh
    loads the build from the chain's word and `GET /titles` reports
@@ -65,7 +77,9 @@ path, client included.
    Claim button, wallet fees, line endings): `docs/HOST-YOUR-TITLE.md` §1d.
 7. **Arcade round trip.** Open the cabinet against that node, *Find match*
    with two browsers, launch, play, and read `GET /delta/<matchId>`:
-   `placed: true`, `attestation: 'players'`. The receipt at
+   `placed: true`, `attestation: 'players'`, `proof: 'verified'`, and your
+   schema's `stats`. `GET /stats?ruleset=<id>.v1&scope=all` folds them;
+   `GET /proof/stats?ruleset=<id>.v1&player=<key>` proves a season line. The receipt at
    `#/match/<matchId>` shows each on-chain step. `official: true` also
    needs a host and three witnesses under four different operators online
    with the title; with fewer, Find match warns and the match plays

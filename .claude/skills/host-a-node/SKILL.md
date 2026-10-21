@@ -38,9 +38,15 @@ idempotent, so re-running is always safe.
 
 ## Procedure
 
-1. **Preconditions.** Node.js 20+; for `publish`, `cloudflared` on PATH;
-   for `bond`, `npm install` once (pulls ethers). `npm run host -- doctor
-   --json` checks all of it and names the fix for each failure.
+1. **Preconditions.** Node.js 20+ (22+ to run Agent Fighter's server
+   bundle); for `bond`, `npm install` once (pulls ethers); for `publish`,
+   `cloudflared` on PATH — `doctor` checks that only once `TUNNEL` is set,
+   so run `init --tunnel quick` first on a host. `npm run host -- doctor
+   --json` names the fix for each failure, and also reports the protocol
+   (settlement v4 is protocol 4; a running node on another protocol fails
+   the `settlement` check), `log-storage` (held court logs and free disk:
+   ledgers and logs are kept for custody, ≤ 512 KiB per log), `verifiers`
+   and the clock (against seeds, else the chain head).
 2. **Configure.** `npm run host -- init --operator <name> [--seeds <url,…>]
    [--roles mesh,host,witness,settler | --witness] [--rulesets ./rulesets/<id>.js,…]
    [--tunnel quick] [--port 7801] [--region <r>] [--json]`. Writes `node.env`
@@ -62,9 +68,10 @@ idempotent, so re-running is always safe.
    tunnel, waits for the public URL, checks proof of possession at it, and
    delegates + funds the announcer when `OPERATOR_KEY` is in the shell.
 7. **Bond.** Operator runs `set OPERATOR_KEY=0x…` (or `export`) then
-   `npm run host -- bond`; the harness passes the nodeId to
-   `tools/bond-node.mjs`. A witness must be bonded from a **different
-   wallet** than the host it witnesses.
+   `npm run host -- bond`; the harness passes the nodeId and the key (as the
+   tool's `DEPLOYER_KEY`) to `tools/bond-node.mjs` — run directly, the tool
+   needs `npm run bond -- <nodeId>` with `DEPLOYER_KEY` set. A witness must
+   be bonded from a **different wallet** than the host it witnesses.
 7b. **Settlement keys (settlement v1.0, MatchBook).** A host or witness
    also needs a hot key and, to sit on escalation panels, enrolment:
    `npm run delegate -- <nodeId> <announcer address> --fund 0.005` names
@@ -101,13 +108,31 @@ then advertises the title in its heartbeat and placement draws it first for
 that title. `status` shows `/health.gauntlet`. The config and the title's side are in
 `docs/BRING-YOUR-BACKEND.md` section 6a and the `migrate-a-title` skill.
 
-**Agent Fighter, per match, no publisher secrets.** Copy
+**From the mesh, by hash (recommended).** `init --gauntlet-servers
+agent-fighter.v1 --gauntlet-gateway-port 8478 --tunnel quick` (or
+`GAUNTLET_SERVERS=agent-fighter.v1` in `node.env`): the node fetches the
+title's server bundle a peer advertises, checks its hash against
+TitleRegistry and runs it per placed match — no checkout, no install.
+`/health.gauntletServers` shows it. The server is a real process with the
+network: it runs only because you opted in, and the service runs unelevated.
+
+**Agent Fighter from a checkout (the older path).** Copy
 `gauntlets/agent-fighter.json` OUTSIDE the install folder (updates replace
 `gauntlets/`), set its `cwd` to an Agent Fighter checkout with `npm ci` done,
 then `init --gauntlets agent-fighter.v1=<that copy> --gauntlet-gateway-port 8478
 --tunnel quick` and `restart`. No `--courts`: Agent Fighter is replayable and
 its results are signed by both players. `/health.gauntlet.titles` lists
 `agent-fighter.v1` and `wsAddr` is the gateway's public URL.
+
+## Upgrading to settlement v4 (protocol 4)
+
+Protocol 4 nodes and protocol 3 nodes do not see each other. When a 0.12
+release is registered, apply it on every node within the same hour (the
+Nodes page, `u` in the dashboard, `npm run update`, or
+`npm run host -- restart` on a checkout), then `doctor`: the `settlement`
+check must be true and `status` shows the settlement stage. Courts keep
+settling while they send v3-shaped reports; held logs live in
+`<DATA_DIR>/logs`.
 
 ## When the node will not start
 
