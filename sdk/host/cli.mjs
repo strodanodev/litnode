@@ -193,7 +193,8 @@ const commands = {
     if (c.offline) fail(1, 'OFFLINE=1: nothing to bond');
     const id = await ensureIdentity(c.dataDir);
     if (!keyFromEnv()) fail(2, 'set OPERATOR_KEY (the operator wallet, 64 hex) in this shell, then re-run; the key is passed to tools/bond-node.mjs and never written', { nodeId: id.nodeId, needs: ['OPERATOR_KEY'] });
-    const r = runTool('tools/bond-node.mjs', [id.nodeId], { needsEthers: true });
+    // generation 4 binds a key only with its own proof: this machine holds the identity, so bond-node signs it from here
+    const r = runTool('tools/bond-node.mjs', [id.nodeId, '--identity', join(c.dataDir, 'identity.json')], { needsEthers: true });
     if (r.code !== 0) fail(1, `bond failed (exit ${r.code})`, { stderr: r.stderr.slice(-2000) });
     const s = await inspect(c);
     out({ ok: !!s.standing?.active, nodeId: id.nodeId, standing: s.standing, output: r.stdout.slice(-2000) }, [s.standing?.active ? `bonded: ${id.nodeId} by ${s.standing.operator}` : 'bond sent; the chain does not show it active yet — re-run status in ~10 s']);
