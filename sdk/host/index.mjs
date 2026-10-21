@@ -13,7 +13,7 @@
  *
  *    import { readEnv, effectiveConfig, preflight, inspect, plan } from '../sdk/host/index.mjs';
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync, accessSync, constants } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, accessSync, constants, statfsSync, statSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join, dirname, resolve, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,7 +34,7 @@ export const ENV_FILE = 'node.env';
 /** Where node.env and litnode.log live: the code folder, or LITNODE_HOME
  *  (so a config can sit outside the checkout, and tests get a scratch one). */
 export const home = () => (process.env.LITNODE_HOME ? resolve(process.env.LITNODE_HOME) : ROOT);
-export const KNOWN_KEYS = ['OPERATOR', 'ROLES', 'PORT', 'HOST', 'PUBLIC_ADDR', 'SEEDS', 'RULESETS', 'DATA_DIR', 'REGION', 'TUNNEL', 'TUNNEL_NAME', 'TUNNEL_HOST', 'UPNP', 'RELAY_PORT', 'RELAY_TUNNEL_NAME', 'RELAY_TUNNEL_HOST', 'WS_ADDR', 'RELAY_KEYS', 'COURTS', 'TITLE_TRUST', 'TRUSTED_PUBLISHERS', 'SANDBOX_TIMEOUT_MS', 'SANDBOX_MEMORY_MB', 'RELEASE_CHANNEL', 'RPC', 'RPC_FALLBACK', 'NODE_STAKE', 'NODE_DIRECTORY', 'ANNOUNCE', 'ERC6699', 'OFFLINE', 'AF_ROOT', 'AIR_PARTNER_ID', 'AIR_JWKS_URL', 'AIR', 'TITLE_REGISTRY', 'STAKE_TOKEN', 'RELEASE_REGISTRY', 'MATCH_BOOK', 'GAUNTLETS', 'GAUNTLET_SERVERS', 'GAUNTLET_UPSTREAM', 'GAUNTLET_GATEWAY_PORT', 'SERVICES', 'SERVICE_NAME'];
+export const KNOWN_KEYS = ['OPERATOR', 'ROLES', 'PORT', 'HOST', 'PUBLIC_ADDR', 'SEEDS', 'RULESETS', 'DATA_DIR', 'REGION', 'TUNNEL', 'TUNNEL_NAME', 'TUNNEL_HOST', 'UPNP', 'RELAY_PORT', 'RELAY_TUNNEL_NAME', 'RELAY_TUNNEL_HOST', 'WS_ADDR', 'RELAY_KEYS', 'COURTS', 'VERIFIERS', 'TITLE_TRUST', 'TRUSTED_PUBLISHERS', 'SANDBOX_TIMEOUT_MS', 'SANDBOX_MEMORY_MB', 'RELEASE_CHANNEL', 'RPC', 'RPC_FALLBACK', 'NODE_STAKE', 'NODE_DIRECTORY', 'ANNOUNCE', 'ERC6699', 'OFFLINE', 'AF_ROOT', 'AIR_PARTNER_ID', 'AIR_JWKS_URL', 'AIR', 'TITLE_REGISTRY', 'STAKE_TOKEN', 'RELEASE_REGISTRY', 'MATCH_BOOK', 'GAUNTLETS', 'GAUNTLET_SERVERS', 'GAUNTLET_UPSTREAM', 'GAUNTLET_GATEWAY_PORT', 'SERVICES', 'SERVICE_NAME'];
 /** The arcade's AIR partner app (cabinet/config.js AIR.partnerId); `host init` pins tokens to it unless --no-air. */
 export const AIR_PARTNER_ID = '62e01755-138f-4e58-9cdc-fab71e037afd';
 export const ALL_ROLES = ['mesh', 'host', 'witness', 'settler'];
@@ -327,6 +327,36 @@ export async function preflight(cfg, { env = readEnv(cfg.home), fetchImpl = fetc
     add('clock', results.some((r) => r.skewMs != null) ? skewed.length === 0 : null, skewed.length ? skewed.map((r) => `${r.url}: ${Math.round(r.skewMs / 1000)} s`).join('; ') : 'within 4 s of every seed', 'sync this machine\'s clock (a node >4 s behind is stale to everyone)');
   }
 
+  // Clock with no seeds to compare against (the operator guide leaves SEEDS empty): the chain's head is ~0.25 s old.
+  if (!checks.some((c) => c.id === 'clock') && !cfg.offline && !skipNetwork) {
+    try {
+      const b = await rpcCall(cfg.rpc, 'eth_getBlockByNumber', ['latest', false], { fetchImpl, tries: 2 });
+      const skewMs = Date.now() - parseInt(b.timestamp, 16) * 1000;
+      add('clock', Math.abs(skewMs) <= 4000, `${Math.round(skewMs / 100) / 10} s from the chain head's time`, 'sync this machine\'s clock (Windows: w32tm /resync; Linux: timedatectl set-ntp true) — a node >4 s off is stale to every peer');
+    } catch { add('clock', null, 'no seed and no chain head to compare against'); }
+  } else if (!checks.some((c) => c.id === 'clock')) add('clock', null, cfg.offline ? 'offline: nothing to compare against' : 'skipped');
+
+  // Settlement v4: what this code speaks, and what the running node (if any) speaks.
+  let live = null;
+  try { live = await (await fetchImpl(`${cfg.localUrl}/health`, { signal: AbortSignal.timeout(2000) })).json(); } catch { /* not running */ }
+  if (live && live.protocol !== PROTOCOL_VERSION) add('settlement', false, `this code speaks protocol ${PROTOCOL_VERSION}; the node at ${cfg.localUrl} speaks ${live.protocol} (${live.version ?? '?'})`, 'restart the node onto this code (npm run host -- restart), or apply the release (npm run update)');
+  else add('settlement', true, `protocol ${PROTOCOL_VERSION}: proof levels verified/checkable/attested/host; court logs held at ${join(cfg.dataDir, 'logs')} (≤512 KiB each)`);
+  // Log storage: what the held logs and ledgers take, and what the disk has left.
+  try {
+    const logsDir = join(cfg.dataDir, 'logs');
+    let n = 0, bytes = 0;
+    if (existsSync(logsDir)) for (const f of readdirSync(logsDir)) { n++; try { bytes += statSync(join(logsDir, f)).size; } catch { /* gone */ } }
+    const fsInfo = statfsSync(cfg.dataDir);
+    const free = Number(fsInfo.bavail) * Number(fsInfo.bsize);
+    const gb = (x) => `${(x / 2 ** 30).toFixed(1)} GB`;
+    add('log-storage', free > 2 ** 30, `${n} log(s), ${(bytes / 2 ** 20).toFixed(1)} MB held; ${gb(free)} free on the data disk`, 'free at least 1 GB on the disk holding DATA_DIR: ledgers and court logs are kept for custody, not evicted');
+  } catch (e) { add('log-storage', null, `unreadable (${e.message})`); }
+  // VERIFIERS=<rulesetId>:<verifierHash>[,<hash>];… — an operator override beside TitleRegistry (settlement v4 checkable).
+  if (env?.VERIFIERS) {
+    const bad = env.VERIFIERS.split(';').map((x) => x.trim()).filter(Boolean).filter((x) => { const [rid, hashes] = x.split(':'); return !/^[a-z0-9][a-z0-9-]*\.v\d+$/.test(rid ?? '') || !(hashes ?? '').split(',').every((h) => /^[0-9a-f]{64}$/.test(h.trim())); });
+    add('verifiers', bad.length === 0, bad.length ? `malformed: ${bad.join('; ')}` : `operator-accepted verifier bundles: ${env.VERIFIERS}`, 'VERIFIERS=<rulesetId>:<64-hex verifierHash>[,<hash>];…');
+  } else add('verifiers', null, cfg.offline ? 'offline and no VERIFIERS: attested results stay at L1 here' : 'from TitleRegistry (contracts/deployed.testnet.json; no VERIFIERS override)');
+
   const bonded = cfg.roles.includes('host') || cfg.roles.includes('witness');
   // Gauntlets (node/gauntlet.js): every config loads, its working folder exists, and the gateway
   // does not land on the port a title relay already listens on (RELAY_PORT is the Agent Fighter
@@ -418,6 +448,13 @@ export function plan(cfg, s) {
     const u = s.health.update ?? {};
     stage('current', u.available ? 'todo' : 'done', u.available ? `release ${u.latest ?? '?'} available (running ${s.health.version})` : `release ${s.health.version} (${cfg.releaseChannel})`, u.available ? 'npm run update' : null);
   } else stage('current', 'unknown', 'node not running');
+
+  // 4b settlement v4 (informational): proof levels, held logs, custody, verifier sources
+  if (s.health?.settlement) {
+    const st = s.health.settlement;
+    stage('settlement', 'done', `v${st.v}: ${st.logs?.count ?? 0} court log(s) held (${Math.round((st.logs?.bytes ?? 0) / 1024)} KB), custody k=${st.custody}, verifiers ${st.verifiers?.registry ? 'from TitleRegistry' : 'from VERIFIERS only'}`);
+  } else if (s.health) stage('settlement', 'optional', `the node speaks protocol ${s.health.protocol}: no proof levels, court logs or stats roots until it runs a protocol-4 release (npm run update)`);
+  else stage('settlement', 'unknown', 'node not running');
 
   // 5 hosting
   if (!cfg.roles.includes('host')) stage('hosting', 'optional', 'no host role');
