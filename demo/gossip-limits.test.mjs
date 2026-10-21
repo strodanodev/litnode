@@ -91,23 +91,26 @@ test('gossip limits: the peer table has a ceiling', { timeout: 60_000 }, async (
 
 test('gossip limits: new keys cost at most a few stake reads a tick; unbonded keys are capped and rarely pushed to', { timeout: 60_000 }, async () => {
   // a stranger's server, standing in for the addresses forged heartbeats point every node at
+  // Each forged key names its own loopback address (127.0.0.2, 127.0.0.3, …): a peer address is a bare origin
+  // since 0.11.30, so the sink tells its callers apart by the address they dialled, not by a path.
   const pushes = new Map();
-  const srv = createServer((req, res) => { pushes.set(req.url, (pushes.get(req.url) ?? 0) + 1); req.resume(); req.on('end', () => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{}'); }); });
-  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
-  const base = `http://127.0.0.1:${srv.address().port}`;
+  const srv = createServer((req, res) => { const k = req.socket.localAddress.replace(/^::ffff:/, ''); pushes.set(k, (pushes.get(k) ?? 0) + 1); req.resume(); req.on('end', () => { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{}'); }); });
+  await new Promise((r) => srv.listen(0, '0.0.0.0', r));
+  const hostOf = (i) => `127.0.0.${i + 2}`;
+  const addrOf = (i) => `http://${hostOf(i)}:${srv.address().port}`;
   try {
     const chainFetch = stakeChain(new Set());
     const c = await createNode({ dataDir: join(tmp, 'c'), rpc: 'mock://', offline: false, chainFetch, nodeStake: STAKE, chainId: 4441, heartbeatMs: 200, operator: 'c', roles: ['mesh'], updates: false, announce: false });
     nodes.push(c);
     const N = 80;
     const kps = await Promise.all(Array.from({ length: N }, generateKeypair));
-    await gossip(c, { heartbeats: await Promise.all(kps.map((k, i) => heartbeat(k, `${base}/u${i}`))) });
+    await gossip(c, { heartbeats: await Promise.all(kps.map((k, i) => heartbeat(k, addrOf(i)))) });
     const settled = await until(async () => { const g = (await health(c)).gossipLimits; return g.unbonded === g.maxUnbonded && g.refused.heartbeat.evicted === N - g.maxUnbonded ? g : null; }, 40_000, 200);
     assert.ok(settled, 'every key read, the unbonded trimmed to the cap');
     assert.equal(settled.peerKeys, settled.maxUnbonded);
     assert.ok(Math.max(...chainFetch.ticks) <= 5, `at most 4 new keys (and our own) read in a tick, saw ${Math.max(...chainFetch.ticks)}`);
     // the evicted keys sent again (fresh heartbeats) are not taken back
-    await gossip(c, { heartbeats: await Promise.all(kps.map((k, i) => heartbeat(k, `${base}/u${i}`))) });
+    await gossip(c, { heartbeats: await Promise.all(kps.map((k, i) => heartbeat(k, addrOf(i)))) });
     assert.equal((await health(c)).gossipLimits.peerKeys, settled.maxUnbonded, 'evicted keys stay out');
     // pushes: unbonded addresses every tenth tick, evicted ones never
     pushes.clear();
@@ -115,8 +118,8 @@ test('gossip limits: new keys cost at most a few stake reads a tick; unbonded ke
     const kept = new Set((await (await fetch(`${c.addr}/gossip`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json()).heartbeats.map((e) => e.body.addr));
     let keptPushes = 0, evictedPushes = 0, maxPerAddr = 0;
     for (let i = 0; i < N; i++) {
-      const n = pushes.get(`/u${i}/gossip`) ?? 0;
-      if (kept.has(`${base}/u${i}`)) { keptPushes += n; maxPerAddr = Math.max(maxPerAddr, n); } else evictedPushes += n;
+      const n = pushes.get(hostOf(i)) ?? 0;
+      if (kept.has(addrOf(i))) { keptPushes += n; maxPerAddr = Math.max(maxPerAddr, n); } else evictedPushes += n;
     }
     assert.equal(evictedPushes, 0, 'an evicted address is not pushed to');
     assert.ok(keptPushes > 0, 'an unbonded peer still hears from us');

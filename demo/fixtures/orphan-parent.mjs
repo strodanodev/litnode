@@ -8,7 +8,7 @@ const [port, dataDir] = process.argv.slice(2);
 const root = join(import.meta.dirname, '..', '..');
 const child = spawn(process.execPath, [join(root, 'node', 'cli.mjs')], {
   cwd: root, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: true,
-  env: { ...process.env, OFFLINE: '1', PORT: port, DATA_DIR: dataDir, OPERATOR: 'orphan', ROLES: 'mesh,host', LITNODE_PLAIN: '1', LITNODE_NO_UPDATE: '1' },
+  env: { ...process.env, OFFLINE: '1', PORT: port, DATA_DIR: dataDir, OPERATOR: 'orphan', ROLES: 'mesh,host', RULESETS: './rulesets/tug.v1.js', LITNODE_PLAIN: '1', LITNODE_NO_UPDATE: '1' },
 });
 child.stdout.on('data', () => {});
 child.stderr.on('data', () => {});

@@ -31,14 +31,21 @@ export function permissionFlag(exec = process.execPath) {
   return '--permission';
 }
 
-export const DEFAULTS = { timeoutMs: 10_000, memoryMb: 256, maxOutputBytes: 8 << 20 };
+export const DEFAULTS = { timeoutMs: 10_000, memoryMb: 256, maxOutputBytes: 8 << 20, maxConcurrent: Math.max(1, Number(process.env.SANDBOX_MAX_CONCURRENT) || 4) };
 
 /** @returns { run(source, jobs, opts) → [{ id, ok, ms, result | error }], status() } */
-export function createSandbox({ node = process.execPath, timeoutMs = DEFAULTS.timeoutMs, memoryMb = DEFAULTS.memoryMb, log = () => {} } = {}) {
+export function createSandbox({ node = process.execPath, timeoutMs = DEFAULTS.timeoutMs, memoryMb = DEFAULTS.memoryMb, maxConcurrent = DEFAULTS.maxConcurrent, log = () => {} } = {}) {
   const flag = permissionFlag(node);
-  const stats = { runs: 0, killed: 0, failed: 0, msTotal: 0, lastMs: null };
+  const stats = { runs: 0, killed: 0, failed: 0, msTotal: 0, lastMs: null, active: 0, queued: 0 };
 
-  const run = (source, jobs, { timeoutMs: t = timeoutMs, memoryMb: m = memoryMb } = {}) => new Promise((resolve, reject) => {
+  // At most `maxConcurrent` children at once; the rest wait in order. Every replay is a process of up to
+  // `memoryMb`, and the intake routes are open to the network (audit of 21 Oct 2026).
+  const waiting = [];
+  const acquire = () => new Promise((resolve) => { if (stats.active < maxConcurrent) { stats.active++; resolve(); } else { stats.queued++; waiting.push(resolve); } });
+  const release = () => { const next = waiting.shift(); if (next) { stats.queued--; next(); } else stats.active--; };
+  const run = async (source, jobs, opts) => { await acquire(); try { return await spawnRun(source, jobs, opts); } finally { release(); } };
+
+  const spawnRun = (source, jobs, { timeoutMs: t = timeoutMs, memoryMb: m = memoryMb } = {}) => new Promise((resolve, reject) => {
     if (!flag) return reject(new Error('this Node runtime has no permission model (--permission): titles cannot be sandboxed, refusing to run them'));
     jobs = jobs.map((j, i) => ({ id: i, ...j }));
     const t0 = Date.now();

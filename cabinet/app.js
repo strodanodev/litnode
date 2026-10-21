@@ -36,7 +36,11 @@ import { loadReceipt, renderReceipt } from './receipt.js';
 const $ = (id) => document.getElementById(id);
 const view = (name) => document.querySelector(`.view[data-view="${name}"]`);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const short = (id, n = 10) => (id ? `${id.slice(0, n)}…` : '—');
+// Every id the node or a peer hands us goes through esc(): a player id, a host id, an opponent is a string a
+// bonded stranger chose, and the player's key lives in this origin's storage (audit of 21 Oct 2026).
+const short = (id, n = 10) => (id ? `${esc(String(id).slice(0, n))}…` : '—');
+const safeAccent = (c, fallback) => (typeof c === 'string' && /^(#[0-9a-f]{3,8}|(rgb|hsl)a?\([\d.,%\s/]+\))$/i.test(c.trim()) ? c.trim() : fallback);
+const safeHttpUrl = (u) => { try { const x = new URL(String(u)); return x.protocol === 'https:' || x.protocol === 'http:' ? x.href : null; } catch { return null; } };
 const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
 // The node that serves this page IS the node to talk to (same origin, no
 // preflight); a static host (Vercel) falls back to config, and the footer
@@ -64,13 +68,18 @@ function mergeMeshTitles(titles) {
     // publisher (the token holder) runs a bonded host for it; `published`
     // null = no registry, the older rule (display + a bonded host) applies.
     if (t.published === false) continue;
+    // A manifest's display block is a peer's word. The accent lands in a style attribute, the url and cover in
+    // href and url('…'): each is checked against the shape it must have, never trusted to be one.
+    if (typeof t.rulesetId !== 'string' || !/^[\w.-]{1,64}$/.test(t.rulesetId)) continue;
     const d = t.display;
+    const url = safeHttpUrl(d.url), cover = safeHttpUrl(d.cover);
+    const hosts = Array.isArray(t.hosts) ? t.hosts.length : 0;
     GAMES.push({
-      id: t.rulesetId.replace(/\.v\d+$/, ''), title: d.title, accent: d.accent ?? ACCENTS[GAMES.length % ACCENTS.length],
-      tagline: d.description ?? 'Hosted on the mesh.', description: d.description ?? `A title hosted by ${t.hosts.length} node${t.hosts.length === 1 ? '' : 's'} on the litVM Games mesh.`,
-      controls: d.controls ?? [], modes: t.modes ?? [], players: t.kind === 'attested' ? 'attested' : `${Array.isArray(t.participants) ? t.participants.join('/') : t.participants}P`,
-      url: d.url ?? null, cover: d.cover ?? null, rulesetId: t.rulesetId, buildHash: t.buildHash,
-      status: t.kind === 'attested' ? 'attested' : 'mesh', tags: ['MESH', ...(t.published ? ['PUBLISHED'] : t.bondedHosts ? ['BONDED HOST'] : [])], badge: d.url ? new URL(d.url).host : 'mesh', playable: !!d.url, mesh: true,
+      id: t.rulesetId.replace(/\.v\d+$/, ''), title: String(d.title), accent: safeAccent(d.accent, ACCENTS[GAMES.length % ACCENTS.length]),
+      tagline: typeof d.description === 'string' ? d.description : 'Hosted on the mesh.', description: typeof d.description === 'string' ? d.description : `A title hosted by ${hosts} node${hosts === 1 ? '' : 's'} on the litVM Games mesh.`,
+      controls: Array.isArray(d.controls) ? d.controls.map(String) : [], modes: Array.isArray(t.modes) ? t.modes.map(String) : [], players: t.kind === 'attested' ? 'attested' : `${Array.isArray(t.participants) ? t.participants.join('/') : t.participants}P`,
+      url, cover, rulesetId: t.rulesetId, buildHash: t.buildHash,
+      status: t.kind === 'attested' ? 'attested' : 'mesh', tags: ['MESH', ...(t.published ? ['PUBLISHED'] : t.bondedHosts ? ['BONDED HOST'] : [])], badge: url ? new URL(url).host : 'mesh', playable: !!url, mesh: true,
     });
     changed = true;
   }
@@ -710,7 +719,7 @@ function renderLeaderboards() {
       <div class="name"><img src="${me ? player.avatar : identicon(r.player, 56)}" alt="" />${me ? esc(player.name) : short(r.player, 10)}</div>
       <div class="sub">${esc(g?.title ?? lbTab)}</div>
       <div class="row3"><div><div class="v">${r.rating.toLocaleString()}</div><div class="k">Rating</div></div><div><div class="v">${pct(s2.wins ?? 0, s2.matches ?? 0)}%</div><div class="k">Win rate</div></div><div><div class="v">${streakOf(r.player)}</div><div class="k">Streak</div></div></div>
-      <div class="rfoot">ed25519:${r.player}</div>
+      <div class="rfoot">ed25519:${esc(r.player)}</div>
     </div>`; }).join('')}</div>` : '';
   view('leaderboards').innerHTML = `<div class="page-h"><h1 class="chrome">Ranks</h1><span class="dim">derived by the mesh from settled matches — reproducible by any node</span><div class="right"><input class="search" id="lb-q" placeholder="find player id…" value="${esc(lbQuery)}" /></div></div>
     ${lbQuery ? '' : podium}

@@ -47,7 +47,7 @@
  *
  *  Title code never runs in this process: replays and report validation go
  *  through node/sandbox.js. */
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { canonical, h } from '../protocol/canonical.js';
 import { sign, verify } from '../protocol/keys.js';
@@ -108,6 +108,20 @@ export function createSettlement({
 
   const deltas = new Map(readAll(dirs.deltas).map((d) => [d.matchId, { disputes: [], ...d }]));
   const frozen = new Map(readAll(dirs.epochs).map((e) => [e.epoch, e]));
+  /** A delta nobody but this host signed (`host` provenance, unplaced) is never official and never witnessed; it is
+   *  kept a day for the casual tables, then dropped with its ledger, so an open intake cannot fill the disk. */
+  const HOST_DELTA_TTL_MS = 24 * 60 * 60_000;
+  const prune = (now = Date.now()) => {
+    let n = 0;
+    for (const [id, d] of deltas) {
+      if (d.attestation !== 'host' || d.placed || !d.settledAt || now - Date.parse(d.settledAt) < HOST_DELTA_TTL_MS) continue;
+      deltas.delete(id); n++;
+      for (const dir of [dirs.deltas, dirs.ledgers]) { try { unlinkSync(join(dir, `${encodeURIComponent(id)}.json`)); } catch { /* already gone */ } }
+    }
+    if (n) log(`pruned ${n} unsigned casual delta${n === 1 ? '' : 's'} older than a day`);
+    return n;
+  };
+  prune();
   const registryOn = !!registry?.configured;
 
   // ---------------------------------------------------------------- binding
@@ -390,7 +404,7 @@ export function createSettlement({
   };
 
   return {
-    intake, cosign, acceptCosign, acceptDispute, replay, derived, epoch, freeze, maybeFreeze, proof, list,
+    intake, cosign, acceptCosign, acceptDispute, replay, derived, epoch, freeze, maybeFreeze, proof, list, prune,
     delta: (id) => { const d = deltas.get(id) ?? deltas.get(byChainKey(id)); return d ? decorate(d) : null; }, ledger: (id) => get(dirs.ledgers, id) ?? (byChainKey(id) ? get(dirs.ledgers, byChainKey(id)) : null),
     verification: (d) => verification(d, { registry: registryOn }), official: officialOf,
   };

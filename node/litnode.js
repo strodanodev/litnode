@@ -74,12 +74,32 @@ const json = (res, status, body) => {
     res.end(JSON.stringify(body, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)));
   } catch { try { res.destroy(); } catch { /* gone */ } }
 };
-const readBody = (req) => new Promise((resolve, reject) => {
-  let s = '';
-  req.on('data', (d) => { s += d; if (s.length > 4e6) reject(new Error('body too large')); });
-  req.on('end', () => { try { resolve(s ? JSON.parse(s) : {}); } catch (e) { reject(e); } });
-  req.on('error', reject);
+/** Read a request body up to MAX_BODY bytes. Past the cap the socket is destroyed: a rejected promise
+ *  alone left the closure concatenating until the string limit (audit of 21 Oct 2026). */
+const MAX_BODY = 4e6;
+const readText = (req) => new Promise((resolve, reject) => {
+  const declared = Number(req.headers['content-length']);
+  if (Number.isFinite(declared) && declared > MAX_BODY) { req.destroy(); return reject(new Error('body too large')); }
+  let s = '', done = false;
+  const fail = (e) => { if (done) return; done = true; req.destroy(); reject(e); };
+  req.on('data', (d) => { if (done) return; s += d; if (s.length > MAX_BODY) fail(new Error('body too large')); });
+  req.on('end', () => { if (!done) { done = true; resolve(s); } });
+  req.on('error', fail);
 });
+const readBody = async (req) => { const s = await readText(req); return s ? JSON.parse(s) : {}; };
+
+/** A peer address a heartbeat may carry: an http(s) origin and nothing else. A path or a query would let a
+ *  peer steer this node's own gossip push at an arbitrary route — `${addr}/gossip` against
+ *  `http://127.0.0.1:7801/update?x=` reached the loopback-only updater (audit of 21 Oct 2026). */
+export function peerOrigin(addr) {
+  if (typeof addr !== 'string' || addr.length > 200) return null;
+  let u;
+  try { u = new URL(addr); } catch { return null; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+  if (u.username || u.password || u.search || u.hash || (u.pathname !== '/' && u.pathname !== '')) return null;
+  if (!/\/\/[^/]+\/?$/.test(addr)) return null; // the exact text must be the origin: nothing a URL parser silently drops
+  return u.origin;
+}
 
 export const rulesetHash = (source) => h('ruleset', source);
 
@@ -233,10 +253,23 @@ export async function createNode({
   // This machine only. cloudflared (and any local reverse proxy) connects
   // from 127.0.0.1 too, so a loopback socket that carries forwarding headers
   // is a public caller relayed through the tunnel, not the operator.
-  const FORWARDED = ['cf-connecting-ip', 'cf-ray', 'cdn-loop', 'x-forwarded-for', 'x-forwarded-host', 'x-real-ip', 'forwarded'];
+  // A request this node sent itself (its gossip push carries x-litnode-from) is never the operator either.
+  const FORWARDED = ['cf-connecting-ip', 'cf-ray', 'cdn-loop', 'x-forwarded-for', 'x-forwarded-host', 'x-real-ip', 'forwarded', 'x-litnode-from'];
   const isLoopback = (req) => /^(::1|127\.\d+\.\d+\.\d+|::ffff:127\.\d+\.\d+\.\d+)$/.test(req.socket.remoteAddress ?? '')
     && !FORWARDED.some((h) => h in req.headers);
   const restart = () => { log('restarting to run the new build'); emit('restart', {}); setTimeout(() => { if (onRestart) onRestart(); else process.exit(RESTART_EXIT); }, 300); };
+  // Unsigned (host-labelled) ledgers per remote address: a sliding minute, a bounded table.
+  const UNSIGNED_LEDGERS_PER_MIN = 10;
+  let lastPruneAt = 0;
+  const unsignedLedgers = new Map(); // address → [at, …]
+  const unsignedLedgerOk = (from) => {
+    const now = Date.now();
+    const recent = (unsignedLedgers.get(from) ?? []).filter((t) => now - t < 60_000);
+    if (recent.length >= UNSIGNED_LEDGERS_PER_MIN) { unsignedLedgers.set(from, recent); return false; }
+    recent.push(now); unsignedLedgers.set(from, recent);
+    if (unsignedLedgers.size > 4096) for (const [k, v] of unsignedLedgers) { if (v.every((t) => now - t >= 60_000)) unsignedLedgers.delete(k); if (unsignedLedgers.size <= 2048) break; }
+    return true;
+  };
 
   // ---------------------------------------------------------------- identity
   const idPath = join(dataDir, 'identity.json');
@@ -702,7 +735,7 @@ export async function createNode({
   const UNBONDED_PUSH_EVERY = 10;  // ticks between our pushes to an unbonded peer (it still gets everything in our replies)
   const verifiedSigs = new Map();  // `tag|sig` → digest of what was signed: an envelope is verified once, not on every push
   const evicted = new Map();       // nodeId → when it was dropped as unbonded over the cap
-  const guard = { heartbeat: { badSig: 0, full: 0, evicted: 0 }, queue: { badSig: 0, window: 0, unknownTitle: 0, full: 0 }, chat: { badSig: 0, malformed: 0, window: 0, rate: 0, full: 0, unbonded: 0, unknown: 0 } };
+  const guard = { heartbeat: { badSig: 0, badAddr: 0, full: 0, evicted: 0 }, queue: { badSig: 0, window: 0, unknownTitle: 0, full: 0 }, chat: { badSig: 0, malformed: 0, window: 0, rate: 0, full: 0, unbonded: 0, unknown: 0 } };
   const guardJson = () => JSON.stringify({ heartbeat: guard.heartbeat, queue: guard.queue, chat: guard.chat });
   guard.reported = guardJson(); // nothing refused yet: nothing to report
   /** opened(), remembered: the same sig over the same body (signer, tag) is not verified twice. */
@@ -822,6 +855,7 @@ export async function createNode({
       }
       incompatible.delete(b.nodeId);
       if (b.nodeId !== nodeId && (b.epoch ?? 0) < epochOf(Date.now()) - FORGET_AFTER_EPOCHS) continue; // too old to learn: a peer on older code still forwards the dead
+      if (b.nodeId !== nodeId && b.addr != null && peerOrigin(b.addr) !== b.addr) { guard.heartbeat.badAddr++; continue; } // an addr that is not a bare origin is refused whole
       const cur = heartbeats.get(b.nodeId);
       if (!cur || b.epoch >= cur.epoch) heartbeats.set(b.nodeId, b);
       if (b.addr && b.nodeId !== nodeId) peersKnown.add(b.addr);
@@ -911,7 +945,7 @@ export async function createNode({
       for (const peer of targets) {
         const t0 = performance.now();
         trafficNote('out', body.length);
-        fetch(`${peer}/gossip`, { method: 'POST', headers: { 'content-type': 'application/json' }, body, signal: AbortSignal.timeout(8000) })
+        fetch(`${peer}/gossip`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-litnode-from': nodeId }, body, signal: AbortSignal.timeout(8000) })
           .then(async (r) => { if (r.ok) { linkNote(peer, true, performance.now() - t0); unreachable.delete(peer); const text = await r.text(); trafficNote('in', text.length); const m = JSON.parse(text); await absorb(m, { from: peer, bytes: text.length, via: 'reply' }); } else { linkNote(peer, false); unreachable.set(peer, unreachable.get(peer) ?? Date.now()); } })
           .catch(() => { linkNote(peer, false); unreachable.set(peer, unreachable.get(peer) ?? Date.now()); });
       }
@@ -980,6 +1014,7 @@ export async function createNode({
       await hydrateServers();
       await refreshProfiles([...queue.values()].map((b) => b.playerId).concat(settlement.list().flatMap((d) => d.participants)));
       settlement.maybeFreeze();
+      if (Date.now() - lastPruneAt > 3600_000) { lastPruneAt = Date.now(); settlement.prune(); }
       await mbook?.poll();
     } catch (e) { log(`tick (chain): ${e.message}`); }
     finally { chainBusy = false; }
@@ -1036,6 +1071,7 @@ export async function createNode({
     if (hostHb && hostHb.operator === operator && !stakes) { witnessed.add(ad.matchId); return; } // same operator (dev mesh)
     if (stakes && stakes[ad.hostId]?.operator && stakes[nodeId]?.operator === stakes[ad.hostId].operator) { witnessed.add(ad.matchId); return; }
     if (!loaded.has(ad.rulesetId)) return; // hydrate first, retry on a later gossip
+    if (peerOrigin(ad.addr) !== ad.addr) return; // an advert's address is as untrusted as a heartbeat's
     witnessed.add(ad.matchId);
     try {
       // Replay in the build the delta names. If we do not hold it, fetch it
@@ -1379,7 +1415,7 @@ export async function createNode({
         return res.end(r.source);
       }
       if (req.method === 'POST' && url.pathname === '/gossip') {
-        const text = await new Promise((resolve, reject) => { let b = ''; req.on('data', (d) => { b += d; if (b.length > 4e6) reject(new Error('body too large')); }); req.on('end', () => resolve(b)); req.on('error', reject); });
+        const text = await readText(req);
         const from = req.socket.remoteAddress ?? '?';
         inbound.set(from, Date.now());
         trafficNote('in', text.length);
@@ -1415,15 +1451,18 @@ export async function createNode({
         const b = env?.body;
         if (!b || b.playerId !== env.signer) return json(res, 400, { error: 'queue entry must be signed by the player it names' });
         if (!(await checked(QUEUE_TAG, env))) return json(res, 403, { error: 'bad signature' });
-        if (Math.abs(b.bucket - bucketOf(Date.now())) > 2) return json(res, 400, { error: 'bucket out of window' });
+        // Typed before stored: `Math.abs(undefined - n) > 2` is false, and an entry with no bucket sat in the table for good.
+        if (!Number.isInteger(b.bucket) || Math.abs(b.bucket - bucketOf(Date.now())) > 2) return json(res, 400, { error: 'bucket out of window' });
+        if (typeof b.rulesetId !== 'string' || !knownTitles().has(b.rulesetId)) { guard.queue.unknownTitle++; return json(res, 400, { error: `unknown title ${String(b.rulesetId).slice(0, 64)}` }); }
         // A key its profile owner revoked is refused; an unbound key is a guest and fine.
         await refreshProfiles([b.playerId]).catch(() => {});
         const prof = profileCache.get(b.playerId);
         if (prof && prof.tokenId !== 0n && !prof.active) { emit('refused', { what: 'queue', reason: 'key revoked', playerId: b.playerId }); return json(res, 403, { error: 'key revoked by its profile owner' }); }
         const qk = `${b.bucket}|${b.playerId}`;
         if (!queueEnvelopes.has(qk) && queueEnvelopes.size >= MAX_QUEUE) { guard.queue.full++; return json(res, 503, { error: 'matchmaking queue is full on this node; try another node or a moment later' }); }
-        queueEnvelopes.set(qk, env);
         await mergeQueue([env]);
+        if (!queue.has(qk)) return json(res, 400, { error: 'queue entry refused' }); // held only once the queue itself accepted it
+        queueEnvelopes.set(qk, env);
         emit('queue', { playerId: b.playerId, rulesetId: b.rulesetId, mode: b.mode, bucket: b.bucket, region: b.region ?? null, sig: env.sig });
         return json(res, 202, { ok: true, bucket: b.bucket });
       }
@@ -1436,7 +1475,12 @@ export async function createNode({
       if (req.method === 'POST' && url.pathname === '/ledger') {
         if (!canSettle) return json(res, 403, { error: 'this node has no settling role' });
         try {
-          const d = await settlement.intake(await readBody(req));
+          const sub = await readBody(req);
+          // A submission nobody signed (no players, no relay, no court) settles casual, labelled `host`, and costs this
+          // node a sandbox process and a file. Strangers get a budget per address; the operator's own machine does not.
+          const unsigned = sub?.kind !== 'attested' && !sub?.relay && !(sub?.signatures && Object.keys(sub.signatures).length);
+          if (unsigned && !isLoopback(req) && !unsignedLedgerOk(req.socket.remoteAddress ?? '?')) { emit('refused', { what: 'ledger', reason: 'unsigned submissions rate-limited' }); return json(res, 429, { error: 'too many unsigned submissions from this address; sign the ledger or wait a minute' }); }
+          const d = await settlement.intake(sub);
           emit('settled', { matchId: d.matchId, rulesetId: d.rulesetId, ticks: d.ticks, root: d.finalStateRoot, attestation: d.attestation, hostSig: d.hostSig, participants: d.participants });
           gauntlet?.onSettled(d.matchId);
           return json(res, 200, d);

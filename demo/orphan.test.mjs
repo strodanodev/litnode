@@ -26,7 +26,7 @@ test('a node keeps answering request bodies after its launcher dies', { timeout:
   // Make the orphan write: every accepted queue entry is a log line into the pipe nobody reads.
   for (let i = 0; i < 25; i++) {
     const kp = await generateKeypair();
-    const env = await seal(QUEUE_TAG, { playerId: kp.publicKey, rulesetId: 'nothing.v1', tokenId: '1', mode: 'casual', bucket: bucketOf(Date.now()), region: 'lan' }, kp);
+    const env = await seal(QUEUE_TAG, { playerId: kp.publicKey, rulesetId: 'tug.v1', tokenId: '1', mode: 'casual', bucket: bucketOf(Date.now()), region: 'lan' }, kp); // a title the node runs: an unknown one is refused since 0.11.30
     const r = await post('/queue', JSON.stringify(env));
     assert.ok(r.status === 202 || r.status === 200, `queue entry ${i}: ${r.status}`);
   }

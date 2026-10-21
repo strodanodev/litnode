@@ -3,6 +3,50 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.11.30] — 2026-10-21 — hardening: the six high findings of the 21 Oct audit
+
+The end-to-end audit (`audit/audit-2026-10-21.md`, atlas `audit/atlas-2026-10-21.html`) found six paths any key on the
+mesh could take against a node or a cabinet. All six are closed here; no protocol change, no contract change.
+
+### Fixed
+- **A gossiped peer address is an origin or it is refused** (`node/litnode.js`, `peerOrigin`). A heartbeat's `addr`
+  was stored raw and pushed to as `${addr}/gossip`, so `addr: http://127.0.0.1:7801/update?x=` steered the node's
+  own push at its loopback-only updater, and `isLoopback` saw 127.0.0.1 with no forwarding headers. Now an `addr`
+  that is anything but a bare `http(s)://host[:port]` refuses the whole heartbeat (`/health.gossipLimits.refused.heartbeat.badAddr`),
+  a delta advert's address is checked the same way, and every gossip push carries `x-litnode-from`, which
+  `isLoopback` treats like a forwarding header: a request the node sent itself is never the operator.
+- **An oversize body is cut off, not accumulated** (`readText`). The 4 MB cap rejected the promise and left the
+  closure concatenating until the string limit; the socket is now destroyed at the cap, and a declared
+  `content-length` past it is refused before a byte is read. The inline `/gossip` reader is the same function.
+- **A queue entry is typed and for a known title before it is held** (`POST /queue`). `bucket` must be an integer
+  (`Math.abs(undefined - n) > 2` was false, and an entry with no bucket sat in the table for good), `rulesetId` must
+  be a title this node or a peer runs, and the envelope is kept only once `mergeQueue` accepted it.
+- **Unsigned ledgers have a budget per address** (`POST /ledger`). A submission nobody signed (no players, no relay,
+  no court) settles casual as `host` and costs a sandbox process and a file; a stranger's address now gets ten a
+  minute (`429` past that), the operator's own machine has no budget. Unsigned, unplaced deltas are **pruned after a
+  day** with their ledgers (`settlement.prune`, at start and hourly): never official, never witnessed, kept for the
+  casual tables, then gone.
+- **Sandbox children are counted against a ceiling** (`node/sandbox.js`, `SANDBOX_MAX_CONCURRENT`, default 4;
+  `status().active/queued`). Every replay is a process of up to `SANDBOX_MEMORY_MB`, and the intake routes are open to
+  the network; the rest of a burst now waits in order.
+- **The cabinet escapes what the node and its peers hand it** (`cabinet/app.js`). The Ranks podium printed the
+  full `/leaderboard` player id raw and `short()` sliced ids without escaping, while the player's key lives in this
+  origin's storage; both go through `esc()` now. A peer's title `display` block is checked against the shape each
+  field must have before it reaches `GAMES`: `accent` a colour literal or the default, `url` and `cover` http(s)
+  URLs or null, `controls` and `modes` arrays of strings, `rulesetId` a `[\w.-]` name; a malformed `url` no longer
+  throws inside the poll tick.
+
+### Tests
+- `demo/hardening.test.mjs`: `peerOrigin` cases; a path-bearing addr refused and counted while a bare origin is
+  learned; `POST /update` with the node's own push header is 403 from loopback; a 5 MB body is cut off and the node
+  answers the next request; no bucket, an object bucket and an unknown title are 400 and a typed entry is 200; the
+  eleventh unsigned ledger from one forwarded address is 429 while loopback has no budget; with one sandbox slot the
+  second job waits and `active` never exceeds one; a two-day-old unsigned casual delta is dropped at start with its
+  ledger while a fresh one and a player-signed one stay.
+- `demo/gossip-limits.test.mjs`: the 80 forged keys each name their own loopback address (127.0.0.2…) instead of a
+  path on one, since a path-bearing addr is now refused; `demo/orphan.test.mjs` queues a title the node runs
+  (`tug.v1`) instead of one it never loaded.
+
 ## [0.11.29] — 2026-10-21 — node chat: one public line between operators, over the gossip
 
 ### Added
