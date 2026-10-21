@@ -4,7 +4,7 @@
  *    node --test demo/pack.test.mjs */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { stage, checkStage, scriptsFor, closure } from '../tools/lib/pack-plan.mjs';
@@ -38,4 +38,11 @@ test('pack: the check catches a missing import and an undeclared package', (t) =
   assert.ok(problems.some((p) => /package ethers/.test(p)), problems.join('; '));
   assert.ok(!problems.some((p) => /in-a-comment/.test(p)), 'an import in a comment is not an import');
   assert.throws(() => closure(tmp, ['nope.mjs']), /does not exist/);
+});
+
+test('npm test lists every suite in demo/ (two suites once sat outside it for a month; audit §4.5)', () => {
+  const listed = new Set(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).scripts.test.split(' ').filter((x) => x.endsWith('.test.mjs')));
+  const onDisk = readdirSync(join(root, 'demo')).filter((f) => f.endsWith('.test.mjs')).map((f) => `demo/${f}`);
+  assert.deepEqual(onDisk.filter((f) => !listed.has(f)), [], 'add these to the test script');
+  assert.deepEqual([...listed].filter((f) => !existsSync(join(root, f))), [], 'listed but missing');
 });

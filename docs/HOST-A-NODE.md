@@ -92,7 +92,10 @@ can run before the first start. `--witness` is `--roles mesh,witness
 | rpc-fallback | each `RPC_FALLBACK` endpoint answers on the same chain id (shown by host only; none = no rows) | fix or drop the entry |
 | contracts | NodeStake + NodeDirectory addresses known | re-apply the release |
 | seeds | each `SEEDS` URL answers `/health` on this protocol version | fix `SEEDS` |
-| clock | within 4 s of each seed (HTTP `Date`) | sync the clock |
+| clock | within 4 s of each seed (HTTP `Date`), or of the chain head's timestamp when there are no seeds | sync the clock (`w32tm /resync`, `timedatectl set-ntp true`) |
+| settlement | this code's protocol (4) equals the running node's | restart onto this code, or `npm run update` |
+| log-storage | ≥ 1 GB free on the data disk; reports held court logs (`<DATA_DIR>/logs`) | free disk: ledgers and logs are kept for custody |
+| verifiers | `VERIFIERS` is well-formed (`null` when unset: TitleRegistry decides) | `VERIFIERS=<rulesetId>:<64-hex>[,…];…` |
 
 `ok: null` means "not applicable"; only `false` fails the run.
 

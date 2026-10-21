@@ -1,5 +1,7 @@
 # Go live: Pickle Brawl's backend on the desktop node
 
+> **Historical** — the 25 Sep 2026 go-live runbook for one machine; the steps were executed. Kept for the record; not maintained. Current state: `BUILD-SPEC.md`, `docs/SETTLEMENT-STANDARD.md`, `CHANGELOG.md`.
+
 The target: Pickle Brawl's API, matchmaker and courts run on the desktop
 litnode; the game finds them through the mesh; the only hosting left is
 the static frontend on Vercel. Everything below was built and tested on

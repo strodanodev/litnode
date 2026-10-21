@@ -5,7 +5,7 @@ your own wallet, make it reachable, and keep it running. It takes about
 30 minutes. Everything happens on the **litVM LiteForge testnet**, so the
 tokens are free and have no value.
 
-Written for litnode **0.11.21**. Deeper references:
+Written for litnode **0.12.0** (protocol 4, settlement v4). Deeper references:
 [HOST-A-NODE.md](HOST-A-NODE.md) (the `npm run host` harness, command by
 command) and [RUNBOOK.md](RUNBOOK.md) (keys, releases, evidence).
 
@@ -218,6 +218,17 @@ that is also how a developer runs an unreleased server.
   dashboard. Your `data` folder and `node.env` are never touched. Please
   update within a day of a release: nodes on an older protocol are
   dropped from placement.
+- **Protocol 4 (0.12.0, settlement v4).** A protocol-4 node and a
+  protocol-3 node do not see each other, so apply 0.12.0 within the hour
+  it is announced. After the update, `npm run host -- doctor` must show
+  `settlement` true. Your node now also keeps game courts' input logs
+  (`<data>/logs`, at most 512 KiB each) for the matches it hosts or is drawn
+  to hold; `doctor`'s `log-storage` line shows what they take and warns
+  under 1 GB free. Nothing is evicted: custody is part of the job.
+- **The scheduled task runs unelevated since 0.11.32.** If you installed it
+  before, run `install-task.cmd` (or `npm run host -- install-service`)
+  once more from an administrator prompt to replace the elevated task.
+  Registering still needs admin; running does not.
 
 ## 8. Done when
 

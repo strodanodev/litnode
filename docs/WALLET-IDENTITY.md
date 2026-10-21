@@ -1,5 +1,7 @@
 # Sign in with a wallet — the litVM Games profile
 
+> **Historical** — the 17 Sep 2026 design; PlayerProfile has been deployed since generation 3 and its address comes from `cabinet/contracts.js`, never `cabinet/config.js`. Kept for the record; not maintained. Current state: `BUILD-SPEC.md`, `docs/SETTLEMENT-STANDARD.md`, `CHANGELOG.md`.
+
 Status: **built, not deployed** (17 Sep 2026). `contracts/PlayerProfile.sol`
 and `contracts/NodeBadge.sol` compile; `protocol/profile.js` (reads, calldata,
 the fold by owner), the node's profile cache, `/profile`, the revoked-key

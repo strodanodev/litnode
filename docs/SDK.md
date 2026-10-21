@@ -1,8 +1,8 @@
 # The litnode SDK, in one page
 
 The instructions a publisher, a developer or an agent needs to make a game
-litnode-compatible, current for litnode **0.11.17** (protocol 3, settlement
-v1.0 on `MatchBook`; reviewed 26 Sep 2026). The same text is served by every node's cabinet and
+litnode-compatible, current for litnode **0.12.0** (protocol 4, settlement
+v4 proof levels on `MatchBook`; reviewed 22 Oct 2026). The same text is served by every node's cabinet and
 by the arcade at **arcade.litvm.games/#/build** (`cabinet/build.js`), with
 the "for dummies" pictures. Everything here is code you can run; nothing is
 promised that a test does not exercise.
@@ -92,6 +92,14 @@ Left to right, more trust. Only a replayable match that the mesh placed,
 both players signed and the witnesses agreed on becomes official. An
 attested game is on the ladder, labelled, and stays there.
 
+Settlement v4 names the same ladder as **proof levels**, derived by the
+node and recorded on every result (`proof`): **L3 `verified`** (players
+signed a replayable log), **L2 `checkable`** (a court replayed it, the mesh
+holds its log and its verifier is registered), **L1 `attested`** (a court
+signed a report the node checked), **L0 `host`**. The arcade shows it as a
+badge on every title and match. `docs/SETTLEMENT-STANDARD.md` is the
+contract.
+
 ### A node's life
 
 ```mermaid
@@ -126,7 +134,7 @@ npm run bridge -- assess --input-log yes|no --deterministic yes|no --engine-open
 | kind | you have | the mesh does |
 |---|---|---|
 | replayable | per-tick inputs, deterministic, bundles as one import-free module | re-runs it; witnesses re-run it; can be OFFICIAL |
-| attested | anything else: float physics, closed engine, no input log | your court signs the outcome; the node validates it; labelled, never official |
+| attested | anything else: float physics, closed engine, no input log | your court signs the outcome; the node validates it; labelled, never official; L2 `checkable` once the court commits its log and registers a verifier |
 
 ### 2. The title file
 
@@ -138,7 +146,12 @@ npm run bundle:title -- titles/my-game.v1.mjs      # rulesets/my-game.v1.js + .j
 
 Replayable: `init / step / done / serialize / view / scores` and a manifest
 with `display`. Attested: `validate(report)` and `scores(report,
-participants, teams)`. Integers or `seededRandom`; never the clock, the
+participants, teams)`, plus `attestors: [<court key>]`. **Stats**:
+`services.stats.schema: { name: 'sum'|'max'|'min'|'last' }`, and for a
+replayable title `stats(state, participants)` over integer counters kept in
+the state (the template's `pulls`); an attested title gets `report.stats`.
+Every node folds them per player (`/stats`) and into an hourly root you can
+prove a line against (`/proof/stats`). Integers or `seededRandom`; never the clock, the
 network or storage. The conformance suite is the gate every node runs
 before loading you. Full rules: [HOST-YOUR-TITLE.md](HOST-YOUR-TITLE.md).
 
@@ -328,7 +341,7 @@ terminal; `npm run fleet -- relay` walks a title's path from the outside.
 | `attest` ×3 | each witness, inside the window | the hash it reached itself; a different hash is a dispute |
 | `finalize` | anyone, after the window | two agree and none dissent: final; otherwise escalated |
 | `escalate` / `resolve` | anyone posts the ledger; nine drawn from the enrolled pool | stake-weighted majority; losers are slashed through NodeStake |
-| `propose` (hourly) | the settler | the hour's finalized set as a Merkle root on EpochAnchor |
+| `propose` (hourly) | the settler | `pair(resultsRoot, statsRoot)`: the hour's finalized set and every player's season stats through it, one root on EpochAnchor |
 
 Ladders are a fold over these events in block order, so every node and the
 arcade derive the same tables from RPC alone. Elo stays off chain. Windows

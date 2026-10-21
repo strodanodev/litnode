@@ -69,6 +69,16 @@ against the code.
    holder's bonded host carries the title. Real. "Characters
    forged anywhere can enter" waits on the registry's minter.
 
+## Settlement v4 in one paragraph
+
+Every result now carries a proof level the node derives — `verified`,
+`checkable`, `attested` or `host` — and per-match `stats` your title
+declares. An attested title climbs from L1 to L2 by committing its court's
+log (`report.commitments`, `log`) and registering a verifier bundle
+(`npm run bundle:verifier`, then `publish:title -- set-build`); put its
+court key in `attestors` and sign through `sdk/court`.
+`docs/SETTLEMENT-STANDARD.md` is the contract.
+
 ## Where things are
 
 ```

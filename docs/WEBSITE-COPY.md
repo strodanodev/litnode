@@ -1,5 +1,7 @@
 # Website and litepaper copy vs. what ships
 
+> **Historical** — the 21 Sep 2026 comparison of website copy with what shipped then. Kept for the record; not maintained. Current state: `BUILD-SPEC.md`, `docs/SETTLEMENT-STANDARD.md`, `CHANGELOG.md`.
+
 A consolidation pass, 20 Sep 2026, over **litvm.games**, **litvm.games/whitepaper**
 and **arcade.litvm.games** (the cabinet in this repo) against the code.
 Three columns: what the copy says, what is true today, what to change. The

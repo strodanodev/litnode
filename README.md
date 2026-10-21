@@ -121,7 +121,7 @@ Just the cabinet UI, pointed at some other node: `npm run cabinet`
 npm test
 ```
 
-42 suites, run one at a time on purpose (replaying a match spins up a
+Every suite in `demo/` (56 at 0.12.0; `demo/pack.test.mjs` fails when one is left out of the list), run one at a time on purpose (replaying a match spins up a
 real sandboxed process, so we don't parallelize it) — takes about seven
 minutes. This has to be green before anything ships.
 

@@ -129,11 +129,37 @@ official.
 
 **Attested**
 
-```json
+```jsonc
 { "kind": "attested", "matchId": "…", "rulesetId": "my-game.v1", "mode": "casual",
-  "participants": ["pb:air:ana", "pb:air:bo"], "teams": [["pb:air:ana"], ["pb:air:bo"]],
-  "report": { … whatever your validate() checks … } }
+  "participants": ["<player key>", "<player key>"], "teams": [["<key>"], ["<key>"]],
+  "report": {
+    // … whatever your validate() checks …
+    "commitments": { "logFormat": "my-log@1", "inputsHash": "<sha256 of the exact log bytes>", "finalHash": "<your end-state hash>", "verifierHash": "<64 hex, once registered>" },
+    "stats": { "<player key>": { "goals": 3, "longestRally": 12 } }
+  },
+  "attestor": { "id": "<court key>", "sig": "<attest-tag signature>" },
+  "log": "<base64 of the exact log bytes — only when GET /health says protocol >= 4>" }
 ```
+
+Settlement v4 (`docs/SETTLEMENT-STANDARD.md`): `commitments` and `stats`
+sit inside the signed report, so any node version accepts them and a
+protocol-4 node lifts them into the result. With the log attached and a
+verifier bundle registered for your title, the result is **L2
+`checkable`** instead of L1 `attested`. Do it with **`sdk/court`** rather
+than by hand: `signReport`, `makeCommitments` (computes `inputsHash`
+from the bytes), `findSettler` (discovery with RPC fallback and 429
+back-off) and `settle(envelope, { log })`, which attaches the log only to
+a protocol-4 node (`sdk/court/README.md`). Inside the arcade, participants
+are the players' keys; `pb:`-style ids are casual-only.
+
+**Your court's key** goes in the adapter's `attestors`: every node then
+accepts it with no `COURTS` line. **Your stats** need
+`services.stats.schema: { name: 'sum'|'max'|'min'|'last' }` in the adapter;
+without a schema `report.stats` is ignored. **Your verifier** is the
+headless replay your court runs, packed by `npm run bundle:verifier --
+<spec.json>` (entry exports `verify(logBytes, spec) → { finalHash, result }`)
+and registered with `npm run publish:title -- set-build
+verifiers/<id>.verifier.json`.
 
 ## 6. Read back
 
