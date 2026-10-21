@@ -58,12 +58,13 @@ test('phase 2: commit → settle → three attests → final on the chain, and e
     writeFileSync(join(dir, 'announcer.json'), JSON.stringify({ privateKey: chain.keyOf(10 + i) })); // the delegate = a funded harness account
     await chain.send(i, token, 'faucet', []);
     await chain.send(i, token, 'approve', [stake, 10n * ONE]);
-    await chain.send(i, stake, 'stake', ['0x' + kp.publicKey, (i === 2 ? 3n : 1n) * ONE]);
+    await chain.bondNode(i, stake, kp, (i === 2 ? 3n : 1n) * ONE); // generation 4: the node key signs the bond
     await chain.send(i, stake, 'setDelegate', ['0x' + kp.publicKey, chain.addressOf(10 + i)]);
-    if (i !== 5) await chain.send(10 + i, book, 'enroll', ['0x' + kp.publicKey]); // node 5 enrols ITSELF once it sees its delegation
     ids.push({ kp, dir });
   }
   chain.warp(2); // past eligibilityAge
+  // generation 4 enrols only an eligible key; node 5 enrols ITSELF once it sees its delegation
+  for (let i = 1; i <= 4; i++) await chain.send(10 + i, book, 'enroll', ['0x' + ids[i - 1].kp.publicKey]);
 
   // ---- five nodes: one host/settler with the title, four witnesses that fetch it by hash
   const common = { rpc: 'mock://', offline: false, chainFetch: chain.fetch, nodeStake: stake, matchBook: book, gasRefund: refund, epochAnchor: anchor, matchBookWindows: { attestWindow: 4, escalationWindow: 6 }, chainId: 4441, heartbeatMs: 200, updates: false, announce: false };
@@ -164,7 +165,10 @@ test('phase 2: commit → settle → three attests → final on the chain, and e
   assert.equal(epW.root, ep.root, 'a witness computes the same root from the same log');
   const proof = await (await fetch(`${host.addr}/proof/${d.matchId}`)).json();
   assert.equal(proof.root, ep.root); assert.equal(proof.status, 'final');
-  const tx = await host.matchBook.propose(ep.epoch, { force: true }); // the hour has not frozen yet; the settler would wait
+  // the hour has not frozen yet (the settler would wait) — and generation 4's EpochAnchor refuses an hour that has not
+  // ended (EpochNotOver): move the chain past it, then force the proposal
+  chain.warp(3600); chain.mine();
+  const tx = await host.matchBook.propose(ep.epoch, { force: true });
   assert.ok(tx, 'proposed from the delegate');
   const finalEv = await until(() => chain.logs().find((l) => l.address.toLowerCase() === anchor && l.topics[0] === chain.iface(anchor).getEvent('EpochFinalized').topicHash), 10_000);
   assert.ok(finalEv, 'the root finalized: one node holds more than quorumBps of the stake');

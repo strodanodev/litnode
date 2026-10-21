@@ -153,7 +153,7 @@ test('node: a peer\'s build loads only when TitleRegistry says so; published = t
     writeFileSync(join(dir, 'identity.json'), JSON.stringify(kp));
     await chain.send(acct, token, 'faucet', []);
     await chain.send(acct, token, 'approve', [stake, 10n * ONE]);
-    await chain.send(acct, stake, 'stake', ['0x' + kp.publicKey, ONE]);
+    await chain.bondNode(acct, stake, kp, ONE); // generation 4: the node key signs the bond
     return { kp, dir };
   };
   const hostId = await bond(STUDIO, 'host'), w1 = await bond(WITNESS_OP, 'w1'), w2 = await bond(WITNESS_OP + 2, 'w2'); // one faucet pull per wallet
@@ -258,10 +258,10 @@ test('AIR publisher: the account\'s proxy on its own node claims the title, bond
   assert.equal(t.owner, me); assert.equal(t.build.ok, true); assert.equal(t.published, false, 'held, hosted, but the host is not bonded');
   assert.match((await post('/air/publish', { token, action: 'register', rulesetId: 'tug.v1' })).body.error, /already hold/);
 
-  // bond the node from the proxy: faucet + approve + stake + delegate, sponsored gas — now the holder runs a bonded host
+  // bond the node from the proxy: faucet + approve + bond (generation 4: the node signs its key's proof itself) + delegate, sponsored gas — now the holder runs a bonded host
   r = await post('/air/bond', { token });
   assert.equal(r.status, 200, JSON.stringify(r.body));
-  assert.deepEqual(r.body.steps.map((x) => x.step), ['faucet', 'approve', 'stake', 'delegate']);
+  assert.deepEqual(r.body.steps.map((x) => x.step), ['faucet', 'approve', 'bond', 'delegate']);
   assert.equal(r.body.operator, me);
   assert.equal((await post('/air/bond', { token })).body.already, true, 'idempotent');
   const bonded = await until(async () => { const [x] = await titles(); return x.published ? x : null; }, 20_000);

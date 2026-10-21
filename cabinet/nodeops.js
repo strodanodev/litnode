@@ -5,7 +5,9 @@
  *  signs — nothing here ever sees a private key. docs/UNIVERSAL-LOGIN.md §
  *  "Signing from the dashboard".
  *
- *  bond:     TestLITVM.approve(NodeStake, minStake) then NodeStake.stake(nodeKey, minStake)
+ *  bond:     TestLITVM.approve(NodeStake, minStake) then NodeStake.stake(nodeKey, minStake) on generation 3;
+ *            generation 4: NodeStake.bond(nodeKey, minStake, proof) — the proof is the NODE KEY's signature over
+ *            protocol/staking.js bondMessage(chainId, NodeStake, this wallet), which only the node can make
  *  faucet:   TestLITVM.faucet() (testnet only)
  *  transfer: NodeStake.transferOperator(nodeKey, to)
  *  delegate: NodeDirectory.setAnnouncer(nodeKey, announcer) + a little gas to the announcer
@@ -14,6 +16,7 @@ import { CHAIN } from './config.js';
 import { connect } from './wallet.js';
 import { setDelegateCalldata, delegateOfCall } from './protocol/staking.js';
 import { standingCall, decodeStanding, minStakeCall, stakeCalldata, transferOperatorCalldata, approveCalldata, faucetCalldata, balanceOfCall } from './protocol/staking.js';
+import { versionCall, decodeVersion, bondMessage, bondCalldata } from './protocol/staking.js';
 import { setAnnouncerCalldata, announcerOfCall, decodeAddress } from './protocol/directory.js';
 
 const eth = () => globalThis.ethereum ?? null;
@@ -79,21 +82,44 @@ export const connectOperator = () => connect();
 
 export async function faucet(from) { return send(from, CHAIN.TestLITVM, faucetCalldata()); }
 
+/** The NodeStake generation: 4 answers version(), 3 has none (the call reverts). */
+export async function stakeGeneration() {
+  try { return decodeVersion(await rpc('eth_call', [versionCall(CHAIN.NodeStake), 'latest'])) ?? 3; } catch { return 3; }
+}
+/** The bytes the node key must sign for `from` to bond it on generation 4 (hex, no 0x) — for display and checks. */
+export const bondProofMessage = (from) => Array.from(bondMessage(CHAIN.chainId ?? 4441, CHAIN.NodeStake, from), (b) => b.toString(16).padStart(2, '0')).join('');
+
 /** approve + stake at the contract's minimum, then (NodeStake v3) name the
  *  node's hot key as its delegate — the key it commits, settles, attests and
  *  proposes with (BUILD-SPEC v0.3 §2.2). Three wallet prompts; `delegate` is
  *  the node's announcer address (/health.directory.announcer). The node
- *  enrols itself in the witness pool once it sees the delegation. */
-export async function bond(from, nodeId, { onStep = () => {}, delegate = null } = {}) {
+ *  enrols itself in the witness pool once it sees the delegation.
+ *
+ *  Generation 4: an UNBOUND key binds only with `proof`, the node key's
+ *  64-byte signature over bondMessage(chainId, NodeStake, from); a key this
+ *  wallet already operates is topped up with stake() and needs none.
+ *  TODO(gen-4 bond proof): the Nodes page must fetch `proof` from the node it
+ *  is bonding — a loopback-only route on node/litnode.js that signs
+ *  bondMessage(chainId, NodeStake, operator) with the node key (the parent
+ *  session adds it; it is not in this file's scope) — and pass it here. Until
+ *  then a generation-4 bond from MetaMask stops with the message below and
+ *  the operator uses `node tools/bond-node.mjs --sign <wallet>` on the node's
+ *  machine, then `--proof`. */
+export async function bond(from, nodeId, { onStep = () => {}, delegate = null, proof = null } = {}) {
   const minStake = BigInt(await rpc('eth_call', [minStakeCall(CHAIN.NodeStake), 'latest']));
+  const standing = decodeStanding(await rpc('eth_call', [standingCall(CHAIN.NodeStake, nodeId), 'latest']));
+  const unbound = /^0x0{40}$/i.test(standing.operator);
+  if (!unbound && standing.operator.toLowerCase() !== from.toLowerCase()) throw new Error(`this node is bound to operator ${standing.operator}; only that wallet can add to its bond`);
+  const withProof = unbound && (await stakeGeneration()) >= 4;
+  if (withProof && !/^(0x)?[0-9a-fA-F]{128}$/.test(proof ?? '')) throw new Error(`generation-4 NodeStake binds a node key only with the node's own signature. On the node's machine run: node tools/bond-node.mjs --sign ${from} — then bond with that proof.`);
   // short of tLITVM: pull the faucet first (the CLI does the same), so the order of clicks cannot be wrong
   const have = CHAIN.TestLITVM ? BigInt(await rpc('eth_call', [balanceOfCall(CHAIN.TestLITVM, from), 'latest'])) : 0n;
   if (have < minStake && CHAIN.TestLITVM) { onStep('faucet tLITVM — confirm in your wallet'); await send(from, CHAIN.TestLITVM, faucetCalldata()); }
   const allowance = CHAIN.TestLITVM ? BigInt(await rpc('eth_call', [{ to: CHAIN.TestLITVM, data: '0xdd62ed3e' + from.replace(/^0x/, '').toLowerCase().padStart(64, '0') + CHAIN.NodeStake.replace(/^0x/, '').toLowerCase().padStart(64, '0') }, 'latest'])) : 0n;
   if (allowance < minStake) { onStep(`approve ${minStake} wei of tLITVM — confirm in your wallet`); await send(from, CHAIN.TestLITVM, approveCalldata(CHAIN.NodeStake, minStake)); }
   else onStep('already approved — skipping to stake');
-  onStep('stake — confirm in your wallet');
-  const tx = await send(from, CHAIN.NodeStake, stakeCalldata(nodeId, minStake));
+  onStep(`${withProof ? 'bond' : 'stake'} — confirm in your wallet`);
+  const tx = await send(from, CHAIN.NodeStake, withProof ? bondCalldata(nodeId, minStake, proof) : stakeCalldata(nodeId, minStake));
   if (delegate) { onStep('delegate the node\'s hot key — confirm in your wallet'); await send(from, CHAIN.NodeStake, setDelegateCalldata(nodeId, delegate)); }
   return tx;
 }

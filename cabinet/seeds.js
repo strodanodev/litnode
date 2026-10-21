@@ -4,7 +4,7 @@
  *  could seed without anyone typing a URL. Read-only; the same calldata the
  *  node uses (vendored protocol/directory.js). */
 import { CHAIN } from './config.js';
-import { keysCall, entryOfCall, decodeKeys, decodeEntry, liveSeeds } from './protocol/directory.js';
+import { entryOfCall, decodeEntry, liveSeeds, readDirectoryKeys, mapLimit, READ_CONCURRENCY } from './protocol/directory.js';
 import { standingCall, decodeStanding } from './protocol/staking.js';
 import { checkChallenge, newNonce } from './protocol/challenge.js';
 
@@ -17,16 +17,22 @@ export async function rpc(method, params) {
 }
 export const configured = () => !!CHAIN.NodeDirectory;
 
-/** Live seeds: announced, bonded, fresh — newest first. [] when unconfigured or unreachable. */
+/** Live seeds: announced, bonded, fresh — newest first. [] when unconfigured or unreachable.
+ *  The key list is paged (generation 4, falls back to keys() on generation 3); per-key reads run
+ *  READ_CONCURRENCY keys at a time (two eth_calls each), so the gateway's ~25 req/s limit is not
+ *  tripped by a 2×N fan-out. One key failing to read drops that key, not the whole list. */
 export async function chainSeeds() {
   if (!configured()) return [];
   try {
-    const keys = decodeKeys(await rpc('eth_call', [keysCall(CHAIN.NodeDirectory), 'latest']));
+    const call = (payload) => rpc('eth_call', [payload, 'latest']);
+    const keys = await readDirectoryKeys(call, CHAIN.NodeDirectory);
     const entries = {}, stakes = {};
-    await Promise.all(keys.map(async (k) => {
-      const [e, s] = await Promise.all([rpc('eth_call', [entryOfCall(CHAIN.NodeDirectory, k), 'latest']), rpc('eth_call', [standingCall(CHAIN.NodeStake, k), 'latest'])]);
-      entries[k] = decodeEntry(e); stakes[k] = decodeStanding(s);
-    }));
+    await mapLimit(keys, Math.max(1, READ_CONCURRENCY / 2), async (k) => {
+      try {
+        const [e, s] = await Promise.all([call(entryOfCall(CHAIN.NodeDirectory, k)), call(standingCall(CHAIN.NodeStake, k))]);
+        entries[k] = decodeEntry(e); stakes[k] = decodeStanding(s);
+      } catch { /* this key is skipped */ }
+    });
     return liveSeeds(entries, stakes);
   } catch { return []; }
 }

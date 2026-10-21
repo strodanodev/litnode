@@ -31,7 +31,8 @@ const want = {
 // cfg.treasury: null keeps the live treasury; an address moves it (checksummed, so a mistyped one is refused before anything is sent).
 let wantTreasury = null;
 if (cfg.treasury != null) { try { wantTreasury = ethers.getAddress(cfg.treasury); } catch { console.error(`contracts/deploy.testnet.json treasury ${cfg.treasury} is not a valid address`); process.exit(1); } if (wantTreasury === ethers.ZeroAddress) { console.error('treasury cannot be the zero address'); process.exit(1); } }
-const total = want.book.settleWindow + 2n * want.book.attestWindow + 2n * want.book.escalationWindow;
+// MatchBook.totalWindow(): generation 4 adds a third escalation window (resolve before expire() may void a seated escalation)
+const total = want.book.settleWindow + 2n * want.book.attestWindow + ((deployed.generation ?? 3) >= 4 ? 3n : 2n) * want.book.escalationWindow;
 if (want.stake.unbondingPeriod <= total) { console.error(`NodeStake.unbondingPeriod (${want.stake.unbondingPeriod}s) must exceed MatchBook.totalWindow() (${total}s): fix contracts/deploy.testnet.json first`); process.exit(1); }
 
 const bookAbi = ['function params() view returns (uint64 settleWindow, uint64 attestWindow, uint64 escalationWindow, uint64 drawDelay, uint16 hostSlashBps, uint16 witnessSlashBps)', 'function admin() view returns (address)', 'function stake() view returns (address)', 'function setParams(address stake_, (uint64 settleWindow, uint64 attestWindow, uint64 escalationWindow, uint64 drawDelay, uint16 hostSlashBps, uint16 witnessSlashBps) p, address admin_)'];

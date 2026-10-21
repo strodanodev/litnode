@@ -12,6 +12,7 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
+import { ethers } from 'ethers';
 import { createRpcEvm } from './lib/rpc-evm.mjs';
 import { createNode } from '../node/litnode.js';
 import { until } from './lib/mesh.mjs';
@@ -19,7 +20,7 @@ import { until } from './lib/mesh.mjs';
 const ROOT = process.cwd();
 const run = (env, args = ['--fresh', '--quorum', '2']) => new Promise((resolve) => execFile(process.execPath, [join(ROOT, 'tools', 'deploy-contracts.mjs'), ...args], { cwd: ROOT, env: { ...process.env, ...env }, maxBuffer: 1e7 }, (err, stdout, stderr) => resolve({ code: err?.code ?? 0, out: stdout + stderr })));
 
-test('deploy tool: refuses windows the bond cannot cover; deploys v3 + registry + MatchBook; a node boots on the result', { timeout: 300_000 }, async (t) => {
+test('deploy tool: refuses windows the bond cannot cover; deploys generation 4 + registry + MatchBook, bonding with the key\'s proof; a node boots on the result', { timeout: 300_000 }, async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), 'litnode-deploy-'));
   const chain = await createRpcEvm();
   const http = await chain.listen();
@@ -28,11 +29,11 @@ test('deploy tool: refuses windows the bond cannot cover; deploys v3 + registry 
   const cfgPath = join(tmp, 'deploy.json'), outPath = join(tmp, 'deployed.json');
   const env = { DEPLOYER_KEY: chain.keyOf(0), DEPLOY_CONFIG: cfgPath, DEPLOY_OUT: outPath, LITNODE_DATA: join(tmp, 'node') };
 
-  // 1. an unbonding period that does not cover settle + 2×attest + 2×escalation is refused before anything is sent
+  // 1. an unbonding period that does not cover settle + 2×attest + 3×escalation (generation 4) is refused before anything is sent
   writeFileSync(cfgPath, JSON.stringify({ ...base, rpc: http.url, NodeStake: { ...base.NodeStake, unbondingPeriod: 10 } }));
   let r = await run(env);
   assert.notEqual(r.code, 0);
-  const windows = base.MatchBook.settleWindowS + 2 * base.MatchBook.attestWindowS + 2 * base.MatchBook.escalationWindowS; // the tool's formula, over the live config
+  const windows = base.MatchBook.settleWindowS + 2 * base.MatchBook.attestWindowS + 3 * base.MatchBook.escalationWindowS; // the tool's formula, over the live config
   assert.match(r.out, new RegExp(`unbondingPeriod \\(10s\\) must exceed the MatchBook windows \\(${windows}s\\)`));
   assert.ok(!existsSync(outPath), 'nothing written');
 
@@ -44,14 +45,21 @@ test('deploy tool: refuses windows the bond cannot cover; deploys v3 + registry 
   r = await run(env);
   assert.doesNotMatch(r.out, /resuming/, 'a v2 file is archived, not resumed');
   assert.equal(readdirSync(tmp).filter((f) => f.startsWith('deployed.testnet.')).length, 1, 'the v2 file was archived');
-  { const d0 = JSON.parse(readFileSync(outPath, 'utf8')); assert.equal(d0.generation, 3); assert.equal(d0.migratedFrom.generation, 2); assert.notEqual(d0.NodeStake.address.toLowerCase(), v2.NodeStake.address, 'a NEW NodeStake'); assert.notEqual(d0.TestLITVM.address.toLowerCase(), v2.TestLITVM.address, 'a NEW token too: --fresh means the whole set'); }
+  { const d0 = JSON.parse(readFileSync(outPath, 'utf8')); assert.equal(d0.generation, 4); assert.equal(d0.migratedFrom.generation, 2); assert.notEqual(d0.NodeStake.address.toLowerCase(), v2.NodeStake.address, 'a NEW NodeStake'); assert.notEqual(d0.TestLITVM.address.toLowerCase(), v2.TestLITVM.address, 'a NEW token too: --fresh means the whole set'); }
   assert.equal(r.code, 0, r.out.slice(-3000));
   assert.match(r.out, /WARNING: admin = the deployer wallet/);
   assert.match(r.out, /MatchBook named an adjudicator on NodeStake/);
   assert.match(r.out, /locked until .* witness-eligible from/);
   const d = JSON.parse(readFileSync(outPath, 'utf8'));
   for (const c of ['TestLITVM', 'NodeStake', 'ERC6699Registry', 'EpochAnchor', 'PlayerProfile', 'NodeBadge', 'NodeDirectory', 'ReleaseRegistry', 'MatchBook']) assert.match(d[c]?.address ?? '', /^0x[0-9a-fA-F]{40}$/, `${c} deployed`);
-  assert.equal(d.NodeStake.version, 3); assert.equal(d.NodeStake.lockTerm, 600); assert.equal(d.NodeStake.eligibilityAge, 120);
+  assert.equal(d.NodeStake.version, 4); assert.equal(d.NodeStake.lockTerm, 600);
+  for (const c of ['NodeDirectory', 'MatchBook', 'EpochAnchor']) assert.equal(d[c].version, 4, `${c} is generation 4`);
+  assert.equal(d.MatchBook.maxPool, 256, 'the contract default pool cap is recorded');
+  { // the first node was BOUND with its own proof: a Bound event for its key, operator = the deployer
+    const id = JSON.parse(readFileSync(join(tmp, 'node', 'identity.json'), 'utf8'));
+    const bound = chain.logs().find((l) => l.address.toLowerCase() === d.NodeStake.address.toLowerCase() && l.topics[0] === ethers.id('Bound(bytes32,address)'));
+    assert.ok(bound, 'bonded through bond(), not stake()'); assert.equal(bound.topics[1], '0x' + id.publicKey);
+  } assert.equal(d.NodeStake.eligibilityAge, 120);
   assert.equal(d.MatchBook.attestWindowS, base.MatchBook.attestWindowS); assert.equal(d.MatchBook.hostSlashBps, 1000);
   assert.equal(d.ReleaseRegistry.activationDelay, 60);
   assert.equal(d.chainId, 4441);
@@ -66,7 +74,7 @@ test('deploy tool: refuses windows the bond cannot cover; deploys v3 + registry 
   // a plain run against a file of another generation is refused with a pointer to --fresh
   writeFileSync(join(tmp, 'v2.json'), JSON.stringify(v2));
   r = await run({ ...env, DEPLOY_OUT: join(tmp, 'v2.json') }, ['--quorum', '5000']);
-  assert.notEqual(r.code, 0); assert.match(r.out, /holds generation 2; this tool deploys generation 3. Run with --fresh/);
+  assert.notEqual(r.code, 0); assert.match(r.out, /holds generation 2; this tool deploys generation 4. Run with --fresh/);
 
   // 4. a node boots on the written set and reports the v3 facts on /health
   const node = await createNode({ dataDir: join(tmp, 'node'), rpc: http.url, offline: false, chainFetch: globalThis.fetch, nodeStake: d.NodeStake.address, releaseRegistry: d.ReleaseRegistry.address, matchBook: d.MatchBook.address, matchBookWindows: { attestWindow: d.MatchBook.attestWindowS, escalationWindow: d.MatchBook.escalationWindowS }, chainId: d.chainId, heartbeatMs: 300, operator: 'op', roles: ['mesh', 'host', 'settler'], updates: false, announce: false });

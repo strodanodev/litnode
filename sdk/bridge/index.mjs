@@ -139,7 +139,7 @@ export const bindToPlacement = (sub, room, rooms) => {
 
 /** Find a live node hosting `rulesetId` from NodeDirectory on chain — the
  *  bootstrap every node and the hosted arcade use — so a publisher's
- *  server is never pinned to a tunnel hostname that rotates. Reads keys(),
+ *  server is never pinned to a tunnel hostname that rotates. Reads the keys (paged),
  *  each entry, each standing; keeps bonded, fresh entries, newest first;
  *  prefers one whose /titles lists the ruleset and that proves its key.
  *  Defaults come from contracts/deployed.testnet.json. */
@@ -148,12 +148,12 @@ export async function resolveNode({ rulesetId = null, rpc = null, nodeDirectory 
   const deployed = existsSync(deployedPath) ? JSON.parse(readFileSync(deployedPath, 'utf8')) : {};
   rpc ??= deployed.rpc; nodeDirectory ??= deployed.NodeDirectory?.address; nodeStake ??= deployed.NodeStake?.address;
   if (!rpc || !nodeDirectory || !nodeStake) throw new Error('resolveNode: rpc, NodeDirectory and NodeStake are required (contracts/deployed.testnet.json)');
-  const { keysCall, entryOfCall, decodeKeys, decodeEntry, liveSeeds } = await import('../../protocol/directory.js');
+  const { readDirectoryKeys, entryOfCall, decodeEntry, liveSeeds } = await import('../../protocol/directory.js');
   const { standingCall, decodeStanding } = await import('../../protocol/staking.js');
   const { checkChallenge, newNonce } = await import('../../protocol/challenge.js');
   let id = 0;
   const call = async (c) => { const r = await fetchImpl(rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method: 'eth_call', params: [c, 'latest'] }), signal: AbortSignal.timeout(15_000) }); const j = await r.json(); if (j.error) throw new Error(j.error.message); return j.result; };
-  const keys = decodeKeys(await call(keysCall(nodeDirectory)));
+  const keys = await readDirectoryKeys(call, nodeDirectory); // keysPage on generation 4, keys() on generation 3
   const entries = {}, stakes = {};
   for (const k of keys) { entries[k] = decodeEntry(await call(entryOfCall(nodeDirectory, k))); stakes[k] = decodeStanding(await call(standingCall(nodeStake, k))); }
   const seeds = liveSeeds(entries, stakes);

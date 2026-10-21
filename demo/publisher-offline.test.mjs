@@ -58,12 +58,12 @@ test('M5: with the publisher offline, a ranked Agent Fighter match is placed, pl
     writeFileSync(join(dir, 'announcer.json'), JSON.stringify({ privateKey: chain.keyOf(10 + i) }));
     await chain.send(i, token, 'faucet', []);
     await chain.send(i, token, 'approve', [stake, 10n * ONE]);
-    await chain.send(i, stake, 'stake', ['0x' + kp.publicKey, ONE]);
+    await chain.bondNode(i, stake, kp, ONE); // generation 4: the node key signs the bond
     await chain.send(i, stake, 'setDelegate', ['0x' + kp.publicKey, chain.addressOf(10 + i)]);
-    await chain.send(10 + i, book, 'enroll', ['0x' + kp.publicKey]);
     ids.push({ kp, dir });
   }
   chain.warp(2); // past eligibilityAge
+  for (let i = 1; i <= 5; i++) await chain.send(10 + i, book, 'enroll', ['0x' + ids[i - 1].kp.publicKey]); // generation 4: eligible keys only
 
   const common = { rpc: 'mock://', offline: false, chainFetch: chain.fetch, nodeStake: stake, matchBook: book, gasRefund: refund, matchBookWindows: { attestWindow: 4, escalationWindow: 6 }, chainId: 4441, heartbeatMs: 200, updates: false, announce: false };
   const spawn = (opts) => createNode({ ...common, ...opts }).then((n) => (nodes.push(n), n));

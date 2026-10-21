@@ -7,7 +7,7 @@ import { standingCall, decodeStanding, nodeOfCall, decodeNode, adminIsContractCa
 import { statusOfCall, decodeStatus } from '../protocol/release.js';
 import { buildStatusCall, decodeBuildStatus, titleOfCall, decodeTitle } from '../protocol/title.js';
 import { ownerOfKeyCall, decodeOwner, nameOfCall, decodeString } from '../protocol/profile.js';
-import { keysCall, decodeKeys, entryOfCall, decodeEntry } from '../protocol/directory.js';
+import { readDirectoryKeys, entryOfCall, decodeEntry } from '../protocol/directory.js';
 import { readAgent } from '../protocol/registry.js';
 
 /** An RPC URL as the dashboard may show it: no credentials, no query, and a path segment that looks like an
@@ -252,11 +252,12 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
     return readAgent((payload, tag) => call('eth_call', [payload, tag]), erc6699, tokenId, blockTag);
   };
 
-  /** NodeDirectory: every announced key → entry. Missing contract → null. */
+  /** NodeDirectory: every announced key → entry. Missing contract → null. The key list is paged on
+   *  generation 4 (keysPage) and whole on generation 3 (keys()); entries are read one at a time. */
   const directory = async () => {
     if (!nodeDirectory || offline) return null;
     try {
-      const keys = decodeKeys(await call('eth_call', [keysCall(nodeDirectory), 'latest']));
+      const keys = await readDirectoryKeys((payload) => call('eth_call', [payload, 'latest']), nodeDirectory);
       const out = {};
       for (const k of keys) { try { out[k] = decodeEntry(await call('eth_call', [entryOfCall(nodeDirectory, k), 'latest'])); } catch (e) { lastError = String(e.message ?? e); } }
       return out;
