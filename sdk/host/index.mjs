@@ -290,7 +290,8 @@ export async function preflight(cfg, { env = readEnv(cfg.home), fetchImpl = fetc
   add('port', mine ? null : free, mine ? `${cfg.port}: this node is already listening` : free ? `${cfg.port} free on ${cfg.host}` : `${cfg.port} in use by something else on ${cfg.host}`, 'choose another PORT or stop what holds it');
 
   if (cfg.tunnel) add('cloudflared', !!onPath('cloudflared'), onPath('cloudflared') ?? 'cloudflared not on PATH', 'install cloudflared (https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/) or unset TUNNEL');
-  else add('cloudflared', null, 'no TUNNEL configured');
+  // No TUNNEL yet: say whether `publish --tunnel quick` will find cloudflared, so a host learns it here and not from publish's exit 2.
+  else add('cloudflared', null, onPath('cloudflared') ? `no TUNNEL configured; cloudflared found at ${onPath('cloudflared')} for publish` : (cfg.roles.includes('host') ? 'no TUNNEL configured, and cloudflared is not on PATH: a host needs it for `publish --tunnel quick`' : 'no TUNNEL configured'));
 
   if (cfg.offline) add('rpc', null, 'OFFLINE=1: local beacon, no chain');
   else if (skipNetwork) add('rpc', null, 'skipped');
