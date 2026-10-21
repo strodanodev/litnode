@@ -3,6 +3,91 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.12.0] — 2026-10-22 — settlement v4: proof levels, court logs, stats on chain, sdk/court (protocol 4)
+
+One pipeline for every title — PLAY → REPORT → VERIFY → RESULT HASH → RECORD — with a proof level the node derives
+and records on every result. `docs/SETTLEMENT-STANDARD.md` is the canonical contract, with every deviation from the
+shared prompt listed in §15. **Protocol 4**: protocol-3 and protocol-4 nodes exclude each other; see "Upgrading" below.
+
+### Added
+- **Proof levels** (`protocol/result.js proofOf`). `verified` (players signed a replayable log), `checkable` (a relay
+  signed it, or a court's report whose log this node holds and whose verifier bundle is registered and active),
+  `attested` (an authorized court's report, checked against the rules), `host` (one node's word). Derived from
+  evidence, committed in the result hash, never taken from a submitter and never upgraded. `isOfficial` is unchanged.
+- **The result commitment is versioned** by the delta's own protocol: protocol 4 adds `proof`, `stats` and
+  `statsSchema`; a protocol-3 delta recomputes with its old field set, so custody of history never breaks.
+- **Court commitments and logs** (`node/settle.js`). `report.commitments = { logFormat, inputsHash, finalHash,
+  verifierHash }` is checked and lifted into the delta; the envelope's `log` (canonical base64, ≤ 512 KiB, sha256 =
+  `inputsHash`) is held at `<dataDir>/logs/<hash>` and served at `GET /log/<hash>`; the stored ledger never carries it.
+- **Custody for results that never reach MatchBook** (`node/litnode.js`). Casual, attested and unplaced results are
+  advertised again — bounded: the 64 newest of the last day under three co-signatures — and the k = 3 nodes whose
+  `h('custody', matchId, nodeId)` sorts lowest (fresh, running the title, not the host's operator) fetch the delta,
+  the ledger and the log with timeouts, recompute the result and co-sign or dispute.
+- **Verifier bundles** (`node/server-bundle.js`): a third hashed artifact, `sha256('verifier' NUL tar)`, packed by
+  `npm run bundle:verifier`, registered with the existing `setBuild` (`publish:title` accepts `.verifier.json`).
+  The node checks the hash is registered and active (or `VERIFIERS=<rulesetId>:<hash>`); it does not run it yet.
+- **Stats** (`protocol/stats.js`, vendored). `services.stats.schema: { name: 'sum'|'max'|'min'|'last' }`; a replayable
+  title exports `stats(state, participants)` (run in the sandbox, recomputed by every witness), an attested one
+  `stats(report, participants)` (default `report.stats`). `/stats`, `/leaderboard` and `/progress` fold them
+  (`DERIVE_VERSION` 3, `PROGRESSION_VERSION` 2).
+- **Stats on chain.** The anchored hourly root is `pair(resultsRoot, statsRoot)`: the FINAL MatchBook set as before,
+  paired with every player's season line through that hour. A node recovers a final match's stats from a delta whose
+  recomputed `resultHash` equals the chain's (host, custodian or panel seat), and proposes an hour only when every
+  final match is accounted for. `GET /proof/stats?ruleset=&player=[&epoch=&scope=chain|local]` returns a Merkle path
+  `EpochAnchor.verifyInclusion` accepts unchanged; results proofs gain the extra step. Local roots pair the same way.
+- **`sdk/court`**: a zero-dependency court client (`signReport`, `attest`, `makeCommitments`, `inputsHash`,
+  `findSettler` with RPC fallback, bounded concurrency and 429 back-off, `settle` that attaches the log only to a
+  protocol-4 node and reports `settled | already | refused | unreachable`), with `.d.ts`; `npm run bridge` signs,
+  resolves and settles through it (`submit --log`). Extracted from FLOOD CONTROL's court client.
+- **Court keys in the manifest**: a title's `attestors` authorize its court on every node with no `COURTS` entry
+  (tested); `COURTS` stays an override. An id already settled answers with `existing: true`.
+- **Conformance** checks the stat schema, `stats()` presence, integer values and determinism; the title template
+  keeps a pulls counter, exports `stats`, and serializes every field `step()` reads.
+- **Harness**: `doctor` reports `settlement` (this code's protocol vs the running node's), `log-storage`,
+  `verifiers`, and checks the clock against the chain head when there are no seeds; `status` has a settlement stage.
+- **Cabinet**: a proof badge per title and per match; "settled by" derives from the title's level, not its id; a title
+  without a ruleset says "not on the mesh" (AFC) and the Arcade header counts what the mesh settles.
+- **Titles**: Pickle Brawl names its court in `attestors` and declares a stat schema (build `d7233fa3…`); FLOOD
+  CONTROL declares its schema and derives stats from the integers its reports already carry (build `e0d71ba1…`).
+  Both rebuilt sidecars are unsigned until the publisher signs or registers them.
+- **Skills** state the build-a-title / host-a-title discriminator, cover the v4 paths, and are checked by
+  `demo/skills.test.mjs`; `npm run skills:sync` keeps `.agents/skills` identical.
+
+### Generation-4 contracts (source and tests; not deployed — `contracts/MIGRATION.md` "Generation 4")
+- **NodeStake**: `bond(nodeKey, amount, sig)` binds a node key only with the key's own ed25519 signature over
+  `"litnode-bond-v1" ‖ 0x00 ‖ chainId ‖ NodeStake ‖ operator` (88 bytes) and at least `minStake`, verified on chain by
+  `contracts/Ed25519.sol` (RFC 8032, strict; 564,839 gas per bond); `stake()` only tops up a bound key; `version()` = 4.
+  Closes the one-wei key squat (audit §4.2 finding 1).
+- **NodeDirectory**: announcing needs an active bond of at least `minStake`; `keysPage(offset, limit)`; readers page
+  with a `keys()` fallback (node, cabinet with at most 4 calls in flight, sdk/court, the bridge).
+- **MatchBook**: enrolment needs witness eligibility and room under `maxPool` (256, cap 1024); anyone may `prune` a key
+  no longer active; `expire` voids an `Escalated` match after twice the escalation window, so a reverting `resolve`
+  cannot pin it.
+- **EpochAnchor**: `propose` refuses an hour that has not ended.
+- Callers detect the generation with `version()` and keep `stake()` on generation 3. **`GET /bond-proof?operator=`**
+  (loopback; only the node's own page, the hosted arcade or a caller with no Origin) signs the proof the Nodes page
+  sends; `tools/bond-node.mjs --sign` does the same in a terminal.
+
+### Upgrading
+1. Publish and register 0.12.0, and register the two rebuilt rulesets (or sign them) in the same window.
+2. Every operator applies it within the hour; `npm run host -- doctor` must show `settlement` true.
+3. Courts keep posting v3-shaped reports (they settle at `attested`) until they move to `sdk/court`.
+4. Redeploy the arcade once the desktop node runs 0.12.0 (the cabinet's vendored protocol is version 4).
+
+### Not built (designed in docs/SETTLEMENT-STANDARD.md)
+- Running a verifier on challenge in the escalation panel (§11), which is what makes L2 prize-eligible.
+- Anchoring L1/L2 results and their stats on EpochAnchor (§12): v4.0 anchors L3 and its stats; off-chain titles'
+  stats prove against a node's local root.
+
+### Tests
+- `demo/settlement-v4.test.mjs` (pure rules, verifier bundles, a court authorized by `attestors` alone with v3- and
+  v4-shaped reports, the log held/served/custodied, checkable vs attested, refusals, stats proofs, a replayable
+  title's `stats(state)`), `demo/court.test.mjs`, `demo/skills.test.mjs`; `demo/pack.test.mjs` fails when a suite is
+  left out of `npm test`. Version literals in tests use the constants.
+- `demo/hydration.test.mjs`: the mock chain is deterministic (block n has one timestamp and hash; `latest` follows
+  the clock), so host, client and witness derive the same beacon; it had started failing "match not finished"
+  about 3 runs in 7 under v4's extra gossip work (0 in 6 before v4, 0 in 6 after this fix).
+
 ## [0.11.32] — 2026-10-22 — whole release zips, an unelevated service, hermetic tests
 
 Audit `audit/audit-2026-10-21.md` §4.4 (findings 1 and 2) and §4.5. No protocol change, no contract change. Numbered

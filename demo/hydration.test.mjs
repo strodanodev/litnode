@@ -29,12 +29,17 @@ const enc = (s) => Buffer.from(s).toString('hex');
 
 /** A mock chain holding a v2 registry, profiles, and blocks that advance so a chain beacon exists. */
 function mockChain({ tokens, bindings }) {
-  let blockNo = 0x1000;
+  // A deterministic chain: block n always has the same timestamp and hash, and `latest` is the height the clock has
+  // reached (four blocks a second, like LiteForge). The old mock minted a new block on every call, so the beacon — the
+  // first block at or after a bucket's end — depended on who asked when, and host, client and witness could seed one
+  // match differently ("match not finished").
+  const BASE = 0x1000, T0 = Date.now() - 60_000;
+  const block = (n) => ({ number: '0x' + n.toString(16), timestamp: '0x' + Math.floor((T0 + (n - BASE) * 250) / 1000).toString(16), hash: '0x' + n.toString(16).padStart(64, '0') });
   const calls = { registry: 0, blocks: new Set() };
   return async (url, { body }) => {
     const { id, method, params } = JSON.parse(body);
     let result;
-    if (method === 'eth_getBlockByNumber') { blockNo++; result = { number: '0x' + blockNo.toString(16), timestamp: '0x' + Math.floor(Date.now() / 1000 + 1).toString(16), hash: '0x' + blockNo.toString(16).padStart(64, '0') }; }
+    if (method === 'eth_getBlockByNumber') { const want = params?.[0]; const head = BASE + Math.floor((Date.now() - T0) / 250); const n = want === 'latest' || want == null ? head : Math.min(parseInt(want, 16), head); result = block(n); }
     else if (method === 'eth_call') {
       const data = params[0].data, to = params[0].to;
       if (to === PROF && data.startsWith(selector(OWNER_OF_KEY))) { const b = bindings[data.slice(10)] ?? { owner: '0x' + '0'.repeat(40), tokenId: 0n, active: false }; result = '0x' + word(b.owner) + word(b.tokenId.toString(16)) + word(b.active ? '1' : '0'); }
