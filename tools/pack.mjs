@@ -7,10 +7,11 @@
  *        so the zip runs on a machine with nothing installed. The download is
  *        checked against nodejs.org's SHASUMS256.txt; default is the newest LTS.
  *  Same daemon in both; the operator build adds tools and an operator README. */
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
+import { stage, checkStage } from './lib/pack-plan.mjs';
 import { createHash } from 'node:crypto';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -56,58 +57,13 @@ async function vendorRuntime(want) {
 }
 const runtime = runtimeArg ? await vendorRuntime(runtimeArg.includes('=') ? runtimeArg.split('=')[1] : null) : null;
 
-// Folders copied whole from the working tree — minus what git ignores (cabinet/.vercel held the Vercel project and
-// org ids and shipped in every zip up to 0.11.16). Read once; a checkout without git ships everything, as before.
-const SHIPPED = ['node', 'protocol', 'sdk', 'titles', 'rulesets', 'cabinet'];
-const ignored = (() => {
-  const r = spawnSync('git', ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '--', ...SHIPPED], { cwd: root, encoding: 'utf8' });
-  return r.status === 0 ? r.stdout.split(/\r?\n/).filter(Boolean).map((p) => resolve(root, p).replace(/[\\/]+$/, '').toLowerCase()) : [];
-})();
-const isIgnored = (src) => { const p = resolve(src).toLowerCase(); return ignored.some((i) => p === i || p.startsWith(i + sep)); };
-
+// What each zip holds comes from tools/lib/pack-plan.mjs: the scripts map is the one source, every script's import
+// closure is copied with it, and the staged folder is checked whole before it is zipped (audit 2026-10-21 §4.4).
 for (const kind of kinds) {
   const name = `litnode-${kind}-${stamp}${runtime ? '-win-x64' : ''}`;
-  const stage = join(dist, name);
-  rmSync(stage, { recursive: true, force: true });
-  mkdirSync(stage, { recursive: true });
-
-  for (const d of SHIPPED) cpSync(join(root, d), join(stage, d), { recursive: true, filter: (src) => !isIgnored(src) });
-  mkdirSync(join(stage, 'contracts'), { recursive: true });
-  for (const f of ['deployed.testnet.json', 'deploy.testnet.json']) if (existsSync(join(root, 'contracts', f))) cpSync(join(root, 'contracts', f), join(stage, 'contracts', f));
-  mkdirSync(join(stage, 'tools'), { recursive: true });
-  for (const f of ['start-node.cmd', 'allow-firewall.cmd', 'update.cmd', 'node.env.example']) cpSync(join(root, 'portable', f), join(stage, f));
-  // The Agent Fighter gauntlet template, so an operator can host its matches from a zip (docs/OPERATORS.md step 6).
-  // Only this one: the other configs in gauntlets/ describe the publisher's own machine.
-  mkdirSync(join(stage, 'gauntlets'), { recursive: true });
-  cpSync(join(root, 'gauntlets', 'agent-fighter.json'), join(stage, 'gauntlets', 'agent-fighter.json'));
-  cpSync(join(root, 'tools', 'update.mjs'), join(stage, 'tools', 'update.mjs'));
-  cpSync(join(root, 'tools', 'guardian.mjs'), join(stage, 'tools', 'guardian.mjs'));
-  if (runtime) {
-    mkdirSync(join(stage, 'runtime'), { recursive: true });
-    cpSync(runtime.exe, join(stage, 'runtime', 'node.exe'));
-    cpSync(runtime.license, join(stage, 'runtime', 'LICENSE-nodejs.txt'));
-    writeFileSync(join(stage, 'runtime', 'VERSION'), `${runtime.version}\n`);
-  }
-
-  const scripts = { node: 'node node/cli.mjs', host: 'node sdk/host/cli.mjs', keygen: 'node tools/keygen.mjs', cabinet: 'node cabinet/serve.mjs', update: 'node tools/update.mjs', guardian: 'node tools/guardian.mjs' };
-  let deps;
-  if (kind === 'portable') {
-    for (const f of ['keygen.mjs', 'bond-node.mjs']) cpSync(join(root, 'tools', f), join(stage, 'tools', f));
-    cpSync(join(root, 'portable', 'README-PORTABLE.md'), join(stage, 'README.md'));
-  } else {
-    for (const f of ['keygen.mjs', 'bond-node.mjs', 'af-import-ledger.mjs', 'af-watch.mjs', 'anchor-epoch.mjs', 'deploy-contracts.mjs', 'set-announcer.mjs']) cpSync(join(root, 'tools', f), join(stage, 'tools', f));
-    cpSync(join(root, 'tools', 'lib'), join(stage, 'tools', 'lib'), { recursive: true });
-    for (const f of ['NodeStake.sol', 'TestLITVM.sol', 'ERC6699Registry.sol', 'EpochAnchor.sol']) cpSync(join(root, 'contracts', f), join(stage, 'contracts', f));
-    for (const f of ['install-task.cmd', 'run-node.cmd', 'restart-node.cmd', 'stop-node.cmd', 'run-af-relay.cmd', 'run-af-watch.cmd']) cpSync(join(root, 'portable', f), join(stage, f));
-    cpSync(join(root, 'portable', 'README-OPERATOR.md'), join(stage, 'README.md'));
-    Object.assign(scripts, { bond: 'node tools/bond-node.mjs', delegate: 'node tools/delegate.mjs', enroll: 'node tools/enroll.mjs', 'release:registry': 'node tools/release-registry.mjs', authority: 'node tools/authority.mjs', 'import:af': 'node tools/af-import-ledger.mjs', 'watch:af': 'node tools/af-watch.mjs', anchor: 'node tools/anchor-epoch.mjs', announcer: 'node tools/set-announcer.mjs', 'deploy:testnet': 'node tools/deploy-contracts.mjs' });
-    deps = { ethers: pkg.devDependencies.ethers, solc: pkg.devDependencies.solc };
-  }
-  writeFileSync(join(stage, 'package.json'), JSON.stringify({
-    name: `litnode-${kind}`, private: true, type: 'module', version: pkg.version ?? '0.2.0', license: 'Apache-2.0', runtime: runtime?.version ?? 'system',
-    engines: { node: '>=20' }, scripts, ...(deps ? { dependencies: deps } : {}),
-  }, null, 2) + '\n');
-
+  const { stage: dir } = stage(kind, { root, dist, name, runtime, pkg });
+  const problems = checkStage(dir);
+  if (problems.length) { console.error(`${name}: the staged folder is not whole:\n  ${problems.join('\n  ')}`); process.exit(1); }
   const zip = join(dist, `${name}.zip`);
   rmSync(zip, { force: true });
   execFileSync(tar, ['-a', '-cf', zip, '-C', dist, name], { stdio: 'inherit' });

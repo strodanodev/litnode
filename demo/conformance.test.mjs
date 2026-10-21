@@ -25,10 +25,10 @@ test('shipped rulesets conform (Agent Fighter replayable, Pickle Brawl attested)
 });
 
 test('create-title → bundle → conformant artifact with display', { timeout: 60_000 }, async () => {
-  // scaffold into a temp titles/ (the tool writes next to the repo's sdk/ so the import path resolves)
+  // scaffold into the temp folder, never into the repo's titles/ (a killed run left a stray title there; audit §4.5)
   const id = `conf-${Date.now().toString(36)}.v1`;
-  execFileSync(process.execPath, [join(root, 'tools', 'create-title.mjs'), id, 'Conformance Sample'], { cwd: root });
-  const src = join(root, 'titles', `${id}.mjs`);
+  execFileSync(process.execPath, [join(root, 'tools', 'create-title.mjs'), id, 'Conformance Sample', '--out', tmp], { cwd: root });
+  const src = join(tmp, `${id}.mjs`);
   try {
     assert.ok(existsSync(src));
     assert.ok(!(await check(readFileSync(src, 'utf8'))).ok, 'unbundled source imports the SDK — not yet an artifact');

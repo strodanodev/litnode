@@ -12,7 +12,7 @@ import { pair, bucketOf, isClosed, isStale, BUCKET_MS, QUEUE_TTL_MS } from '../p
 import { beaconFromBlocks, localBeacon } from '../protocol/beacon.js';
 import { snapshot, snapshotRoot, verifyHeartbeats, HEARTBEAT_TAG, epochOf } from '../protocol/snapshot.js';
 import { isOfficial, verification } from '../protocol/result.js';
-import { buildTree, proofFor, verifyProof, leafOf, anchorCalldata, anchorSelector } from '../protocol/epoch.js';
+import { buildTree, proofFor, verifyProof, leafOf, anchorCalldata, anchorSelector, proposeSelector } from '../protocol/epoch.js';
 import { derive } from '../protocol/derive.js';
 import { verifyHydration } from '../protocol/hydration.js';
 import { agent, hydrationManifest } from '../protocol/erc6699.js';
@@ -26,9 +26,13 @@ test('keccak256 matches the known vectors', () => {
   assert.equal(selector('transfer(address,uint256)'), '0xa9059cbb');
 });
 
-test('anchorEpoch selector is derived, and the spec constant is checked against it', () => {
+test('anchorEpoch selector is derived, and checked against an independent keccak (ethers)', async () => {
+  // The old "spec constant" 0x7e8a0a8b was never this signature's selector; the test only logged the disagreement
+  // (audit 2026-10-21 §4.5). Now the hand-rolled keccak is held to ethers' for both anchor signatures.
+  const { id } = await import('ethers');
   const s = anchorSelector();
-  console.log(JSON.stringify({ anchorSelector: s, specSaid: '0x7e8a0a8b', agree: s === '0x7e8a0a8b' }));
+  assert.equal(s, id('anchorEpoch(uint64,bytes32)').slice(0, 10));
+  assert.equal(proposeSelector(), id('propose(uint64,bytes32,bytes32)').slice(0, 10));
   const cd = anchorCalldata(497_000, 'ab'.repeat(32));
   assert.equal(cd.length, 2 + 8 + 64 + 64);
   assert.ok(cd.startsWith(s));

@@ -3,6 +3,39 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.11.32] — 2026-10-22 — whole release zips, an unelevated service, hermetic tests
+
+Audit `audit/audit-2026-10-21.md` §4.4 (findings 1 and 2) and §4.5. No protocol change, no contract change. Numbered
+.32 because 0.11.31 is the placement-binding fix on branch `claude/jovial-cori-15aac9`, not yet merged here.
+
+### Fixed
+- **Release zips are whole** (`tools/lib/pack-plan.mjs`, `tools/pack.mjs`). The scripts map each zip ships is now the
+  one source of what it holds: every script's entry is copied with the closure of its relative imports, and the
+  staged folder is checked before it is zipped — every script resolves, everything reachable from it resolves, every
+  bare import is a builtin or a declared dependency — or `npm run pack` exits 1. 0.11.29's portable zip shipped
+  `tools/bond-node.mjs` without the `tools/lib/rpc.mjs` it imports; its operator zip's package.json named `delegate`,
+  `enroll`, `authority` and `release:registry` whose files were never copied. Both kinds now ship `bond` and declare
+  `ethers` (CLI bonding still needs `npm install` once); the operator zip adds `delegate`, `enroll`, `announcer`,
+  `authority`, `fleet`, `rewards`, the AF import/watch tools. Maintainer tools (`deploy:testnet`, `release:registry`,
+  `anchor`) stay in the source checkout: no operator runs them.
+- **The scheduled task runs unelevated** (`portable/install-task.cmd`, `npm run host -- install-service`). It was
+  registered `-RunLevel Highest`, and the node runs server bundles fetched from the mesh (`GAUNTLET_SERVERS`), so a
+  publisher's code ran elevated on every opted-in operator. Registering a task still needs an administrator prompt;
+  running it does not. **Operators: re-run `install-task.cmd` (or `install-service`) once to replace an elevated task.**
+
+### Tests
+- `demo/pack.test.mjs` (new): both kinds stage whole; the check catches a missing file, a missing import and an
+  undeclared package, and ignores an import inside a comment.
+- `npm test` now lists every suite on disk: `demo/beacon.test.mjs` (the 0.11.10 exact-first-block invariant) and
+  `demo/air.test.mjs` (the `/air/session` flow) had never been listed.
+- No suite reaches the internet: `stop()` clears the first update check (a node stopped within 5 s still fetched
+  `release.json`), and the host harness test runs its detached daemon with `LITNODE_NO_UPDATE=1`.
+- `demo/protocol.test.mjs` asserts the anchor selectors against ethers instead of logging a stale "spec constant".
+- `demo/conformance.test.mjs` scaffolds into its temp folder (`npm run create-title -- <id> <name> --out <dir>`),
+  never into the repo's `titles/`.
+- Disjoint port ranges: server-bundle courts 7870–7879, gauntlet 7890–7899, gauntlet-direct 7900–7905 and 7910–7915,
+  the host CLI test 7920–7949, orphan 7951.
+
 ## [0.11.30] — 2026-10-21 — hardening: the six high findings of the 21 Oct audit
 
 The end-to-end audit (`audit/audit-2026-10-21.md`, atlas `audit/atlas-2026-10-21.html`) found six paths any key on the

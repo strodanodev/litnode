@@ -901,7 +901,7 @@ export async function createNode({
   };
 
   // ---------------------------------------------------------------- gossip loop
-  let timer = null, updateTimer = null, directoryTimer = null, tickNo = 0;
+  let timer = null, updateTimer = null, firstUpdateTimer = null, directoryTimer = null, tickNo = 0;
   // A heartbeat nobody has renewed in this long is forgotten: from the table, from the envelopes we forward and
   // from the incompatible list. Without this every node ever heard of stayed in every peer's gossip until a
   // restart (four dead test nodes from the day before were still travelling the mesh on 21 Sep 2026), and a
@@ -1808,7 +1808,7 @@ export async function createNode({
   }
   timer = setInterval(tick, heartbeatMs);
   await tick(); await chainRun; // the first tick's chain half too: callers read stakes and the head right after start
-  if (updates && version) { setTimeout(() => checkUpdates().catch(() => {}), 5_000); updateTimer = setInterval(() => checkUpdates().catch(() => {}), 60 * 60_000); }
+  if (updates && version) { firstUpdateTimer = setTimeout(() => checkUpdates().catch(() => {}), 5_000); updateTimer = setInterval(() => checkUpdates().catch(() => {}), 60 * 60_000); }
   log(`litnode ${nodeId.slice(0, 12)} on ${addr} roles=${roles.join(',')} rulesets=${[...loaded.keys()].join(',') || '-'}`);
 
   return {
@@ -1817,6 +1817,6 @@ export async function createNode({
     rulesets: () => buildHashes(), peers: () => heartbeats, inbound, operator, roles, region, startedAt, chat: chatLines,
     version, updater, restart, tunnels, upnp: upnpCtl, get wsAddr() { return wsAddr; }, get announcer() { return announcer; }, seeds: () => chainSeeds, seedChecks, admitSeed, sandbox, refused, incompatible, protocol: PROTOCOL_VERSION, peersKnown,
     get gauntlet() { return gauntlet; },
-    async stop() { clearInterval(stallTimer); clearInterval(timer); clearInterval(tunnelWatch?.timer); clearInterval(updateTimer); clearInterval(directoryTimer); clearTimeout(announceRetry); clearInterval(relayTimer); await publisherServices?.stop(); await gauntlet?.stopAll(); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); server.closeAllConnections?.(); await new Promise((r) => server.close(r)); },
+    async stop() { clearInterval(stallTimer); clearInterval(timer); clearInterval(tunnelWatch?.timer); clearInterval(updateTimer); clearTimeout(firstUpdateTimer); clearInterval(directoryTimer); clearTimeout(announceRetry); clearInterval(relayTimer); await publisherServices?.stop(); await gauntlet?.stopAll(); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); server.closeAllConnections?.(); await new Promise((r) => server.close(r)); },
   };
 }

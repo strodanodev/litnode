@@ -68,11 +68,14 @@ run it in, and nowhere else. Never write a private key into a file here.
 
     set DEPLOYER_KEY=0x...                         your operator wallet (the harness takes OPERATOR_KEY)
     node tools/bond-node.mjs <nodeId>              bond a node (yours or another machine's)
+    npm run delegate -- <nodeId> <hotKeyAddr>      set (and fund) the node's delegated hot key
+    npm run enroll -- <nodeId>                     join the MatchBook witness pool
     node tools/af-import-ledger.mjs <matchId> --post http://127.0.0.1:7801
                                                    settle an Agent Fighter relay match
-    node tools/anchor-epoch.mjs http://127.0.0.1:7801
-                                                   broadcast this hour's root, verify one proof on chain
     node tools/keygen.mjs court-identity.json      an identity for an attesting host (Pickle Brawl court)
+
+The hour's epoch root is proposed by the node itself once the hour freezes;
+there is no anchoring step for an operator to run.
     set DEPLOYER_KEY=
 
 `af-import-ledger` needs the Agent Fighter checkout and its `.env` (set

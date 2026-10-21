@@ -16,7 +16,7 @@ import { parseEnv, writeEnv, readEnv, validateEnv, effectiveConfig, daemonEnv, e
 
 const RULESET = join(ROOT, 'rulesets', 'tug.v1.js');
 const cli = (home, args, env = {}) => {
-  const r = spawnSync(process.execPath, [join(ROOT, 'sdk', 'host', 'cli.mjs'), ...args, '--json'], { cwd: ROOT, encoding: 'utf8', env: { ...process.env, LITNODE_HOME: home, ...env }, timeout: 90_000 });
+  const r = spawnSync(process.execPath, [join(ROOT, 'sdk', 'host', 'cli.mjs'), ...args, '--json'], { cwd: ROOT, encoding: 'utf8', env: { ...process.env, LITNODE_HOME: home, LITNODE_NO_UPDATE: '1', ...env }, timeout: 90_000 });
   let json = null; try { json = JSON.parse(r.stdout); } catch { /* not json */ }
   return { code: r.status, json, stdout: r.stdout, stderr: r.stderr };
 };
@@ -130,7 +130,7 @@ test('host: the plan names the one next command with what it needs — the chain
 
 test('host CLI: init → doctor → start --detach → status/next/verify → stop, non-interactive, JSON on stdout, idempotent', { timeout: 120_000 }, async (t) => {
   const home = mkdtempSync(join(tmpdir(), 'lithost-'));
-  const port = 7900 + Math.floor(Math.random() * 90);
+  const port = 7920 + Math.floor(Math.random() * 30); // 7920-7949: no other suite binds these (demo/pack.test.mjs lists the map)
   t.after(() => { cli(home, ['stop']); rmSync(home, { recursive: true, force: true }); });
 
   let r = cli(home, ['init', '--operator', 'cli-w', '--offline', '--port', String(port), '--data-dir', join(home, 'data'), '--roles', 'mesh,witness', '--rulesets', '']);

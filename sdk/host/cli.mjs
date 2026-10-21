@@ -260,7 +260,7 @@ const commands = {
       const ps = [
         `$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -Hidden -MultipleInstances IgnoreNew;`,
         `$triggers = @((New-ScheduledTaskTrigger -AtLogOn), (New-ScheduledTaskTrigger -AtStartup));`,
-        `$principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType S4U -RunLevel Highest;`,
+        `$principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType S4U -RunLevel Limited;`,
         `$action = New-ScheduledTaskAction -Execute '${process.execPath}' -Argument '"${sup}"' -WorkingDirectory '${ROOT}';`,
         `Stop-ScheduledTask -TaskName ${name} -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName ${name} -Confirm:$false -ErrorAction SilentlyContinue;`,
         `Register-ScheduledTask -TaskName ${name} -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Force | Out-Null;`,

@@ -35,7 +35,7 @@ const wsClient = (url) => new Promise((res, rej) => {
 });
 
 /** The stand-in bundle: the fixture server with protocol/keys.js + canonical.js beside it. */
-const standIn = (extra = {}) => packBundle({ rulesetId: RID, entry: 'run.mjs', runtime: { node: '>=20' }, env: { STAND_IN: 'yes' }, portRange: [7900, 7909], readyMs: 20_000, ttlMs: 60_000, ticketTtlMs: 60_000, settledGraceMs: 500, builtAt: '2026-10-19T00:00:00.000Z', ...extra }, {
+const standIn = (extra = {}) => packBundle({ rulesetId: RID, entry: 'run.mjs', runtime: { node: '>=20' }, env: { STAND_IN: 'yes' }, portRange: [7870, 7879], readyMs: 20_000, ttlMs: 60_000, ticketTtlMs: 60_000, settledGraceMs: 500, builtAt: '2026-10-19T00:00:00.000Z', ...extra }, {
   'run.mjs': "import './server/bundled-server.mjs';\n",
   'package.json': '{ "type": "module" }\n', // the .js files beside it are ES modules (a bundle has no litnode package.json above it)
   'server/bundled-server.mjs': readFileSync(join(ROOT, 'demo', 'fixtures', 'bundled-server.mjs'), 'utf8').replace("'./protocol/keys.js'", "'../protocol/keys.js'"),

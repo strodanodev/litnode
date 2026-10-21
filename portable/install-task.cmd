@@ -17,7 +17,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$dir = '%~dp0'.TrimEnd('\');" ^
   "$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -Hidden -MultipleInstances IgnoreNew;" ^
   "$triggers = @((New-ScheduledTaskTrigger -AtLogOn), (New-ScheduledTaskTrigger -AtStartup));" ^
-  "$principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType S4U -RunLevel Highest;" ^
+  "$principal = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType S4U -RunLevel Limited;" ^
   "function Reg($name, $cmd) {" ^
   "  $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument ('/c \"' + $dir + '\' + $cmd + '\"') -WorkingDirectory $dir;" ^
   "  Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue;" ^
