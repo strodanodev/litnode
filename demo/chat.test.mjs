@@ -5,6 +5,7 @@
  *    node --test demo/chat.test.mjs */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { PROTOCOL_VERSION } from '../protocol/version.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -160,7 +161,7 @@ test('chat: with NodeStake, a bonded key travels, an unbonded one is held but no
   const bondedKp = await generateKeypair(), unbondedKp = await generateKeypair(), stranger = await generateKeypair();
   const e = await createNode({ dataDir: join(tmp, 'e'), rpc: 'mock://', offline: false, chainFetch: stakeChain(new Set([bondedKp.publicKey])), nodeStake: '0x' + '11'.repeat(20), chainId: 4441, heartbeatMs: 200, operator: 'e', roles: ['mesh'], updates: false, announce: false });
   nodes.push(e);
-  const heartbeat = (kp) => seal(HEARTBEAT_TAG, { nodeId: kp.publicKey, operator: 'peer-' + kp.publicKey.slice(0, 4), roles: ['mesh'], region: 'local', addr: 'http://127.0.0.1:9', wsAddr: null, standing: 0, version: '0.0.0', protocol: 3, buildHashes: {}, manifests: {}, epoch: epochOf(Date.now()) }, kp);
+  const heartbeat = (kp) => seal(HEARTBEAT_TAG, { nodeId: kp.publicKey, operator: 'peer-' + kp.publicKey.slice(0, 4), roles: ['mesh'], region: 'local', addr: 'http://127.0.0.1:9', wsAddr: null, standing: 0, version: '0.0.0', protocol: PROTOCOL_VERSION, buildHashes: {}, manifests: {}, epoch: epochOf(Date.now()) }, kp);
   await gossip(e, { heartbeats: [await heartbeat(bondedKp), await heartbeat(unbondedKp)] });
   assert.ok(await until(async () => { const p = (await (await fetch(`${e.addr}/peers`)).json()).peers; return p.find((x) => x.nodeId === bondedKp.publicKey)?.bonded === true && p.find((x) => x.nodeId === unbondedKp.publicKey)?.bonded === false; }, 20_000), 'standings read for both peers');
 

@@ -78,6 +78,18 @@ const BLOCK = 512;
 
 /** serverHash: sha256 over 'server' NUL tar bytes, lowercase hex. */
 export const serverHash = (tarBytes) => createHash('sha256').update(`${SERVER_TAG}\0`).update(tarBytes).digest('hex');
+/** Settlement v4: a title's VERIFIER is a third hashed artifact beside the ruleset and the server — the headless
+ *  replay a court ran, packed the same deterministic way, registered under the same TitleRegistry token with the
+ *  existing setBuild. The kind is in the hash domain, so a verifier hash never verifies as a server or a ruleset.
+ *  In v4 a node only checks the hash is registered and active (that grants `checkable`); running it on challenge
+ *  is phase 2 (docs/SETTLEMENT-STANDARD.md §11). */
+export const VERIFIER_TAG = 'verifier';
+export const BUNDLE_KINDS = Object.freeze([SERVER_TAG, VERIFIER_TAG]);
+export const bundleHash = (kind, tarBytes) => {
+  if (!BUNDLE_KINDS.includes(kind)) throw new Error(`unknown bundle kind ${kind}`);
+  return createHash('sha256').update(`${kind}\0`).update(tarBytes).digest('hex');
+};
+export const verifierHash = (tarBytes) => bundleHash(VERIFIER_TAG, tarBytes);
 
 // ------------------------------------------------------------------ paths
 /** What is wrong with an archive path, or null: relative, forward slashes, no '..' or '.' segments, no NUL, ≤ 255 chars. */
@@ -166,9 +178,11 @@ export const gunzip = (buf) => gunzipSync(buf, { maxOutputLength: MAX_BUNDLE_BYT
 const RID_RE = /^[a-z0-9][a-z0-9-]*\.v[0-9]+$/;
 const num = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
 /** What is wrong with a server manifest, or null. `files` (the archive's paths) checks the entry exists. */
-export function manifestProblem(m, files = null) {
+export function manifestProblem(m, files = null, { kind = 'server' } = {}) {
   if (!m || typeof m !== 'object' || Array.isArray(m)) return 'manifest.json is not an object';
-  if (m.kind !== 'server') return `kind must be "server" (got ${JSON.stringify(m.kind)})`;
+  if (m.kind !== kind) return `kind must be "${kind}" (got ${JSON.stringify(m.kind)})`;
+  // A verifier is a pure function over a log: no process settings, no ports, no environment.
+  if (kind === VERIFIER_TAG) for (const k of ['env', 'portRange', 'readyMs', 'ttlMs', 'ticketTtlMs', 'settledGraceMs']) if (m[k] != null) return `${k}: a verifier bundle runs no server`;
   if (typeof m.rulesetId !== 'string' || !RID_RE.test(m.rulesetId) || m.rulesetId.length > 64) return 'rulesetId must be <name>.v<n>, 1–64 characters';
   const ep = pathProblem(m.entry);
   if (ep) return `entry: ${ep}`;
@@ -191,12 +205,12 @@ export const runtimeOk = (m, version = process.versions.node) => { const want = 
 
 /** Open a gzipped bundle: gunzip, hash, unpack, read and check the manifest. Throws on any refusal, BEFORE anything is
  *  written anywhere. Returns { tar, hash, files, manifest }. */
-export function openBundle(gzBytes, expectedHash = null) {
+export function openBundle(gzBytes, expectedHash = null, { kind = 'server' } = {}) {
   if (gzBytes.length > MAX_BUNDLE_BYTES) throw new Error(`bundle: ${gzBytes.length} bytes compressed, over the ${MAX_BUNDLE_BYTES} limit`);
   let tar;
   try { tar = gunzip(gzBytes); } catch (e) { throw new Error(`bundle: not a gzip archive (${e.message})`); }
-  const hash = serverHash(tar);
-  if (expectedHash && hash !== expectedHash) throw new Error(`server bundle hash mismatch: expected ${expectedHash.slice(0, 12)} got ${hash.slice(0, 12)}`);
+  const hash = bundleHash(kind, tar);
+  if (expectedHash && hash !== expectedHash) throw new Error(`${kind} bundle hash mismatch: expected ${expectedHash.slice(0, 12)} got ${hash.slice(0, 12)}`);
   // From here on the bytes ARE the pinned bundle: a refusal is the bundle's own fault, and permanent — no peer
   // can serve better bytes for this hash (node/litnode.js remembers it and never asks again).
   try {
@@ -204,7 +218,7 @@ export function openBundle(gzBytes, expectedHash = null) {
     if (!(MANIFEST_NAME in files)) throw new Error('bundle: no manifest.json');
     let manifest;
     try { manifest = JSON.parse(files[MANIFEST_NAME].toString('utf8')); } catch (e) { throw new Error(`bundle: manifest.json is not JSON (${e.message})`); }
-    const problem = manifestProblem(manifest, files);
+    const problem = manifestProblem(manifest, files, { kind });
     if (problem) throw new Error(`bundle: ${problem}`);
     return { tar, hash, files, manifest };
   } catch (e) { throw permanent(e); }
@@ -223,12 +237,12 @@ export function writeFiles(dir, files) {
 
 /** Pack a server bundle: `files` is { archivePath → Buffer|string } WITHOUT the manifest; the manifest is added as
  *  manifest.json. Returns { tar, gz, hash, manifest }. */
-export function packBundle(manifest, files) {
-  const m = { kind: 'server', ...manifest };
-  const problem = manifestProblem(m, { ...files, [MANIFEST_NAME]: true });
+export function packBundle(manifest, files, { kind = 'server' } = {}) {
+  const m = { kind, ...manifest };
+  const problem = manifestProblem(m, { ...files, [MANIFEST_NAME]: true }, { kind });
   if (problem) throw new Error(`bundle: ${problem}`);
   const tar = packTar({ ...files, [MANIFEST_NAME]: JSON.stringify(m, null, 2) + '\n' });
-  return { tar, gz: gzip(tar), hash: serverHash(tar), manifest: m };
+  return { tar, gz: gzip(tar), hash: bundleHash(kind, tar), manifest: m };
 }
 
 /** The gauntlet config (node/gauntlet.js) a held bundle becomes on this node: the node's own runtime runs the entry

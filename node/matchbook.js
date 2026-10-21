@@ -41,7 +41,9 @@ import * as mb from '../protocol/matchbook.js';
 import { progression } from '../protocol/progression.js';
 import { mayActForCall, decodeBool } from '../protocol/staking.js';
 import { descriptorHash as descriptorHashOf } from './settle.js';
-import { proposeCalldata, hourOf, freezeAt } from '../protocol/epoch.js';
+import { proposeCalldata, hourOf, freezeAt, buildTree, proofFor, anchorRoot, withStatsStep, withResultsStep } from '../protocol/epoch.js';
+import { resultHash as commitOf } from '../protocol/result.js';
+import { foldLine, statsLeaves } from '../protocol/stats.js';
 import { selector } from '../protocol/keccak.js';
 import { decodeBytes32Array } from '../protocol/abi.js';
 
@@ -312,15 +314,79 @@ export function createMatchBook({
     const want = [...new Set(decoded.filter((e) => e.event === 'Finalized' && !blockTs.has(e.block)).map((e) => e.block).concat([...duties.values()].map((d) => d.block).filter((b) => b != null && !blockTs.has(b))))];
     for (const n of want.slice(0, 50)) { try { const b = await call('eth_getBlockByNumber', ['0x' + n.toString(16), false]); if (b?.timestamp) blockTs.set(n, parseInt(b.timestamp, 16)); } catch { /* next poll */ } }
   };
-  /** The hour's tree over the FINALIZED set, as every reader of the log computes it (§11.6). */
-  const epoch = (hour = hourOf(Date.now())) => mb.chainEpoch(decoded, hour, (n) => blockTs.get(n) ?? null);
+  // ---------------------------------------------------------------- stats, the anchored half (settlement v4)
+  // The Settled event carries no stats, yet the hour's anchored root must be the same on every node. So a final
+  // match's stats come from a delta whose recomputed resultHash IS the chain's (the host's, a custodian's or a
+  // panel seat's copy: three witnesses replayed and attested that hash), and are kept per chain key.
+  const statsPath = join(dataDir, 'matchbook-stats.json');
+  const statsKnown = new Map(Object.entries((() => { try { return JSON.parse(readFileSync(statsPath, 'utf8')); } catch { return {}; } })()));
+  const saveStats = () => { try { writeFileSync(statsPath, JSON.stringify(Object.fromEntries(statsKnown))); } catch { /* read-only: refetched */ } };
+  const finalHourOf = (e) => (blockTs.get(e.block) != null ? hourOf(blockTs.get(e.block) * 1000) : null);
+  const resolveStats = async (st) => {
+    if (!st || statsKnown.has(st.matchId)) return true;
+    const ok = (d) => d && d.resultHash === st.resultHash && commitOf(d) === d.resultHash;
+    let d = settlement?.delta?.(st.matchId) ?? null;
+    if (!ok(d)) {
+      d = null;
+      for (const k of [...new Set([st.hostKey, ...(st.custodians ?? []), ...(panels.get(st.matchId)?.panel ?? [])])]) {
+        const a = hostAddr(k);
+        if (!a) continue;
+        try { const r = await fetch(`${a}/delta/${st.matchId}`, { signal: AbortSignal.timeout(8000) }); if (!r.ok) continue; const x = await r.json(); if (ok(x)) { d = x; break; } } catch { /* next holder */ }
+      }
+    }
+    if (!d) return false;
+    const v4 = (d.protocol ?? 0) >= 4; // a protocol-3 delta commits no stats: it contributes none
+    statsKnown.set(st.matchId, { rulesetId: d.rulesetId, stats: v4 ? d.stats ?? null : null, schema: v4 ? d.statsSchema ?? null : null });
+    saveStats();
+    return true;
+  };
+  /** Fetch what is missing for final matches decided by the end of `hour`, a few per call. */
+  const resolveStatsUpTo = async (hour, budget = 10) => {
+    for (const f of decoded) {
+      if (budget <= 0) break;
+      if (f.event !== 'Finalized' || f.status !== 'final' || statsKnown.has(f.matchId)) continue;
+      const fh = finalHourOf(f); if (fh == null || fh > hour) continue;
+      budget--; await resolveStats(decoded.find((e) => e.event === 'Settled' && e.matchId === f.matchId));
+    }
+  };
+  /** Season stats through `hour`: every FINAL match decided by then, in Settled order, folded by its own schema. */
+  const chainStats = (hour) => {
+    const finals = new Set(decoded.filter((e) => e.event === 'Finalized' && e.status === 'final' && finalHourOf(e) != null && finalHourOf(e) <= hour).map((e) => e.matchId));
+    const order = decoded.filter((e) => e.event === 'Settled' && finals.has(e.matchId)).sort((a, b) => a.block - b.block || a.logIndex - b.logIndex);
+    const folds = {}, missing = [];
+    for (const st of order) {
+      const rec = statsKnown.get(st.matchId);
+      if (!rec) { missing.push(st.matchId); continue; }
+      if (!rec.stats || !rec.schema) continue;
+      for (const [p, values] of Object.entries(rec.stats)) foldLine(((folds[rec.rulesetId] ??= {})[p] ??= {}), values, rec.schema);
+    }
+    const leaves = statsLeaves(folds, hour);
+    return { leaves, tree: buildTree(leaves.map((l) => l.leaf)), missing };
+  };
+  /** The hour's anchored root (settlement v4): the FINALIZED-set results tree as every reader of the log computes it
+   *  (§11.6), paired with the stats tree through that hour. */
+  const epoch = (hour = hourOf(Date.now())) => {
+    const ep = mb.chainEpoch(decoded, hour, (n) => blockTs.get(n) ?? null);
+    const st = chainStats(hour);
+    return { ...ep, resultsRoot: ep.root, statsRoot: st.tree.root, root: anchorRoot(ep.root, st.tree.root), statsTree: st.tree, stats: st.leaves, statsMissing: st.missing };
+  };
+  const statsProof = (rulesetId, player, hour = hourOf(Date.now()) - 1) => {
+    const ep = epoch(hour);
+    const row = ep.stats.find((l) => l.rulesetId === rulesetId && l.player === player);
+    if (!row) return null;
+    return { rulesetId, player, stats: row.stats, through: hour, leaf: row.leaf, statsRoot: ep.statsRoot, resultsRoot: ep.resultsRoot, root: ep.root, source: 'chain', complete: ep.statsMissing.length === 0,
+      path: withResultsStep(proofFor(ep.statsTree, row.leaf), ep.resultsRoot) };
+  };
   /** Propose the hour's root from the delegate once the hour has frozen. `force` (tests) skips the wait. */
   const propose = async (hour, { force = false } = {}) => {
     if (!epochAnchor || !hasRole('settler')) return null;
     if (!force && Date.now() < freezeAt(hour)) return null;
     if (proposedHours.has(hour)) return null;
-    const ep = epoch(hour);
+    let ep = epoch(hour);
     if (ep.count === 0) return null;
+    // every final match through the hour must be accounted for, or the stats root is this node's alone
+    if (ep.statsMissing.length) { await resolveStatsUpTo(hour, 20); ep = epoch(hour); }
+    if (ep.statsMissing.length) { log(`epoch ${hour}: waiting for the stats of ${ep.statsMissing.length} final match(es) before proposing`); return null; }
     // a restart forgets what it proposed; the chain does not — an hour with a finalized root needs nothing from us
     // (the desktop re-proposed a finalized hour after every restart and reported the revert as an error, 22 Sep 2026)
     try {
@@ -491,6 +557,7 @@ export function createMatchBook({
       await stampBlocks();
       // the settler proposes every frozen hour it holds finalized matches for (the last three, in case a restart missed one)
       const h = hourOf(Date.now());
+      await resolveStatsUpTo(h, 5); // fetch stats as matches finalize, so a frozen hour rarely waits
       for (const hour of [h - 3, h - 2, h - 1]) if (Date.now() >= freezeAt(hour)) await propose(hour);
     } catch (e) { lastError = String(e.message ?? e); }
     finally { polling = false; }
@@ -519,7 +586,8 @@ export function createMatchBook({
     sent: (n = 50) => sentLog.slice(-n),
     // The last n decided matches this node holds events for, newest last — the dashboard's "recent" strip.
     recent: (n = 20) => decoded.filter((e) => e.event === 'Finalized').slice(-n).map((e) => ({ matchId: e.matchId, status: e.status, block: e.block, tx: e.tx ?? null, at: blockTs.get(e.block) ? new Date(blockTs.get(e.block) * 1000).toISOString() : null })),
-    proof: (matchId) => { const key = mb.matchIdBytes32(matchId); const fin = decoded.find((e) => e.event === 'Finalized' && e.matchId === key); if (!fin) return null; const ts = blockTs.get(fin.block); if (ts == null) return null; return mb.chainProof(epoch(hourOf(ts * 1000)), key); },
+    statsProof,
+    proof: (matchId) => { const key = mb.matchIdBytes32(matchId); const fin = decoded.find((e) => e.event === 'Finalized' && e.matchId === key); if (!fin) return null; const ts = blockTs.get(fin.block); if (ts == null) return null; const ep = epoch(hourOf(ts * 1000)); const p = mb.chainProof(ep, key); return p && { ...p, resultsRoot: ep.resultsRoot, statsRoot: ep.statsRoot, root: ep.root, path: withStatsStep(p.path, ep.statsRoot) }; },
     chainStatus: (matchId) => ({ matchId, key: mb.matchIdBytes32(matchId), status: statusOf(mb.matchIdBytes32(matchId)), panel: panels.get(mb.matchIdBytes32(matchId))?.panel ?? null, events: decoded.filter((e) => e.matchId === mb.matchIdBytes32(matchId)) }),
     status: () => ({ contract, epochAnchor, delegate: address, delegated, funded, enrolled, purse: purse(), cursor, scanRange, scanMs, scanError, receipts: ingested.size, pendingReceipts: pendingReceipts.size, events: decoded.length, sends, lastTx, lastError, hosting: [...duties.values()].filter((d) => d.role === 'host').length, seated: [...duties.values()].filter((d) => d.role === 'seat').length, windows: { ...windows }, attested: attested.size, proposed: [...proposedHours], refunds: gasRefund ? { contract: gasRefund, claimed: refundsClaimed, due: [...refunds.values()].filter((r) => r.state === 'due').length, last: refundLast } : null }),
   };

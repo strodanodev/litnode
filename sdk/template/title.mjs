@@ -47,7 +47,9 @@ export default defineTitle({
   services: {
     leaderboard: eloLeaderboard({ k: 24 }),
     credits: winnerTakesCredits({ pot: 10, currency: 'credits' }),
-    stats: { track: ['matches', 'wins', 'ticks'] },
+    // Settlement v4: per-match counters every witness recomputes from the final state (stats() below), folded
+    // per player by op: sum | max | min | last. Names: [a-zA-Z][a-zA-Z0-9]{0,31}; matches/wins/ticks are built in.
+    stats: { track: ['matches', 'wins', 'ticks'], schema: { pulls: 'sum', bestPull: 'max' } },
   },
   display: {
     title: '__TITLE_NAME__',
@@ -66,6 +68,7 @@ export default defineTitle({
       pull: { [a]: stat(a).pull, [b]: stat(b).pull },
       brace: { [a]: stat(a).brace, [b]: stat(b).brace },
       gust: (rnd() % 7) - 3,         // a seeded, replayable wind — never Math.random
+      pulls: { [a]: 0, [b]: 0 },     // stats live IN the state, as integers, so the root and every replay carry them
       tick: 0,
       over: false,
     };
@@ -79,15 +82,19 @@ export default defineTitle({
     let rope = state.rope;
     if (ia & 1) rope += (ib & 2) ? Math.max(0, state.pull[a] - state.brace[b]) : state.pull[a];
     if (ib & 1) rope -= (ia & 2) ? Math.max(0, state.pull[b] - state.brace[a]) : state.pull[b];
+    const pulls = { [a]: state.pulls[a] + (ia & 1), [b]: state.pulls[b] + (ib & 1) };
     rope += state.gust;
     const tick = state.tick + 1;
     const over = rope >= LIMIT || rope <= -LIMIT || tick >= MAX_TICKS;
-    return { ...state, rope, tick, over };
+    return { ...state, rope, pulls, tick, over };
   },
 
   done: (s) => s.over,
-  /** What the root commits to: every field the sim reads, nothing a host could vary. */
-  serialize: (s) => ({ participants: s.participants, rope: s.rope, tick: s.tick, over: s.over, gust: s.gust }),
+  /** What the root commits to: EVERY field step() reads (pull and brace included), nothing a host could vary. */
+  serialize: (s) => ({ participants: s.participants, rope: s.rope, pull: s.pull, brace: s.brace, pulls: s.pulls, tick: s.tick, over: s.over, gust: s.gust }),
+  /** Settlement v4: { player: { name: non-negative integer } } from the FINAL state only — run in the sandbox, so
+   *  every witness gets the same numbers. Only the schema's names are kept. */
+  stats: (s) => Object.fromEntries(s.participants.map((p) => [p, { pulls: s.pulls[p], bestPull: s.pull[p] }])),
   /** What a client may see. Nothing hidden in TUG, but never just return the state. */
   view: (s) => ({ rope: s.rope, tick: s.tick, over: s.over }),
   scores(s) {

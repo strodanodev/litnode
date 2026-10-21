@@ -18,7 +18,8 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { resultHash, verification } from '../protocol/result.js';
-import { leafOf, buildTree } from '../protocol/epoch.js';
+import { leafOf, buildTree, anchorRoot } from '../protocol/epoch.js';
+import { localSeason } from '../protocol/stats.js';
 import { h } from '../protocol/canonical.js';
 
 const [cmd, a, b] = process.argv.slice(2);
@@ -64,7 +65,13 @@ if (cmd === 'export') {
   for (const e of epochs) {
     const byId = new Map(deltas.map((d) => [d.matchId, d]));
     const leaves = e.matches.map((m) => { const d = byId.get(m.matchId); return d ? leafOf(d, { cosigners: m.cosigners, verified: m.verified }) : null; });
-    const rootOk = leaves.every(Boolean) && buildTree(leaves).root === e.root && leaves.every((l, i) => l === e.matches[i].leaf);
+    // Settlement v4: the frozen root pairs the results tree with the season-stats tree; both recompute from the deltas.
+    const resultsRoot = buildTree(leaves.filter(Boolean)).root;
+    let rootOk = leaves.every(Boolean) && leaves.every((l, i) => l === e.matches[i].leaf);
+    if (e.statsRoot) {
+      const season = localSeason([...byId.values()], e.epoch);
+      rootOk = rootOk && resultsRoot === e.resultsRoot && buildTree(season.leaves.map((l) => l.leaf)).root === e.statsRoot && anchorRoot(e.resultsRoot, e.statsRoot) === e.root;
+    } else rootOk = rootOk && resultsRoot === e.root;
     if (!rootOk) bad++;
     console.log(`${rootOk ? ' ok ' : 'BAD '} epoch ${e.epoch}: ${e.count} leaves, root ${e.root.slice(0, 16)}… (${e.status})`);
   }

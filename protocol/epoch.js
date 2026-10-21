@@ -27,7 +27,15 @@ export const leafOf = (d, { cosigners = d.cosigners ?? [], verified = d.verified
 export const FREEZE_GRACE_MS = 15 * 60_000;
 export const freezeAt = (hour) => (hour + 1) * EPOCH_HOUR_MS + FREEZE_GRACE_MS;
 
-const pairHash = (a, b) => sha256Hex(`${a}${b}`);
+/** One tree step: sha256 over the two nodes' lowercase-hex ASCII, left first (EpochAnchor._pair does the same). */
+export const pairHash = (a, b) => sha256Hex(`${a}${b}`);
+
+/** Settlement v4: the root a node anchors for an hour pairs the results tree with the stats tree, results on the
+ *  LEFT. A results-leaf proof gains one last step { hash: statsRoot, left: false }; a stats-leaf proof ends with
+ *  { hash: resultsRoot, left: true }. EpochAnchor.verifyInclusion checks either unchanged. */
+export const anchorRoot = (resultsRoot, statsRoot) => pairHash(resultsRoot, statsRoot);
+export const withStatsStep = (path, statsRoot) => [...path, { hash: statsRoot, left: false }];
+export const withResultsStep = (path, resultsRoot) => [...path, { hash: resultsRoot, left: true }];
 
 /** Build the tree over a leaf set (sorted, deduplicated). Odd levels
  *  duplicate the last node. Returns { root, leaves, levels }. */

@@ -47,7 +47,7 @@
  *
  *  Title code never runs in this process: replays and report validation go
  *  through node/sandbox.js. */
-import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { canonical, h } from '../protocol/canonical.js';
 import { sign, verify } from '../protocol/keys.js';
@@ -56,8 +56,10 @@ import { hydrationManifest, agent as makeAgent } from '../protocol/erc6699.js';
 import { mayPlay } from '../protocol/registry.js';
 import { derive } from '../protocol/derive.js';
 import { applyProfiles } from '../protocol/profile.js';
-import { buildTree, leafOf, proofFor, proposeCalldata, hourOf, freezeAt } from '../protocol/epoch.js';
-import { resultHash as commit, cosignBody, verification, isOfficial } from '../protocol/result.js';
+import { buildTree, leafOf, proofFor, proposeCalldata, hourOf, freezeAt, anchorRoot, withStatsStep, withResultsStep } from '../protocol/epoch.js';
+import { resultHash as commit, cosignBody, verification, isOfficial, proofOf } from '../protocol/result.js';
+import { cleanStats, schemaOf, localSeason } from '../protocol/stats.js';
+import { createHash } from 'node:crypto';
 import { PROTOCOL_VERSION } from '../protocol/version.js';
 import { matchIdBytes32 } from '../protocol/matchbook.js';
 
@@ -74,6 +76,31 @@ export const descriptorHash = (d) => h('descriptor', {
   host: d.host, witness: d.witness ?? null, beacon: d.beacon, beaconBlock: d.beaconBlock ?? null, bucket: d.bucket, protocol: d.protocol ?? null, snapshotRoot: d.snapshotRoot,
 });
 const isKey = (k) => typeof k === 'string' && /^[0-9a-f]{64}$/.test(k);
+const isHex64 = (x) => typeof x === 'string' && /^[0-9a-f]{64}$/.test(x);
+
+/** Settlement v4: the largest log an attested envelope may carry (decoded bytes). */
+export const MAX_LOG_BYTES = 512 * 1024;
+export const sha256Bytes = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+/** `report.commitments` (settlement v4), checked the same way on host and witness. null when absent (a v3 court). */
+export function commitmentsOf(report) {
+  const c = report?.commitments;
+  if (c == null) return null;
+  if (typeof c !== 'object' || Array.isArray(c)) throw new Error('report.commitments must be an object');
+  const str = (v, max, name) => { if (v == null) return null; if (typeof v !== 'string' || !v.length || v.length > max) throw new Error(`report.commitments.${name} must be a string of at most ${max} characters, or null`); return v; };
+  const hex = (v, name) => { if (v == null) return null; if (!isHex64(v)) throw new Error(`report.commitments.${name} must be 64 lowercase hex characters, or null`); return v; };
+  return { logFormat: str(c.logFormat, 64, 'logFormat'), inputsHash: hex(c.inputsHash, 'inputsHash'), finalHash: str(c.finalHash, 128, 'finalHash'), verifierHash: hex(c.verifierHash, 'verifierHash') };
+}
+
+/** Decode an envelope's `log` (base64 of the exact bytes); strict: canonical base64, the cap enforced. */
+export function decodeLog(b64) {
+  if (typeof b64 !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(b64)) throw new Error('log must be base64');
+  if (Math.floor(b64.length / 4) * 3 > MAX_LOG_BYTES + 3) throw new Error(`log exceeds ${MAX_LOG_BYTES} bytes`);
+  const bytes = Buffer.from(b64, 'base64');
+  if (bytes.toString('base64') !== b64) throw new Error('log is not canonical base64');
+  if (bytes.length > MAX_LOG_BYTES) throw new Error(`log exceeds ${MAX_LOG_BYTES} bytes`);
+  return bytes;
+}
 const sameSet = (a, b) => a.length === b.length && [...a].sort().every((x, i) => x === [...b].sort()[i]);
 
 export function createSettlement({
@@ -86,6 +113,7 @@ export function createSettlement({
   hostRelayKeys = () => [],            // hostId → relay pubkeys that host advertised (witness path)
   onSettled = null,                    // (delta, storedLedger) → after a RANKED, PLACED result settled here (MatchBook.settle)
   chatStamp = null,                    // () → this node's chat ring at settle time (docs/NODE-CHAT.md §2.5); stored as ledger `meta.chat`, outside the result
+  verifierActive = async () => false,  // (rulesetId, verifierHash) → that verifier bundle is registered and active for the title (TitleRegistry, or VERIFIERS)
 }) {
   if (!sandbox) throw new Error('settlement needs the title sandbox');
   /** The build a submission names, or the current one when it names none. */
@@ -100,11 +128,23 @@ export function createSettlement({
     if (!rs) throw new Error(`ruleset ${sub.rulesetId} not loaded`);
     return rs;
   };
-  const dirs = { ledgers: join(dataDir, 'ledgers'), deltas: join(dataDir, 'deltas'), epochs: join(dataDir, 'epochs') };
+  const dirs = { ledgers: join(dataDir, 'ledgers'), deltas: join(dataDir, 'deltas'), epochs: join(dataDir, 'epochs'), logs: join(dataDir, 'logs') };
   for (const d of Object.values(dirs)) mkdirSync(d, { recursive: true });
   const readAll = (dir) => readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readFileSync(join(dir, f), 'utf8')));
   const put = (dir, id, obj) => writeFileSync(join(dir, `${encodeURIComponent(id)}.json`), JSON.stringify(obj));
   const get = (dir, id) => { const f = join(dir, `${encodeURIComponent(id)}.json`); return existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : null; };
+  // ---------------------------------------------------------------- logs (settlement v4)
+  /** Content-addressed: <dataDir>/logs/<sha256>. A log is held only after its bytes hash to the committed inputsHash. */
+  const logFile = (hash) => join(dirs.logs, hash);
+  const hasLog = (hash) => isHex64(hash) && existsSync(logFile(hash));
+  const readLog = (hash) => (hasLog(hash) ? readFileSync(logFile(hash)) : null);
+  const holdLog = (bytes, expected) => {
+    const got = sha256Bytes(bytes);
+    if (got !== expected) throw new Error(`log sha256 ${got.slice(0, 12)}… does not match commitments.inputsHash ${String(expected).slice(0, 12)}…`);
+    if (!existsSync(logFile(got))) writeFileSync(logFile(got), bytes);
+    return got;
+  };
+  const logStats = () => { let count = 0, bytes = 0; for (const n of readdirSync(dirs.logs)) { if (!isHex64(n)) continue; count++; try { bytes += statSync(logFile(n)).size; } catch { /* gone */ } } return { count, bytes }; };
 
   const deltas = new Map(readAll(dirs.deltas).map((d) => [d.matchId, { disputes: [], ...d }]));
   const frozen = new Map(readAll(dirs.epochs).map((e) => [e.epoch, e]));
@@ -117,6 +157,8 @@ export function createSettlement({
       if (d.attestation !== 'host' || d.placed || !d.settledAt || now - Date.parse(d.settledAt) < HOST_DELTA_TTL_MS) continue;
       deltas.delete(id); n++;
       for (const dir of [dirs.deltas, dirs.ledgers]) { try { unlinkSync(join(dir, `${encodeURIComponent(id)}.json`)); } catch { /* already gone */ } }
+      const lh = d.commitments?.inputsHash;
+      if (lh && ![...deltas.values()].some((x) => x.commitments?.inputsHash === lh)) { try { unlinkSync(logFile(lh)); } catch { /* not held */ } }
     }
     if (n) log(`pruned ${n} unsigned casual delta${n === 1 ? '' : 's'} older than a day`);
     return n;
@@ -180,7 +222,8 @@ export function createSettlement({
     const hy = await hydrate(sub, rs, binding);
     const r = await sandbox.one(rs.source, { kind: 'replay', seed: binding.seed, participants: sub.participants, ctx: hy.ctx, entries: sub.entries, maxTicks: rs.manifest.maxTicks ?? undefined });
     const complete = r.done || (rs.manifest.maxTicks && r.ticks >= rs.manifest.maxTicks);
-    return { root: h('state', JSON.parse(r.serialized)), scores: r.scores, ticks: r.ticks, done: r.done, complete: !!complete, engineHash: r.engineHash ?? null, hydrationManifest: hy.manifest, hydrationSource: hy.hydrationSource, buildHash: rs.buildHash, manifest: rs.manifest };
+    const stats = cleanStats(r.stats ?? null, sub.participants, schemaOf(rs.manifest));
+    return { root: h('state', JSON.parse(r.serialized)), scores: r.scores, ticks: r.ticks, done: r.done, complete: !!complete, engineHash: r.engineHash ?? null, hydrationManifest: hy.manifest, hydrationSource: hy.hydrationSource, buildHash: rs.buildHash, manifest: rs.manifest, stats };
   };
 
   /** Provenance of a replayable submission. Returns { attestation, relay }. */
@@ -205,7 +248,7 @@ export function createSettlement({
 
   /** Attested titles: validate the signed outcome report in the sandbox;
    *  the signer must be an authorized court. Never replays. */
-  const checkAttested = async (sub, binding) => {
+  const checkAttested = async (sub, binding, { logBytes = null } = {}) => {
     const rs = buildFor(sub);
     if (rs.manifest.kind !== 'attested') throw new Error(`${sub.rulesetId} is not an attested title`);
     const a = sub.attestor;
@@ -220,8 +263,17 @@ export function createSettlement({
     if (!rs.manifest.participants.includes(sub.participants.length)) throw new Error(`title takes ${rs.manifest.participants.join('|')} participants`);
     const v = await sandbox.one(rs.source, { kind: 'attested', report: sub.report, participants: sub.participants, teams: sub.teams });
     if (v.validate) throw new Error(`report rejected: ${v.validate}`);
+    // Settlement v4: the commitments and stats ride inside the signed report; the node lifts them into the delta.
+    const commitments = commitmentsOf(sub.report);
+    const stats = cleanStats(v.stats ?? null, sub.participants, schemaOf(rs.manifest));
+    if (logBytes) {
+      if (!commitments?.inputsHash) throw new Error('a log needs report.commitments.inputsHash');
+      holdLog(logBytes, commitments.inputsHash);
+    }
+    const proof = proofOf({ kind: 'attested', attestation: 'attested', commitments, logHeld: hasLog(commitments?.inputsHash),
+      verifierActive: commitments?.inputsHash && commitments?.verifierHash ? !!(await verifierActive(sub.rulesetId, commitments.verifierHash)) : false });
     const hy = await hydrate(sub, rs, binding);
-    return { rs, hydrationManifest: hy.manifest, hydrationSource: hy.hydrationSource, scores: v.scores, root: h('attested', { rulesetId: sub.rulesetId, report: sub.report }) };
+    return { rs, hydrationManifest: hy.manifest, hydrationSource: hy.hydrationSource, scores: v.scores, root: h('attested', { rulesetId: sub.rulesetId, report: sub.report }), commitments, stats, statsSchema: schemaOf(rs.manifest), proof };
   };
 
   const finish = async (body, sub, binding) => {
@@ -231,7 +283,8 @@ export function createSettlement({
     // room chat, say) plus this host's node-chat stamp. It rides ledgerHash on chain and is custodied by the
     // witnesses; replay and resultFields never read it, so a witness holding a different ring still agrees.
     const meta = { ...(sub.meta && typeof sub.meta === 'object' && !Array.isArray(sub.meta) ? sub.meta : {}), ...(chatStamp ? { chat: chatStamp() } : {}) };
-    const stored = { ...sub, descriptor: binding.envelope ?? null, ...(Object.keys(meta).length ? { meta } : {}) };
+    const { log: _log, ...rest } = sub; // the log's bytes live in logs/<inputsHash>, served at GET /log/<hash>
+    const stored = { ...rest, descriptor: binding.envelope ?? null, ...(Object.keys(meta).length ? { meta } : {}) };
     put(dirs.ledgers, sub.matchId, stored);
     put(dirs.deltas, sub.matchId, delta);
     deltas.set(sub.matchId, delta);
@@ -254,17 +307,19 @@ export function createSettlement({
     if (binding.placed && binding.descriptor.host !== nodeId) throw new Error(`placement names host ${binding.descriptor.host.slice(0, 12)}, not this node`);
 
     if (sub.kind === 'attested') {
-      const c = await checkAttested({ ...sub, mode }, binding);
+      if (sub.log != null && !sub.report?.commitments?.inputsHash) throw new Error('a log needs report.commitments.inputsHash');
+      const logBytes = sub.log != null ? decodeLog(sub.log) : null;
+      const c = await checkAttested({ ...sub, mode }, binding, { logBytes });
       const body = {
         protocol: PROTOCOL_VERSION, matchId: sub.matchId, rulesetId: sub.rulesetId, buildHash: c.rs.buildHash, kind: 'attested', mode, placed: binding.placed, descriptorHash: binding.descriptorHash,
         participants: sub.participants, teams: sub.teams, seed: null, ticks: sub.report.ticks ?? null, head: null, signatures: {},
         attestation: 'attested', attestor: sub.attestor.id, relay: null, verifiable: false,
         hydrationManifest: c.hydrationManifest, hydrationHash: c.hydrationManifest.manifestHash, hydrationSource: c.hydrationSource,
-        finalStateRoot: c.root, engineHash: null, scores: c.scores,
+        finalStateRoot: c.root, engineHash: null, scores: c.scores, proof: c.proof, stats: c.stats, statsSchema: c.statsSchema, commitments: c.commitments,
         hostId: nodeId, epoch: hourOf(Date.now()), settledAt: new Date().toISOString(),
       };
       const delta = await finish(body, sub, binding);
-      log(`settled ${sub.matchId} · attested by ${sub.attestor.id.slice(0, 12)} · ${sub.report.scoreA}-${sub.report.scoreB}${binding.placed ? '' : ' · unplaced'}`);
+      log(`settled ${sub.matchId} · attested by ${sub.attestor.id.slice(0, 12)} · ${c.proof}${c.commitments?.inputsHash && hasLog(c.commitments.inputsHash) ? ' · log held' : ''}${binding.placed ? '' : ' · unplaced'}`);
       return decorate(delta);
     }
     if (!Array.isArray(sub.entries) || sub.participants.length !== 2) throw new Error('malformed submission');
@@ -278,6 +333,7 @@ export function createSettlement({
       participants: sub.participants, teams: null, seed: binding.seed, ticks: r.ticks, complete: r.complete, head, signatures: sub.signatures ?? {}, attestation: prov.attestation, attestor: null, relay: prov.relay,
       hydrationManifest: r.hydrationManifest, hydrationHash: r.hydrationManifest.manifestHash, hydrationSource: r.hydrationSource,
       finalStateRoot: r.root, engineHash: r.engineHash, scores: r.scores,
+      proof: proofOf({ kind: 'replayable', attestation: prov.attestation }), stats: r.stats, statsSchema: schemaOf(r.manifest), commitments: null,
       hostId: nodeId, epoch: hourOf(Date.now()), settledAt: new Date().toISOString(),
     };
     const delta = await finish(body, sub, binding);
@@ -306,7 +362,7 @@ export function createSettlement({
     if (delta.kind === 'attested') {
       let c;
       try { c = await checkAttested({ ...ledger, mode }, binding); } catch (e) { return { ok: false, reason: e.message }; }
-      ours = { ...delta, seed: null, finalStateRoot: c.root, hydrationHash: c.hydrationManifest.manifestHash, hydrationSource: c.hydrationSource, scores: c.scores, attestation: 'attested', attestor: ledger.attestor?.id ?? null, engineHash: null, ticks: ledger.report?.ticks ?? null };
+      ours = { ...delta, seed: null, finalStateRoot: c.root, hydrationHash: c.hydrationManifest.manifestHash, hydrationSource: c.hydrationSource, scores: c.scores, attestation: 'attested', attestor: ledger.attestor?.id ?? null, engineHash: null, ticks: ledger.report?.ticks ?? null, proof: c.proof, stats: c.stats, statsSchema: c.statsSchema, commitments: c.commitments };
     } else {
       let head, r, prov;
       try {
@@ -317,11 +373,11 @@ export function createSettlement({
         if (mode === 'ranked' && !r.complete) throw new Error(`ranked: match not finished after ${r.ticks} ticks`);
         prov = await provenance({ ...ledger, mode, participants: delta.participants }, r, { relayAllowed: hostRelayKeys(delta.hostId) });
       } catch (e) { return { ok: false, reason: e.message }; }
-      ours = { ...delta, seed: binding.seed, ticks: r.ticks, head, finalStateRoot: r.root, engineHash: r.engineHash, hydrationHash: r.hydrationManifest.manifestHash, hydrationSource: r.hydrationSource, scores: r.scores, attestation: prov.attestation, relay: prov.relay, attestor: null };
+      ours = { ...delta, seed: binding.seed, ticks: r.ticks, head, finalStateRoot: r.root, engineHash: r.engineHash, hydrationHash: r.hydrationManifest.manifestHash, hydrationSource: r.hydrationSource, scores: r.scores, attestation: prov.attestation, relay: prov.relay, attestor: null, proof: proofOf({ kind: 'replayable', attestation: prov.attestation }), stats: r.stats, statsSchema: schemaOf(r.manifest), commitments: null };
     }
     const mine = commit(ours);
     if (mine !== delta.resultHash) {
-      const diff = Object.keys(ours).filter((k) => ['seed', 'ticks', 'head', 'finalStateRoot', 'engineHash', 'hydrationHash', 'hydrationSource', 'scores', 'attestation', 'attestor', 'relay'].includes(k) && canonical(ours[k] ?? null) !== canonical(delta[k] ?? null));
+      const diff = Object.keys(ours).filter((k) => ['seed', 'ticks', 'head', 'finalStateRoot', 'engineHash', 'hydrationHash', 'hydrationSource', 'scores', 'attestation', 'attestor', 'relay', 'proof', 'stats', 'statsSchema'].includes(k) && canonical(ours[k] ?? null) !== canonical(delta[k] ?? null));
       const body = { matchId: delta.matchId, resultHash: delta.resultHash, witnessId: nodeId, reason: diff.join(',') || 'commitment', ours: mine };
       return { ok: false, reason: `result differs: ${diff.join(', ') || 'commitment'}`, ours: mine, theirs: delta.resultHash, fields: diff, dispute: { ...body, sig: await sign(DISPUTE_TAG, body, identity.privateKey) } };
     }
@@ -369,17 +425,24 @@ export function createSettlement({
 
   // ---------------------------------------------------------------- epochs
   const leafInputs = (d) => ({ cosigners: d.cosigners, verified: verification(d, { registry: registryOn }) === 'verified' });
+  /** Season stats through `hour` from this node's own results (settlement v4): every protocol-4 delta whose proof is
+   *  above `host`, in derive order, folded by the schema the delta itself commits. { folds, leaves, tree }. */
+  const statsThrough = (hour) => {
+    const { folds, leaves } = localSeason([...deltas.values()], hour);
+    return { folds, leaves, tree: buildTree(leaves.map((l) => l.leaf)) };
+  };
   const liveEpoch = (hour) => {
     const ds = [...deltas.values()].filter((d) => d.epoch === hour);
     const rows = ds.map((d) => { const li = leafInputs(d); return { matchId: d.matchId, leaf: leafOf(d, li), cosigners: [...li.cosigners], verified: li.verified, resultHash: d.resultHash }; });
     const tree = buildTree(rows.map((r) => r.leaf));
-    return { epoch: hour, status: 'open', count: ds.length, root: tree.root, matches: rows, freezeAt: new Date(freezeAt(hour)).toISOString(), tree };
+    const st = statsThrough(hour);
+    return { epoch: hour, status: 'open', count: ds.length, resultsRoot: tree.root, statsRoot: st.tree.root, root: anchorRoot(tree.root, st.tree.root), matches: rows, statsLeaves: st.leaves.length, freezeAt: new Date(freezeAt(hour)).toISOString(), tree, statsTree: st.tree, stats: st.leaves };
   };
   /** Freeze the hour: the leaf set as of now is final. Idempotent. */
   const freeze = (hour) => {
     if (frozen.has(hour)) return frozen.get(hour);
     const e = liveEpoch(hour);
-    const rec = { epoch: hour, status: 'finalized', count: e.count, root: e.root, matches: e.matches, frozenAt: new Date().toISOString(), protocol: PROTOCOL_VERSION };
+    const rec = { epoch: hour, status: 'finalized', count: e.count, root: e.root, resultsRoot: e.resultsRoot, statsRoot: e.statsRoot, matches: e.matches, stats: e.stats, frozenAt: new Date().toISOString(), protocol: PROTOCOL_VERSION };
     put(dirs.epochs, String(hour), rec);
     frozen.set(hour, rec);
     log(`epoch ${hour} frozen: ${rec.count} leaves, root ${rec.root.slice(0, 12)}`);
@@ -391,7 +454,8 @@ export function createSettlement({
   };
   const epoch = (hour = hourOf(Date.now()), { nodeKey = nodeId } = {}) => {
     const f = frozen.get(hour);
-    const e = f ? { ...f, tree: buildTree(f.matches.map((m) => m.leaf)) } : liveEpoch(hour);
+    // A frozen record from protocol 3 has no stats tree: its root IS the results root.
+    const e = f ? { ...f, tree: buildTree(f.matches.map((m) => m.leaf)), statsTree: f.stats ? buildTree(f.stats.map((l) => l.leaf)) : null } : liveEpoch(hour);
     return { ...e, proposeCalldata: proposeCalldata(hour, e.root, nodeKey) };
   };
   const proof = (matchId) => {
@@ -400,11 +464,22 @@ export function createSettlement({
     const e = epoch(d.epoch);
     const row = e.matches.find((m) => m.matchId === matchId);
     if (!row) return null;
-    return { matchId, epoch: d.epoch, status: e.status, leaf: row.leaf, verified: row.verified, cosignersAtFreeze: row.cosigners, cosignersNow: d.cosigners, resultHash: d.resultHash, root: e.root, path: proofFor(e.tree, row.leaf) };
+    const path = proofFor(e.tree, row.leaf);
+    return { matchId, epoch: d.epoch, status: e.status, leaf: row.leaf, verified: row.verified, proof: d.proof ?? null, cosignersAtFreeze: row.cosigners, cosignersNow: d.cosigners, resultHash: d.resultHash, root: e.root,
+      path: e.statsRoot ? withStatsStep(path, e.statsRoot) : path };
+  };
+  /** A player's season line for one title through `hour`, with its path to that hour's local root. */
+  const statsProof = (rulesetId, player, hour = hourOf(Date.now())) => {
+    const e = epoch(hour);
+    const row = (e.stats ?? []).find((l) => l.rulesetId === rulesetId && l.player === player);
+    if (!row || !e.statsTree) return null;
+    return { rulesetId, player, stats: row.stats, through: hour, leaf: row.leaf, statsRoot: e.statsRoot, resultsRoot: e.resultsRoot, root: e.root, status: e.status, source: 'local',
+      path: withResultsStep(proofFor(e.statsTree, row.leaf), e.resultsRoot) };
   };
 
   return {
     intake, cosign, acceptCosign, acceptDispute, replay, derived, epoch, freeze, maybeFreeze, proof, list, prune,
+    hasLog, readLog, holdLog, logStats, statsProof,
     delta: (id) => { const d = deltas.get(id) ?? deltas.get(byChainKey(id)); return d ? decorate(d) : null; }, ledger: (id) => get(dirs.ledgers, id) ?? (byChainKey(id) ? get(dirs.ledgers, byChainKey(id)) : null),
     verification: (d) => verification(d, { registry: registryOn }), official: officialOf,
   };

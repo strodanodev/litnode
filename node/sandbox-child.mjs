@@ -106,7 +106,7 @@ const outOfCtx = (value) => JSON.parse(JSON.stringify(value === undefined ? null
 function manifestJob(exports) {
   const title = exports.default;
   const fns = {};
-  for (const f of ['init', 'step', 'done', 'serialize', 'view', 'scores', 'validate']) fns[f] = typeof title?.[f] === 'function';
+  for (const f of ['init', 'step', 'done', 'serialize', 'view', 'scores', 'validate', 'stats']) fns[f] = typeof title?.[f] === 'function';
   return { manifest: outOfCtx(title?.manifest ?? null), fns, exports: Object.keys(exports), hasEngineHash: typeof exports.engine?.stateHash === 'function' };
 }
 
@@ -129,6 +129,8 @@ function replayJob(exports, ctx, job) {
   const out = { ticks: t, done: done === true, doneType: typeof done, serialized: JSON.stringify(outOfCtx(title.serialize(state))), scores: outOfCtx(title.scores(state)) };
   if (job.view) { try { out.view = JSON.stringify(outOfCtx(title.view(state))); } catch (e) { out.viewError = String(e.message ?? e); } }
   if (typeof exports.engine?.stateHash === 'function') out.engineHash = outOfCtx(exports.engine.stateHash(state));
+  // Settlement v4: the title's per-match counters, read from the final state (protocol/stats.js checks them).
+  if (typeof title.stats === 'function') out.stats = outOfCtx(title.stats(state, participants));
   return out;
 }
 
@@ -138,6 +140,8 @@ function attestedJob(exports, ctx, job) {
   const bad = title.validate(report);
   const out = { validate: bad == null ? null : String(bad) };
   if (bad == null && job.participants) out.scores = outOfCtx(title.scores(report, intoCtx(ctx, job.participants), intoCtx(ctx, job.teams ?? null)));
+  // Settlement v4: a title built before stats() existed has none; the node then reads the report's own `stats`.
+  if (bad == null && job.participants) out.stats = typeof title.stats === 'function' ? outOfCtx(title.stats(report, intoCtx(ctx, job.participants))) : outOfCtx(report.stats ?? null);
   return out;
 }
 

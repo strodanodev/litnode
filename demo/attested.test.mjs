@@ -4,6 +4,7 @@
  *    node --test demo/attested.test.mjs */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { DERIVE_VERSION } from '../protocol/derive.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -70,7 +71,7 @@ test('attested: court-signed report settles, witness co-signs attestation-only, 
   await fetch(`${host.addr}/ledger`, { method: 'POST', body: JSON.stringify(await submission(court, report('pb-2', 'singles', 8, 11, 1))) });
   assert.equal((await (await fetch(`${host.addr}/leaderboard?ruleset=pickle-brawl.v1`)).json()).leaderboard.length, 0, 'unplaced court results are not official standings');
   const lb = await (await fetch(`${host.addr}/leaderboard?ruleset=pickle-brawl.v1&scope=all`)).json();
-  assert.equal(lb.deriveVersion, 2);
+  assert.equal(lb.deriveVersion, DERIVE_VERSION);
   const rating = Object.fromEntries(lb.leaderboard.map((r) => [r.player, r.rating]));
   assert.equal(rating['pb:air:amy'], 1212, 'doubles winners each +12 at even ratings');
   assert.equal(rating['pb:air:ben'], 1188);

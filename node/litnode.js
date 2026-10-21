@@ -13,7 +13,7 @@ import { dirname, extname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { h, canonical } from '../protocol/canonical.js';
 import { generateKeypair, seal, opened, verify } from '../protocol/keys.js';
-import { snapshot as buildSnapshot, HEARTBEAT_TAG, epochOf, EPOCH_MS } from '../protocol/snapshot.js';
+import { snapshot as buildSnapshot, HEARTBEAT_TAG, epochOf, EPOCH_MS, isFresh } from '../protocol/snapshot.js';
 import { applyStakes } from '../protocol/staking.js';
 import { pair, QUEUE_TAG, bucketOf, isStale } from '../protocol/pairing.js';
 import { CHAT_TAG, chatBody, chatId, chatProblem, chatRateOk, chatRoot, CHAT_PAST_MS, CHAT_RING, CHAT_UNBONDED_RING, CHAT_PUSH_WINDOW_MS, CHAT_PER_MESSAGE, CHAT_SEEN_MAX } from '../protocol/chat.js';
@@ -21,7 +21,7 @@ import { hourOf } from '../protocol/epoch.js';
 import { install as installDoh } from './dns.js';
 import { placement } from '../protocol/placement.js';
 import { createChain } from './chain.js';
-import { createSettlement } from './settle.js';
+import { MAX_LOG_BYTES, createSettlement } from './settle.js';
 import { createMatchBook } from './matchbook.js';
 import { matchIdBytes32 } from '../protocol/matchbook.js';
 import { createUpdater, RESTART_EXIT } from './update.js';
@@ -159,6 +159,7 @@ export async function createNode({
   titleTrust = 'trusted', trustedPublishers = [RELEASE_PUBKEY],
   // Courts this operator authorizes for attested titles: rulesetId → [pubkeys].
   courts = {},
+  verifiers = {}, // rulesetId → [verifierHash] the operator accepts as registered (VERIFIERS); TitleRegistry is the normal source
   // Relay keys whose signed submissions this host accepts as 'relay' provenance.
   relayKeys = [],
   // Universal login (docs/UNIVERSAL-LOGIN.md): verify AIR Kit session tokens
@@ -511,6 +512,8 @@ export async function createNode({
   let mbook = null; // the MatchBook driver, created below once the settlement exists
   const settlement = createSettlement({
     dataDir, nodeId, identity, loaded, builds, sandbox, log, registry, courts, relayKeys,
+    // Settlement v4: a court's verifier bundle grants `checkable` only while it is registered and active for the title.
+    verifierActive: async (rulesetId, hash) => (verifiers[rulesetId] ?? []).includes(hash) || (await buildRegistered(rulesetId, hash))?.ok === true,
     onSettled: async (delta, ledger) => {
       const e = matchBook.get(delta.matchId);
       if (e) { e.settled = true; if (e.committed && !e.commitTx) await Promise.race([e.committed, new Promise((r) => setTimeout(r, 15_000))]); } // a match settled within seconds of placement: let the commit go first
@@ -535,7 +538,34 @@ export async function createNode({
       rulesetIds: () => [...loaded.keys()], hasRole: (r) => roles.includes(r), windows: matchBookWindows, drive: matchBookDrive, fetchImpl: globalThis.fetch, baseFee: chain.baseFeeWei, gasRefund,
     });
   }
-  const witnessed = new Set(); // matchIds this node already answered
+  /** /health.settlement (v4): what this node does with proof levels, logs and verifiers — read by a court
+   *  (sdk/court attaches a log only to protocol >= 4) and by `npm run host -- doctor`. Log totals are cached a minute. */
+  let logTotals = { at: 0, value: null };
+  const settlementStatus = () => {
+    if (Date.now() - logTotals.at > 60_000) { try { logTotals = { at: Date.now(), value: settlement.logStats() }; } catch { /* unreadable */ } }
+    return { v: 4, proofLevels: ['verified', 'checkable', 'attested', 'host'], logs: { maxBytes: MAX_LOG_BYTES, ...(logTotals.value ?? {}) }, custody: CUSTODY_K,
+      verifiers: { registry: !!titleRegistry && !offline, operator: Object.fromEntries(Object.entries(verifiers).map(([k, v]) => [k, v.length])) } };
+  };
+  const witnessed = new Set(); // matchIds this node already answered (bounded below)
+  const markWitnessed = (id) => { witnessed.add(id); if (witnessed.size > 20_000) { let n = 0; for (const k of witnessed) { witnessed.delete(k); if (++n >= 5_000) break; } } };
+  /** Settlement v4 custody for results that never reach MatchBook (casual, attested, unplaced): the CUSTODY_K
+   *  nodes whose h('custody', matchId, nodeId) sorts lowest among fresh peers holding the title, other than the
+   *  host and its operator's other keys, fetch the delta, the ledger and the log, check them and co-sign.
+   *  Every node computes the same set from its own snapshot, so an advert costs the mesh k checks, not N. */
+  const CUSTODY_K = 3;
+  const custodians = (matchId, rulesetId, hostId) => {
+    const hostOp = stakes?.[hostId]?.operator ?? heartbeats.get(hostId)?.operator ?? null;
+    const cands = [...heartbeats.values()].filter((b) => b.nodeId !== hostId && b.manifests?.[rulesetId] && (b.nodeId === nodeId || isFresh(b, Date.now())) && !isUnbonded(b.nodeId)
+      && (stakes ? stakes[b.nodeId]?.operator !== hostOp || !hostOp : b.operator !== hostOp));
+    return cands.map((b) => b.nodeId).sort((a, b) => (h('custody', matchId, a) < h('custody', matchId, b) ? -1 : 1)).slice(0, CUSTODY_K);
+  };
+  /** What a push advertises for witnessing: without MatchBook every result (the v0.2 path); with it, only results
+   *  the chain never sees. The newest ADVERT_MAX settled in the last day, until they hold CUSTODY_K co-signatures. */
+  const ADVERT_MAX = 64, ADVERT_AGE_MS = 24 * 60 * 60_000;
+  const adverts = () => settlement.list()
+    .filter((d) => (!mbook || !(d.mode === 'ranked' && d.placed)) && Date.now() - Date.parse(d.settledAt ?? 0) < ADVERT_AGE_MS && (d.cosigners?.length ?? 0) < CUSTODY_K)
+    .sort((a, b) => (a.settledAt < b.settledAt ? 1 : -1)).slice(0, ADVERT_MAX)
+    .map((d) => ({ matchId: d.matchId, rulesetId: d.rulesetId, buildHash: d.buildHash, hostId: d.hostId, addr, cosigners: d.cosigners }));
 
   const buildHashes = () => Object.fromEntries([...loaded].map(([id, r]) => [id, r.buildHash]));
   const manifests = () => Object.fromEntries([...loaded].map(([id, r]) => [id, { ...r.manifest, buildHash: r.buildHash, publisher: r.publisher, buildSig: r.sig }]));
@@ -927,8 +957,8 @@ export async function createNode({
       payload.chat = chatEnvelopes(); payload.chatNewest = chatNewest();
       // Advertise what we settled so witnesses can come and check it, and the
       // placements we froze so peers converge on them.
-      // v0.2 path only: with MatchBook the chain is the index and the payload cannot grow with history (§3).
-      payload.deltas = mbook ? [] : settlement.list().map((d) => ({ matchId: d.matchId, rulesetId: d.rulesetId, buildHash: d.buildHash, hostId: d.hostId, addr, cosigners: d.cosigners }));
+      // Bounded either way (settlement v4): the chain indexes ranked placed results; the rest go to a drawn custody set.
+      payload.deltas = adverts();
       // MatchBook hints: the transaction hashes of the matches this node touched today — a peer verifies each from its receipt, never from our word
       payload.hints = mbook ? mbook.hints() : [];
       matchesNow();
@@ -1059,7 +1089,8 @@ export async function createNode({
     // the peer whether the message came by push (a socket address) or by reply (a URL)
     if (Array.isArray(msg.chat)) await mergeChat(msg.chat, meta ? (msg.heartbeats?.[0]?.signer ?? meta.from) : null);
     for (const env of list(msg.matches)) await absorbMatch(env);
-    if (isWitness && !mbook) for (const ad of msg.deltas ?? []) void witnessOne(ad); // with MatchBook, witnessing is chain-driven (node/matchbook.js)
+    // Ranked placed results are witnessed from the chain (node/matchbook.js); everything else by its custody set.
+    if (isWitness) for (const ad of list(msg.deltas)) void witnessOne(ad);
     if (mbook && Array.isArray(msg.hints)) mbook.absorbHints(msg.hints);
   };
 
@@ -1072,20 +1103,32 @@ export async function createNode({
     if (stakes && stakes[ad.hostId]?.operator && stakes[nodeId]?.operator === stakes[ad.hostId].operator) { witnessed.add(ad.matchId); return; }
     if (!loaded.has(ad.rulesetId)) return; // hydrate first, retry on a later gossip
     if (peerOrigin(ad.addr) !== ad.addr) return; // an advert's address is as untrusted as a heartbeat's
-    witnessed.add(ad.matchId);
+    if (typeof ad.matchId !== 'string' || ad.matchId.length > 128 || typeof ad.rulesetId !== 'string') return;
+    if (!custodians(ad.matchId, ad.rulesetId, ad.hostId).includes(nodeId)) { markWitnessed(ad.matchId); return; } // not drawn for this one
+    markWitnessed(ad.matchId);
     try {
       // Replay in the build the delta names. If we do not hold it, fetch it
       // by hash from the host and hold it without making it current.
       if (ad.buildHash && !builds.has(ad.buildHash)) {
-        const r = await fetch(`${ad.addr}/ruleset/${encodeURIComponent(ad.rulesetId)}?build=${ad.buildHash}`);
+        const r = await fetch(`${ad.addr}/ruleset/${encodeURIComponent(ad.rulesetId)}?build=${ad.buildHash}`, { signal: AbortSignal.timeout(30_000) });
         if (!r.ok) throw new Error(`host does not serve build ${ad.buildHash.slice(0, 12)}`);
         const att = r.headers.get('x-build-publisher') ? { publisher: r.headers.get('x-build-publisher'), sig: r.headers.get('x-build-sig') } : null;
         await installRuleset(await r.text(), ad.buildHash, { current: false, origin: 'peer', attestation: att });
       }
       const [delta, ledger] = await Promise.all([
-        fetch(`${ad.addr}/delta/${encodeURIComponent(ad.matchId)}`).then((r) => r.json()),
-        fetch(`${ad.addr}/ledger/${encodeURIComponent(ad.matchId)}`).then((r) => r.json()),
+        fetch(`${ad.addr}/delta/${encodeURIComponent(ad.matchId)}`, { signal: AbortSignal.timeout(15_000) }).then((r) => r.json()),
+        fetch(`${ad.addr}/ledger/${encodeURIComponent(ad.matchId)}`, { signal: AbortSignal.timeout(15_000) }).then((r) => r.json()),
       ]);
+      // Settlement v4: a custodian holds the log a court committed, fetched from the host and checked against
+      // commitments.inputsHash. Without it this node's proof for the result is `attested`, and a host that claimed
+      // `checkable` is disputed rather than taken at its word.
+      const lh = delta?.commitments?.inputsHash;
+      if (lh && !settlement.hasLog(lh)) {
+        try {
+          const r = await fetch(`${ad.addr}/log/${lh}`, { signal: AbortSignal.timeout(20_000) });
+          if (r.ok) { const bytes = Buffer.from(await r.arrayBuffer()); if (bytes.length <= MAX_LOG_BYTES) settlement.holdLog(bytes, lh); }
+        } catch (e) { log(`witness ${ad.matchId}: log ${lh.slice(0, 12)} not fetched (${e.message})`); }
+      }
       const res = await settlement.cosign(delta, ledger);
       if (!res.ok) {
         log(`witness ${ad.matchId}: DISAGREE (${res.reason})`); emit('witness', { matchId: ad.matchId, ok: false, reason: res.reason, ours: res.ours, theirs: res.theirs });
@@ -1347,7 +1390,7 @@ export async function createNode({
       }
       if (req.method === 'GET' && url.pathname === '/health') {
         const s = currentSnapshot();
-        return json(res, 200, { nodeId, operator, roles, region, addr, protocol: PROTOCOL_VERSION, epoch: s.epoch, peers: s.peers.length, incompatible: incompatible.size, rulesets: buildHashes(), buildsHeld: builds.size, refused: refused.size, gossipLimits: guardStatus(), staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null,
+        return json(res, 200, { nodeId, operator, roles, region, addr, protocol: PROTOCOL_VERSION, settlement: settlementStatus(), epoch: s.epoch, peers: s.peers.length, incompatible: incompatible.size, rulesets: buildHashes(), buildsHeld: builds.size, refused: refused.size, gossipLimits: guardStatus(), staking: s.staking, bonded: stakes?.[nodeId]?.active ?? null,
           // v3 bond: witnessEligible, delegate, bondedSince; `admin` says whether NodeStake's admin is a multisig/timelock ('contract') or a wallet ('eoa'). null = v2 contract or unread.
           bond: myBond ? { eligible: myBond.eligible, delegate: myBond.delegate, bondedSince: myBond.bondedSince ? new Date(myBond.bondedSince * 1000).toISOString() : null, unbondAt: myBond.unbondAt ? new Date(myBond.unbondAt * 1000).toISOString() : null, amount: myBond.amount.toString() } : null,
           admin: stakeAdmin === null ? null : stakeAdmin ? 'contract' : 'eoa', matchBook: mbook ? mbook.status() : matchBookAddr ? { contract: matchBookAddr, offline: true } : null, chain: chain.status(), profiles: profileState(), version, repair: sdkMissing, update: updater.status(),
@@ -1427,7 +1470,7 @@ export async function createNode({
         return json(res, 200, {
           heartbeats: [await myHeartbeat(), ...envelopeCache.values()],
           queue: [...queueEnvelopes.values()],
-          deltas: mbook ? [] : settlement.list().map((d) => ({ matchId: d.matchId, rulesetId: d.rulesetId, buildHash: d.buildHash, hostId: d.hostId, addr, cosigners: d.cosigners })),
+          deltas: adverts(),
           hints: mbook ? mbook.hints() : [],
           matches: matchEnvelopes(),
           // the chat window — or the whole ring when the pusher's newest is further behind ours than the window (a restart, a partition)
@@ -1493,6 +1536,14 @@ export async function createNode({
       if (req.method === 'GET' && url.pathname.startsWith('/delta/')) {
         const d = settlement.delta(decodeURIComponent(url.pathname.slice(7)));
         return d ? json(res, 200, d) : json(res, 404, { error: 'unknown match' });
+      }
+      // Settlement v4: the exact log bytes a court committed (report.commitments.inputsHash), content-addressed.
+      if (req.method === 'GET' && url.pathname.startsWith('/log/')) {
+        const hash = url.pathname.slice('/log/'.length);
+        const bytes = /^[0-9a-f]{64}$/.test(hash) ? settlement.readLog(hash) : null;
+        if (!bytes) return json(res, 404, { error: 'log not held here' });
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': bytes.length, 'cache-control': 'public, max-age=31536000, immutable', 'x-log-sha256': hash });
+        return res.end(bytes);
       }
       if (req.method === 'GET' && url.pathname === '/deltas') return json(res, 200, { deltas: withChain(settlement.list(url.searchParams.get('ruleset') ?? undefined, { scope: url.searchParams.get('scope') === 'official' ? 'official' : 'all' })) });
       if (req.method === 'POST' && url.pathname === '/dispute') {
@@ -1678,9 +1729,20 @@ export async function createNode({
       if (req.method === 'GET' && url.pathname === '/epoch') {
         const hour = url.searchParams.get('epoch');
         // With MatchBook the hour's tree is over the CHAIN-finalized set — the same root on every node (§11.6); the settler proposes it itself.
-        if (mbook) { const { tree, ...e } = mbook.epoch(hour ? Number(hour) : undefined); return json(res, 200, { ...e, proposeCalldata: proposeCalldata(e.epoch, e.root, nodeId), anchor: { contract: 'EpochAnchor v3', method: 'propose(uint64,bytes32,bytes32)', note: 'finalizes on chain when nodes holding quorumBps of the active bonded stake propose the same root' } }); }
-        const { tree, ...e } = settlement.epoch(hour ? Number(hour) : undefined);
+        if (mbook) { const { tree, statsTree, ...e } = mbook.epoch(hour ? Number(hour) : undefined); return json(res, 200, { ...e, proposeCalldata: proposeCalldata(e.epoch, e.root, nodeId), anchor: { contract: 'EpochAnchor v3', method: 'propose(uint64,bytes32,bytes32)', note: 'finalizes on chain when nodes holding quorumBps of the active bonded stake propose the same root' } }); }
+        const { tree, statsTree, ...e } = settlement.epoch(hour ? Number(hour) : undefined);
         return json(res, 200, { ...e, source: 'local', anchor: { contract: 'EpochAnchor v3', method: 'propose(uint64,bytes32,bytes32)', note: 'a local tree: MatchBook is not configured, so this root is this node\'s own view' } });
+      }
+      // Settlement v4: a player's season stats for one title through an hour, with the Merkle path to that hour's root.
+      // scope=chain (default with MatchBook): the anchored root over FINAL matches; scope=local: this node's own results
+      // of every level above `host` (attested and checkable titles live here until their roots are anchored).
+      if (req.method === 'GET' && url.pathname === '/proof/stats') {
+        const rid = url.searchParams.get('ruleset'), player = url.searchParams.get('player');
+        if (!rid || !player) return json(res, 400, { error: 'ruleset and player are required' });
+        const hour = url.searchParams.get('epoch') != null ? Number(url.searchParams.get('epoch')) : undefined;
+        const scope = url.searchParams.get('scope') ?? (mbook ? 'chain' : 'local');
+        const p = scope === 'chain' && mbook ? mbook.statsProof(rid, player, hour) : settlement.statsProof(rid, player, hour);
+        return p ? json(res, 200, { ...p, anchor: { contract: 'EpochAnchor', method: 'verifyInclusion(uint64,bytes32,bytes32[],bool[])' } }) : json(res, 404, { error: 'no stats for that player and title through that hour' });
       }
       if (req.method === 'GET' && url.pathname.startsWith('/proof/')) {
         const p = (mbook ? mbook.proof(decodeURIComponent(url.pathname.slice(7))) : null) ?? settlement.proof(decodeURIComponent(url.pathname.slice(7)));

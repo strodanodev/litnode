@@ -16,8 +16,10 @@
  *  arrival order, and `digest` is a claim two nodes can compare. */
 import { canonical, h } from './canonical.js';
 import { sortDeltas, applyDelta } from './derive.js';
+import { foldLine } from './stats.js';
 
-export const PROGRESSION_VERSION = 1;
+/** 2 (settlement v4): each line carries `stats`, the title's schema folded over its results. */
+export const PROGRESSION_VERSION = 2;
 export const DEFAULT_PROGRESSION = Object.freeze({ xpWin: 60, xpDraw: 30, xpLoss: 20, levelBase: 80, levelStep: 45, maxLevel: 40 });
 
 const rulesOf = (manifest) => ({ ...DEFAULT_PROGRESSION, ...(manifest?.services?.progression ?? {}) });
@@ -32,7 +34,7 @@ export function levelOf(xpTotal, rules = DEFAULT_PROGRESSION) {
   return { level, xp, xpForNext: level < rules.maxLevel ? xpForNext(level, rules) : null };
 }
 
-const blank = () => ({ matches: 0, wins: 0, losses: 0, draws: 0, xpTotal: 0, streak: 0, bestStreak: 0, lastMatchId: null });
+const blank = () => ({ matches: 0, wins: 0, losses: 0, draws: 0, xpTotal: 0, streak: 0, bestStreak: 0, lastMatchId: null, stats: {} });
 
 /** @param deltas   results for ONE title: { matchId, epoch, participants, scores, teams? } (chain deltas or local ones)
  *  @param manifest the title's manifest (services.leaderboard, services.progression)
@@ -40,6 +42,7 @@ const blank = () => ({ matches: 0, wins: 0, losses: 0, draws: 0, xpTotal: 0, str
 export function progression(deltas, manifest = {}) {
   const rules = rulesOf(manifest);
   const svc = { leaderboard: manifest?.services?.leaderboard ?? { kind: 'elo', k: 24 } };
+  const schema = manifest?.services?.stats?.schema ?? null;
   const tables = { rating: {}, credits: {}, stats: {} };
   const lines = {};
   for (const d of sortDeltas(deltas)) {
@@ -49,6 +52,7 @@ export function progression(deltas, manifest = {}) {
         const l = lines[p] ?? (lines[p] = blank());
         l.matches++;
         l.lastMatchId = d.matchId;
+        if (schema && d.stats?.[p]) foldLine(l.stats, d.stats[p], schema);
         if (score === 1) { l.wins++; l.xpTotal += rules.xpWin; l.streak++; l.bestStreak = Math.max(l.bestStreak, l.streak); }
         else if (score === 0) { l.losses++; l.xpTotal += rules.xpLoss; l.streak = 0; }
         else { l.draws++; l.xpTotal += rules.xpDraw; l.streak = 0; }

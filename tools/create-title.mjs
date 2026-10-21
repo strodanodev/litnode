@@ -9,7 +9,7 @@
  *    node sdk/conformance.mjs titles/my-title.v1.mjs
  *    node tools/bundle-title.mjs titles/my-title.v1.mjs     → rulesets/my-title.v1.js
  *    RULESETS=./rulesets/my-title.v1.js npm run node */
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
@@ -24,6 +24,7 @@ if (!id || !/^[a-z0-9][a-z0-9-]*\.v\d+$/.test(id)) {
   process.exit(2);
 }
 const name = nameParts.join(' ') || id.replace(/\.v\d+$/, '').split('-').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+mkdirSync(outDir, { recursive: true });
 const out = join(outDir, `${id}.mjs`);
 if (existsSync(out)) { console.error(`${out} exists — pick another id or delete it`); process.exit(1); }
 let src = readFileSync(join(root, 'sdk', 'template', 'title.mjs'), 'utf8').replaceAll('__RULESET_ID__', id).replaceAll('__TITLE_NAME__', name);

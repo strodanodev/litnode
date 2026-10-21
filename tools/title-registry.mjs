@@ -42,11 +42,13 @@ const reg = deployed.TitleRegistry.address;
 const it = (() => {
   // A server bundle (node/server-bundle.js): its sidecar servers/<id>.server.json or the .tgz itself. The hash
   // registered is the serverHash; the title's token carries it beside the ruleset builds, no kind tag needed.
-  if (existsSync(target) && (target.endsWith('.tgz') || target.endsWith('.server.json'))) {
-    if (target.endsWith('.tgz')) { const { hash, manifest } = openBundle(readFileSync(target)); return { rulesetId: manifest.rulesetId, buildHash: opt('--build') ?? hash, name: target }; }
+  // A verifier bundle (settlement v4) registers the same way: verifiers/<id>.verifier.json carries verifierHash.
+  if (existsSync(target) && (target.endsWith('.tgz') || target.endsWith('.server.json') || target.endsWith('.verifier.json'))) {
+    if (target.endsWith('.tgz')) { const kind = target.endsWith('.verifier.tgz') ? 'verifier' : 'server'; const { hash, manifest } = openBundle(readFileSync(target), null, { kind }); return { rulesetId: manifest.rulesetId, buildHash: opt('--build') ?? hash, name: target }; }
     const meta = JSON.parse(readFileSync(target, 'utf8'));
-    if (!meta.rulesetId || !meta.serverHash) { console.error(`${target}: not a server bundle sidecar (needs rulesetId and serverHash)`); process.exit(1); }
-    return { rulesetId: meta.rulesetId, buildHash: opt('--build') ?? meta.serverHash, name: target };
+    const hash = meta.serverHash ?? meta.verifierHash;
+    if (!meta.rulesetId || !hash) { console.error(`${target}: not a bundle sidecar (needs rulesetId and serverHash or verifierHash)`); process.exit(1); }
+    return { rulesetId: meta.rulesetId, buildHash: opt('--build') ?? hash, name: target };
   }
   if (existsSync(target)) {
     const source = readFileSync(target, 'utf8');

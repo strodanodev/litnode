@@ -24,3 +24,5 @@ tools/signer/
 
 # Server bundles are build output: npm run bundle:server (the hash is what gets registered, not the file)
 servers/
+# Verifier bundles are build output too: npm run bundle:verifier (settlement v4; the hash is registered, not the file)
+verifiers/

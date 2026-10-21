@@ -11,8 +11,10 @@
  *  Order: by epoch hour, then by matchId. Elo is order-dependent, which is
  *  exactly why the order is fixed here rather than left to gossip. */
 import { canonical, h } from './canonical.js';
+import { foldLine } from './stats.js';
 
-export const DERIVE_VERSION = 2;
+/** 3 (settlement v4): a title's `services.stats.schema` folds each match's committed `stats` into the line. */
+export const DERIVE_VERSION = 3;
 
 export const sortDeltas = (deltas) => {
   const byId = new Map();
@@ -48,12 +50,14 @@ export function applyDelta(tables, d, svc = {}) {
     else { pay(A, Math.floor(pot / 2)); pay(B, Math.floor(pot / 2)); }
   }
   if (svc.stats) {
+    const schema = svc.stats.schema ?? null;
     for (const [team, won] of [[A, sa === 1], [B, sa === 0]])
       for (const p of team) {
         const line = stats[p] ?? (stats[p] = { matches: 0, wins: 0, ticks: 0 });
         line.matches += 1;
         line.wins += won ? 1 : 0;
         line.ticks += d.ticks ?? 0;
+        if (schema && d.stats?.[p]) foldLine(line, d.stats[p], schema);
       }
   }
   return { teams: [A, B], sa };

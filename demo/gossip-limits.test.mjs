@@ -5,6 +5,7 @@
  *    node --test demo/gossip-limits.test.mjs */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { PROTOCOL_VERSION } from '../protocol/version.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -25,7 +26,7 @@ test.after(async () => { for (const n of nodes) await n.stop().catch(() => {}); 
 
 const gossip = async (node, msg) => (await fetch(`${node.addr}/gossip`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(msg) })).json();
 const health = async (node) => (await fetch(`${node.addr}/health`)).json();
-const heartbeat = (kp, addr = 'http://127.0.0.1:9') => seal(HEARTBEAT_TAG, { nodeId: kp.publicKey, operator: 'x', roles: ['mesh'], region: 'local', addr, wsAddr: null, standing: 0, version: '0.0.0', protocol: 3, buildHashes: {}, manifests: {}, epoch: epochOf(Date.now()) }, kp);
+const heartbeat = (kp, addr = 'http://127.0.0.1:9') => seal(HEARTBEAT_TAG, { nodeId: kp.publicKey, operator: 'x', roles: ['mesh'], region: 'local', addr, wsAddr: null, standing: 0, version: '0.0.0', protocol: PROTOCOL_VERSION, buildHashes: {}, manifests: {}, epoch: epochOf(Date.now()) }, kp);
 
 /** NodeStake where only `bonded` keys are active; counts standingOf reads between block polls (one tick each). */
 function stakeChain(bonded) {

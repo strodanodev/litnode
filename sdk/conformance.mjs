@@ -29,6 +29,7 @@
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { createSandbox } from '../node/sandbox.js';
+import { schemaProblem, cleanStats } from '../protocol/stats.js';
 
 const PURITY = [/\bMath\.random\b/, /\bnew Date\b/, /\bDate\.now\b/, /\bperformance\.now\b/, /\bcrypto\b\s*\./, /\bfetch\s*\(/, /\bsetTimeout\s*\(/, /\bsetInterval\s*\(/, /\bXMLHttpRequest\b/, /\bWebSocket\b/, /\blocalStorage\b/, /\bprocess\.env\b/, /\brequire\s*\(/, /\bimport\s*\(/];
 const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:\\])\/\/.*$/gm, '$1');
@@ -81,6 +82,9 @@ export async function check(source, { ticks = 240, sandbox = null, timeoutMs = 2
   add('manifest: modes ⊆ {ranked, casual}', modesOk, `got ${JSON.stringify(m.modes)}`);
   const svc = m.services ?? {};
   add('manifest: services shapes', (svc.leaderboard == null || svc.leaderboard.kind === 'elo') && (svc.credits == null || (svc.credits.kind === 'pot' && typeof svc.credits.currency === 'string')), JSON.stringify(svc));
+  // Settlement v4 stats: the schema is checked here exactly as the node checks it (protocol/stats.js).
+  const schema = svc.stats?.schema ?? null;
+  if (schema != null) add('stats: schema { name: sum|max|min|last }', !schemaProblem(schema), schemaProblem(schema) ?? '');
   add('manifest: display for the arcade', !!(m.display && typeof m.display.title === 'string' && m.display.title.length), 'display: { title, url?, description?, cover? } — how the arcade lists it (warning: hosting works without it)', { warn: true });
   if (m.kind === 'replayable') {
     add('manifest: tickRate > 0', Number.isInteger(m.tickRate) && m.tickRate > 0, `got ${m.tickRate}`);
@@ -108,6 +112,18 @@ export async function check(source, { ticks = 240, sandbox = null, timeoutMs = 2
     add('contract: scores() keyed by participants', !!sc && participants.every((p) => typeof sc[p] === 'number'), JSON.stringify(sc)?.slice(0, 80));
     add('contract: view() does not throw', !a.result.viewError, a.result.viewError ?? '');
     add('contract: view() is not the whole state', a.result.view !== a.result.serialized || a.result.serialized === '{}', 'hidden information must be filtered node-side');
+    if (schema != null) {
+      add('stats: stats(state, participants) exported', man.fns.stats === true, 'a schema needs stats(state, participants), read from the final state');
+      if (man.fns.stats) {
+        let clean = null, err = '';
+        try { clean = cleanStats(a.result.stats ?? null, participants, schema); } catch (e) { err = e.message; }
+        add('stats: non-negative integers, schema names, participants only', !err, err);
+        add('stats: deterministic (same numbers twice)', JSON.stringify(a.result.stats ?? null) === JSON.stringify(b.result.stats ?? null), 'stats() must depend on the state alone');
+        add('stats: something to fold', clean != null, 'stats() returned nothing for the schema names on the smoke replay (warning: fine if the counters only move in real play)', { warn: true });
+        const inState = !clean || Object.values(clean).every((line) => Object.values(line).every((v) => a.result.serialized.includes(String(v))));
+        add('stats: the counters are in serialize()', inState, 'keep the counters in the state and serialize them, so the root commits to them (warning)', { warn: true });
+      }
+    }
   } else {
     for (const fn of ['validate', 'scores']) add(`contract: ${fn}()`, man.fns[fn] === true);
     add('manifest: participants list', Array.isArray(m.participants) && m.participants.every((x) => Number.isInteger(x) && x >= 1), JSON.stringify(m.participants));
@@ -118,6 +134,8 @@ export async function check(source, { ticks = 240, sandbox = null, timeoutMs = 2
       try { r = (await sb.one(source, { kind: 'attested', report: {} }, { timeoutMs })).validate; } catch (e) { r = `threw: ${e.message}`; }
       add('contract: validate({}) rejects with a reason', typeof r === 'string' && r.length > 0, `got ${JSON.stringify(r)}`);
     }
+    if (schema != null) add('stats: stats(report, participants)', man.fns.stats === true, 'defineAttestedTitle supplies one that returns report.stats; rebuild with the current SDK');
+    add('settlement v4: the court commits its log (report.commitments)', true, 'report.commitments = { logFormat, inputsHash, finalHash, verifierHash } is checked by the node, not by the title: see docs/SETTLEMENT-STANDARD.md §9');
   }
   return result(checks.every((c) => c.ok || c.warn), 'sandbox');
 }

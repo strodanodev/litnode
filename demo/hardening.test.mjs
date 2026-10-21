@@ -5,6 +5,7 @@
  *    node --test demo/hardening.test.mjs */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { PROTOCOL_VERSION } from '../protocol/version.js';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,7 +23,7 @@ test.after(async () => { for (const n of nodes) await n.stop().catch(() => {}); 
 
 const post = (node, path, body, headers = {}) => fetch(`${node.addr}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: typeof body === 'string' ? body : JSON.stringify(body) });
 const health = async (node) => (await fetch(`${node.addr}/health`)).json();
-const heartbeat = (kp, addr) => seal(HEARTBEAT_TAG, { nodeId: kp.publicKey, operator: 'x', roles: ['mesh'], region: 'local', addr, wsAddr: null, standing: 0, version: '0.0.0', protocol: 3, buildHashes: {}, manifests: {}, epoch: epochOf(Date.now()) }, kp);
+const heartbeat = (kp, addr) => seal(HEARTBEAT_TAG, { nodeId: kp.publicKey, operator: 'x', roles: ['mesh'], region: 'local', addr, wsAddr: null, standing: 0, version: '0.0.0', protocol: PROTOCOL_VERSION, buildHashes: {}, manifests: {}, epoch: epochOf(Date.now()) }, kp);
 
 test('peerOrigin: an http(s) origin and nothing else', () => {
   assert.equal(peerOrigin('http://127.0.0.1:7801'), 'http://127.0.0.1:7801');

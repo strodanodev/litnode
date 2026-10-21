@@ -29,7 +29,7 @@ const root = resolve(here, '..');
 const args = process.argv.slice(2);
 const opt = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : null);
 
-export async function bundleServer(spec, { checkout, esbuildMain = null, log = () => {} } = {}) {
+export async function bundleServer(spec, { checkout, esbuildMain = null, log = () => {}, kind = 'server' } = {}) {
   const src = resolve(checkout ?? spec.root);
   if (!existsSync(src)) throw new Error(`checkout not found: ${src} (pass --root or set AF_ROOT)`);
   if (!spec.rulesetId || !spec.entry) throw new Error('spec needs rulesetId and entry');
@@ -43,22 +43,29 @@ export async function bundleServer(spec, { checkout, esbuildMain = null, log = (
   const r = await build({
     entryPoints: [entryAbs], bundle: true, write: false, format: 'esm', platform: 'node', target: spec.target ?? 'node20',
     external: [...builtinModules, ...builtinModules.map((m) => `node:${m}`), ...(spec.external ?? [])],
-    banner: { js: `// ${spec.rulesetId} match server · built by litnode tools/bundle-server.mjs\nimport { createRequire as __litnodeRequire } from 'node:module'; const require = __litnodeRequire(import.meta.url);` },
+    banner: { js: `// ${spec.rulesetId} ${kind === 'verifier' ? 'verifier' : 'match server'} · built by litnode tools/bundle-server.mjs\nimport { createRequire as __litnodeRequire } from 'node:module'; const require = __litnodeRequire(import.meta.url);` },
     legalComments: 'none', logLevel: 'silent', alias: spec.alias ?? {},
   });
   if (r.errors.length) throw new Error(r.errors.map((e) => `${e.location?.file ?? ''}: ${e.text}`).join('\n'));
   for (const w of r.warnings) log(`esbuild: ${w.text}`);
-  const files = { [bundledPath]: Buffer.from(r.outputFiles[0].contents), 'run.mjs': `import './${bundledPath}';\n` };
+  // A server gets a one-line run.mjs (its main guard stays false); a verifier IS its module: entry exports verify().
+  const files = kind === 'verifier' ? { [bundledPath]: Buffer.from(r.outputFiles[0].contents) } : { [bundledPath]: Buffer.from(r.outputFiles[0].contents), 'run.mjs': `import './${bundledPath}';\n` };
   for (const g of spec.include ?? []) for (const p of glob(src, g)) files[p] = readFileSync(join(src, p));
   let commit = null;
   try { commit = execSync('git rev-parse --short HEAD', { cwd: src, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { /* not a git checkout */ }
-  const manifest = {
+  const manifest = kind === 'verifier' ? {
+    rulesetId: spec.rulesetId, entry: bundledPath, runtime: spec.runtime ?? { node: '>=20' },
+    // The contract a challenger relies on: verify(logBytes, spec) → { finalHash, result } (docs/SETTLEMENT-STANDARD.md §11).
+    exports: ['verify'], logFormat: spec.logFormat ?? null,
+    source: { entry: spec.entry, ...(spec.repo ? { repo: spec.repo } : {}) },
+  } : {
     rulesetId: spec.rulesetId, entry: 'run.mjs', runtime: spec.runtime ?? { node: '>=20' },
     ...pick(spec, ['env', 'portRange', 'readyMs', 'ttlMs', 'ticketTtlMs', 'settledGraceMs']),
     // No builtAt here: the manifest is inside the hashed bytes, and the same checkout must give the same hash (the sidecar carries the time).
     source: { entry: spec.entry, ...(spec.repo ? { repo: spec.repo } : {}), ...(commit ? { commit } : {}) },
   };
-  const out = packBundle(manifest, files);
+  if (kind === 'verifier' && commit) manifest.source.commit = commit;
+  const out = packBundle(manifest, files, { kind });
   return { ...out, files: Object.keys(files), bundledPath };
 }
 const pick = (o, keys) => Object.fromEntries(keys.filter((k) => o[k] != null).map((k) => [k, o[k]]));
@@ -80,15 +87,22 @@ export function glob(base, pattern) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const specFile = args.find((a) => !a.startsWith('--') && a !== opt('--root') && a !== opt('--out'));
-  if (!specFile) { console.error('usage: node tools/bundle-server.mjs <spec.json> [--root <checkout>] [--out dir]'); process.exit(2); }
+  const kind = opt('--kind') ?? 'server';
+  const specFile = args.find((a) => !a.startsWith('--') && a !== opt('--root') && a !== opt('--out') && a !== opt('--kind'));
+  if (!specFile || !['server', 'verifier'].includes(kind)) { console.error('usage: node tools/bundle-server.mjs <spec.json> [--kind server|verifier] [--root <checkout>] [--out dir]\n       npm run bundle:verifier -- <spec.json>   (same as --kind verifier)'); process.exit(2); }
   const spec = JSON.parse(readFileSync(specFile, 'utf8'));
   const checkout = opt('--root') ?? process.env.AF_ROOT ?? spec.root;
-  const outDir = opt('--out') ?? join(root, 'servers');
+  const outDir = opt('--out') ?? join(root, kind === 'verifier' ? 'verifiers' : 'servers');
   try {
-    const b = await bundleServer(spec, { checkout, log: (m) => console.error(m) });
+    const b = await bundleServer(spec, { checkout, log: (m) => console.error(m), kind });
     mkdirSync(outDir, { recursive: true });
-    const tgz = join(outDir, `${spec.rulesetId}.server.tgz`), side = join(outDir, `${spec.rulesetId}.server.json`);
+    const tgz = join(outDir, `${spec.rulesetId}.${kind}.tgz`), side = join(outDir, `${spec.rulesetId}.${kind}.json`);
+    if (kind === 'verifier') {
+      writeFileSync(tgz, b.gz);
+      writeFileSync(side, JSON.stringify({ kind: 'verifier', rulesetId: spec.rulesetId, verifierHash: b.hash, bytes: b.tar.length, gzBytes: b.gz.length, files: b.files.length, entry: b.manifest.entry, logFormat: b.manifest.logFormat, builtAt: new Date().toISOString(), source: b.manifest.source }, null, 2) + '\n');
+      console.log(`${tgz}  ${b.gz.length} bytes gzipped (${b.tar.length} in the archive)\nverifierHash ${b.hash}\n\nput it in the court's report:          report.commitments.verifierHash = '${b.hash}'\nregister it under the title (publisher):  npm run publish:title -- set-build ${side}\nuntil then, a node may accept it with:   VERIFIERS=${spec.rulesetId}:${b.hash}`);
+      process.exit(0);
+    }
     writeFileSync(tgz, b.gz);
     // Keep a publisher attestation an earlier sign:build wrote only if it is for THIS hash.
     const prev = existsSync(side) ? JSON.parse(readFileSync(side, 'utf8')) : {};

@@ -145,6 +145,9 @@ node = await createNode({
   trustedPublishers: list(env.TRUSTED_PUBLISHERS).length ? list(env.TRUSTED_PUBLISHERS) : undefined,
   // COURTS=pickle-brawl.v1:<pubkey>[,<pubkey>];<rulesetId>:… — authorized attestors per attested title.
   courts: Object.fromEntries((env.COURTS ?? '').split(';').map((x) => x.trim()).filter(Boolean).map((x) => { const [rid, keys] = x.split(':'); return [rid, list(keys)]; })),
+  // VERIFIERS=<rulesetId>:<verifierHash>[,<hash>];… — verifier bundles this operator accepts as registered (settlement
+  // v4 `checkable`) where TitleRegistry is unset or not yet updated; the registry is the normal source.
+  verifiers: Object.fromEntries((env.VERIFIERS ?? '').split(';').map((x) => x.trim()).filter(Boolean).map((x) => { const [rid, hashes] = x.split(':'); return [rid, list(hashes)]; })),
   // RELAY_KEYS=<pubkey>,… — relays whose signed submissions this host settles as 'relay' provenance (tools/af-watch.mjs prints its key).
   relayKeys: list(env.RELAY_KEYS),
   // GAUNTLETS=<rulesetId>=<config.json>,… — per-match headless servers this node runs for
