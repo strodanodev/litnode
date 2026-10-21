@@ -39,7 +39,7 @@ import { randomPrivateKey, addressOf } from '../protocol/evm.js';
 import { feeParams, signWithFee, effectivePrice, capFromEnv } from './fees.js';
 import * as mb from '../protocol/matchbook.js';
 import { progression } from '../protocol/progression.js';
-import { mayActForCall, decodeBool } from '../protocol/staking.js';
+import { mayActForCall, decodeBool, witnessEligibleCall } from '../protocol/staking.js';
 import { descriptorHash as descriptorHashOf } from './settle.js';
 import { proposeCalldata, hourOf, freezeAt, buildTree, proofFor, anchorRoot, withStatsStep, withResultsStep } from '../protocol/epoch.js';
 import { resultHash as commitOf } from '../protocol/result.js';
@@ -188,6 +188,12 @@ export function createMatchBook({
       const pool = decodeBytes32Array(await call('eth_call', [{ to: contract, data: selector('pool()') }, 'latest']));
       enrolled = pool.includes(nodeId.toLowerCase());
       if (enrolled) return;
+      // generation 4 enrols only a witness-ELIGIBLE key (bonded past eligibilityAge): wait for it quietly, ask again in a minute
+      if (stakeContract) {
+        let eligible = true;
+        try { eligible = decodeBool(await call('eth_call', [witnessEligibleCall(stakeContract, nodeId), 'latest'])); } catch { /* a v2 stake: no such view; try the enrol */ }
+        if (!eligible) { enrolled = null; enrolTried = Date.now() - 4 * 60_000; return; }
+      }
       const tx = await trySend(mb.enrollCalldata(nodeId), 'enroll', nodeId);
       if (tx) { enrolled = true; emit('enrolled', { tx }); }
     } catch (e) { lastError = `enroll: ${e.message}`; }

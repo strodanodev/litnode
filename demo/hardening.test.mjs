@@ -104,3 +104,22 @@ test('hardening: an unsigned casual delta older than a day is dropped with its l
   const ids = (await (await fetch(`${a.addr}/deltas`)).json()).deltas?.map((d) => d.matchId) ?? [];
   assert.ok(!ids.includes('old-host-match'));
 });
+
+test('hardening: the bond proof is signed for this machine and its own pages only', { timeout: 30_000 }, async () => {
+  const { verifyRaw } = await import('../protocol/keys.js');
+  const { bondMessage } = await import('../protocol/staking.js');
+  const stakeAddr = '0x' + '5a'.repeat(20);
+  const a = await createNode({ dataDir: join(tmp, 'bp'), offline: true, heartbeatMs: 200, operator: 'bp', roles: ['mesh'], rulesets: [], updates: false, nodeStake: stakeAddr, chainId: 4441 });
+  nodes.push(a);
+  const op = '0x' + '77'.repeat(20);
+  const get = (headers = {}, operator = op) => fetch(`${a.addr}/bond-proof?operator=${operator}`, { headers });
+  const r = await get();
+  assert.equal(r.status, 200);
+  const p = await r.json();
+  assert.equal(p.message, Buffer.from(bondMessage(4441, stakeAddr, op)).toString('hex'));
+  assert.ok(await verifyRaw(bondMessage(4441, stakeAddr, op), p.proof, a.nodeId), 'the node key signed the 88-byte bond message');
+  assert.equal((await get({ origin: 'https://evil.example' })).status, 403, 'another site cannot obtain a proof for its wallet');
+  assert.equal((await get({ origin: 'https://arcade.litvm.games' })).status, 200, 'the hosted arcade can');
+  assert.equal((await get({ 'x-forwarded-for': '203.0.113.5' })).status, 403, 'nor anyone through the tunnel');
+  assert.equal((await get({}, 'nope')).status, 400);
+});

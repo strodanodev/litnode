@@ -14,7 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { h, canonical } from '../protocol/canonical.js';
 import { generateKeypair, seal, opened, verify } from '../protocol/keys.js';
 import { snapshot as buildSnapshot, HEARTBEAT_TAG, epochOf, EPOCH_MS, isFresh } from '../protocol/snapshot.js';
-import { applyStakes } from '../protocol/staking.js';
+import { applyStakes, bondProof, bondMessage } from '../protocol/staking.js';
 import { pair, QUEUE_TAG, bucketOf, isStale } from '../protocol/pairing.js';
 import { CHAT_TAG, chatBody, chatId, chatProblem, chatRateOk, chatRoot, CHAT_PAST_MS, CHAT_RING, CHAT_UNBONDED_RING, CHAT_PUSH_WINDOW_MS, CHAT_PER_MESSAGE, CHAT_SEEN_MAX } from '../protocol/chat.js';
 import { hourOf } from '../protocol/epoch.js';
@@ -1478,6 +1478,23 @@ export async function createNode({
         });
       }
       // Node chat: this machine speaks from the node's own key (docs/NODE-CHAT.md). Anyone reads it on /fleet.chat.
+      // Generation 4 NodeStake binds a node key only with the key's own signature over bondMessage(chainId, NodeStake,
+      // operator). The Nodes page asks this node for it. Loopback only, and only for this node's own page, the hosted
+      // arcade or a caller with no Origin (a terminal): with CORS open, any website on the operator's machine could
+      // otherwise obtain a proof naming ITS wallet and bind the key first.
+      if (req.method === 'GET' && url.pathname === '/bond-proof') {
+        if (!isLoopback(req)) return json(res, 403, { error: 'bond proofs are signed for this machine only' });
+        const origin = req.headers.origin;
+        const ownOrigins = [`http://localhost:${actualPort}`, `http://127.0.0.1:${actualPort}`, 'https://arcade.litvm.games'];
+        if (origin && !ownOrigins.includes(origin)) return json(res, 403, { error: `bond proofs are not signed for pages at ${origin}` });
+        const operatorAddr = url.searchParams.get('operator') ?? '';
+        if (!/^0x[0-9a-fA-F]{40}$/.test(operatorAddr)) return json(res, 400, { error: 'operator must be a 0x address' });
+        if (!nodeStake) return json(res, 400, { error: 'no NodeStake configured' });
+        const cid = chainId ?? 4441;
+        const proof = await bondProof(identity.privateKey, cid, nodeStake, operatorAddr);
+        emit('bond-proof', { operator: operatorAddr });
+        return json(res, 200, { nodeId, operator: operatorAddr.toLowerCase(), chainId: cid, nodeStake, message: Buffer.from(bondMessage(cid, nodeStake, operatorAddr)).toString('hex'), proof });
+      }
       if (req.method === 'POST' && url.pathname === '/chat') {
         if (!isLoopback(req)) return json(res, 403, { error: 'chat is sent from the node\'s own machine only' });
         if (stakes && !stakes[nodeId]?.active) return json(res, 403, { error: 'bond this node to chat: an unbonded key is not forwarded' });

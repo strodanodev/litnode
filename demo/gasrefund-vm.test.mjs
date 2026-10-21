@@ -9,11 +9,13 @@ import { ethers } from 'ethers';
 import { createEvm } from './lib/evm.mjs';
 import { sha256Hex } from '../protocol/canonical.js';
 import * as mb from '../protocol/matchbook.js';
+import { nodeIdentity } from './lib/ed25519-ref.mjs';
 
 const ONE = 10n ** 18n, GWEI = 10n ** 9n;
 const MB_PARAMS = { settleWindow: 60n, attestWindow: 120n, escalationWindow: 300n, drawDelay: 2n, hostSlashBps: 1000, witnessSlashBps: 500 };
 const LOCK = 600, AGE = 120, UNBOND = 1200;
-const key = (i) => '0x' + sha256Hex(`node-${i}`);
+const ident = (i) => nodeIdentity(`node-${i}`); // real ed25519 keys: generation 4 bonds with the key's proof
+const key = (i) => ident(i).key;
 const H = (s) => '0x' + sha256Hex(s);
 const ADMIN = 0, TREASURY = 23, STRANGER = 20;
 const HOT = (i) => 10 + i; // node i's delegate (hot key) is account 10 + i
@@ -32,7 +34,7 @@ async function setup(n = 5, params = R) {
   for (let i = 1; i <= n; i++) {
     await evm.send(i, token, 'faucet', []);
     await evm.send(i, token, 'approve', [stake, 1000n * ONE]);
-    await evm.send(i, stake, 'stake', [key(i), ONE]);
+    await evm.bondNode(i, stake, ident(i), ONE);
     if (i !== 5) await evm.send(i, stake, 'setDelegate', [key(i), evm.addressOf(HOT(i))]);
   }
   evm.warp(AGE);

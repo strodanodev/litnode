@@ -28,13 +28,17 @@ import { randomPrivateKey, addressOf, signTransaction } from '../protocol/evm.js
 import { airKey, nameFor } from '../protocol/air.js';
 import { ownerOfKeyCall, profileOfCall, nameOfCall, decodeOwner, decodeUint, decodeString, registerCalldata, bindKeyCalldata, revokeKeyCalldata } from '../protocol/profile.js';
 import { titleOfCall, decodeTitle, buildStatusCall, decodeBuildStatus, registerCalldata as registerTitleCalldata, setBuildCalldata, revokeBuildCalldata, transferCalldata, titleVerdict } from '../protocol/title.js';
-import { standingCall, decodeStanding, minStakeCall, stakeCalldata, approveCalldata, faucetCalldata, balanceOfCall, setDelegateCalldata } from '../protocol/staking.js';
+import { standingCall, decodeStanding, minStakeCall, stakeCalldata, approveCalldata, faucetCalldata, balanceOfCall, setDelegateCalldata, versionCall, decodeVersion, bondMessage, bondCalldata } from '../protocol/staking.js';
+import { signRaw } from '../protocol/keys.js';
 
 const TOPUP_WEI = 2_000_000_000_000_000n;     // 0.002 native: a handful of profile transactions on Liteforge
 const MIN_WEI = 500_000_000_000_000n;        // top up below 0.0005
 const RECEIPT_TIMEOUT_MS = 60_000;
 
-export function createProxyWallets({ dataDir, chainId, rpc, playerProfile, sponsor, titleRegistry = null, nodeStake = null, stakeToken = null, nodeId = null, log = () => {}, emit = () => {} }) {
+/** `signBond(bytes) → sigHex`: the node key signs a generation-4 bond proof (protocol/staking.js bondMessage).
+ *  When the caller does not pass one, the node's own <dataDir>/identity.json signs — the file the node loaded its
+ *  identity from — and only when its public key IS `nodeId`. */
+export function createProxyWallets({ dataDir, chainId, rpc, playerProfile, sponsor, titleRegistry = null, nodeStake = null, stakeToken = null, nodeId = null, signBond = null, log = () => {}, emit = () => {} }) {
   const dir = join(dataDir, 'proxies');
   mkdirSync(dir, { recursive: true });
   const locks = new Map();
@@ -213,7 +217,19 @@ export function createProxyWallets({ dataDir, chainId, rpc, playerProfile, spons
   /** approve + stake the node's key at NodeStake's minimum from the
    *  account's proxy, then name the node's sponsor (its announcer key) as
    *  the delegate so the node can act on chain. Testnet: pulls the faucet
-   *  when the proxy holds less than the minimum. Idempotent. */
+   *  when the proxy holds less than the minimum. Idempotent.
+   *  Generation 4 (NodeStake.version() = 4): the FIRST binding is
+   *  bond(nodeKey, amount, proof) — this node holds the key, so it signs
+   *  the proof for the proxy's address itself; a key already bound to the
+   *  proxy is topped up with stake(). Generation 3 (no version()): stake(). */
+  const signProof = async (bytes) => {
+    if (signBond) return signBond(bytes);
+    const idPath = join(dataDir, 'identity.json');
+    const id = existsSync(idPath) ? JSON.parse(readFileSync(idPath, 'utf8')) : null;
+    if (!id?.privateKey || String(id.publicKey).toLowerCase() !== String(nodeId).toLowerCase()) throw new Error('this node cannot sign a bond proof for its key (no identity.json for this nodeId)');
+    return signRaw(bytes, id.privateKey);
+  };
+  const stakeGeneration = async () => { try { return decodeVersion(await call(versionCall(nodeStake))) ?? 3; } catch { return 3; } };
   const bond = ({ sub }) => withLock(sub, async () => {
     if (!nodeStake || !nodeId) throw new Error('NodeStake is not configured on this node');
     const key = await held(sub);
@@ -232,7 +248,12 @@ export function createProxyWallets({ dataDir, chainId, rpc, playerProfile, spons
       const { hash } = await send(key, { to: stakeToken, data: approveCalldata(nodeStake, minStake) }); steps.push({ step: 'approve', tx: hash });
     }
     await fund(key.address);
-    const { hash: s } = await send(key, { to: nodeStake, data: stakeCalldata(nodeId, minStake) }); steps.push({ step: 'stake', tx: s });
+    const unbound = /^0x0{40}$/i.test(standing.operator);
+    if (!unbound && standing.operator.toLowerCase() !== key.address.toLowerCase()) throw new Error(`node ${nodeId.slice(0, 12)}… is bound to operator ${standing.operator}; only that wallet can add to its bond`);
+    if (unbound && (await stakeGeneration()) >= 4) {
+      const proof = await signProof(bondMessage(chainId, nodeStake, key.address));
+      const { hash: s } = await send(key, { to: nodeStake, data: bondCalldata(nodeId, minStake, proof) }); steps.push({ step: 'bond', tx: s });
+    } else { const { hash: s } = await send(key, { to: nodeStake, data: stakeCalldata(nodeId, minStake) }); steps.push({ step: 'stake', tx: s }); }
     if (sponsor) { const { hash: d } = await send(key, { to: nodeStake, data: setDelegateCalldata(nodeId, sponsor.address) }); steps.push({ step: 'delegate', tx: d }); }
     log(`proxy: bonded node ${nodeId.slice(0, 12)}… from ${key.address} (${minStake} wei)`);
     emit('proxy.bonded', { sub, address: key.address, nodeId, amount: minStake.toString() });

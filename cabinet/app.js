@@ -830,7 +830,12 @@ async function opRun(what) {
     if (what === 'connect' || !Op.account) { Op.busy = 'connecting wallet…'; render(); Op.account = await nodeops.connectOperator(); }
     const step = (m) => { Op.busy = m; render(); };
     if (what === 'faucet') { step('faucet — confirm in your wallet'); Op.lastTx = await nodeops.faucet(Op.account); }
-    if (what === 'bond') { step('bonding…'); Op.lastTx = await nodeops.bond(Op.account, h.nodeId, { onStep: step, delegate: h.directory?.announcer?.address ?? null }); }
+    if (what === 'bond') {
+      step('bonding…');
+      // Generation 4 needs the node key's signature over this wallet: this node signs it (loopback, this page only); older nodes have no route and gen-3 needs none.
+      const pr = await fetch(`${nodeUrl()}/bond-proof?operator=${encodeURIComponent(Op.account)}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      Op.lastTx = await nodeops.bond(Op.account, h.nodeId, { onStep: step, delegate: h.directory?.announcer?.address ?? null, proof: pr?.proof ?? null });
+    }
     if (what === 'hotkey') { step('setting the hot key…'); Op.lastTx = await nodeops.setDelegate(Op.account, h.nodeId, h.directory.announcer.address); }
     if (what === 'delegate') { step('delegating…'); Op.lastTx = await nodeops.delegateAnnouncer(Op.account, h.nodeId, h.directory.announcer.address, { onStep: step }); }
     if (what === 'transfer') { Op.busy = ''; render(); const to = await ask({ title: 'transfer node', label: 'New operator address', placeholder: '0x…', pattern: '0x[0-9a-fA-F]{40}', hint: 'the bond and the listing move with it', ok: 'Transfer' }); if (!to) { render(); return; } step('transfer — confirm in your wallet'); Op.lastTx = await nodeops.transferOperator(Op.account, h.nodeId, to.trim()); }

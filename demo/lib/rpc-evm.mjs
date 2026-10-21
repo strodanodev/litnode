@@ -21,6 +21,7 @@ import { createTxFromRLP } from '@ethereumjs/tx';
 import { createServer } from 'node:http';
 import { createAccount, hexToBytes, bytesToHex, createAddressFromString } from '@ethereumjs/util';
 import { artifacts, keyOf, addressOf } from './evm.mjs';
+import { bondProof } from '../../protocol/staking.js';
 
 export async function createRpcEvm({ chainId = 4441, startTime = Math.floor(Date.now() / 1000), startBlock = 100, accounts = 24, logsUnavailable = false } = {}) {
   const common = createCustomCommon({ chainId }, Mainnet, { hardfork: Hardfork.Shanghai });
@@ -69,6 +70,11 @@ export async function createRpcEvm({ chainId = 4441, startTime = Math.floor(Date
     read: async (to, fn, args = []) => {
       const r = await dryRun({ to: createAddressFromString(to), data: hexToBytes(ifaces.get(to).encodeFunctionData(fn, args)), gasLimit: 20_000_000n, block: mkBlock() });
       return ifaces.get(to).decodeFunctionResult(fn, bytesToHex(r.execResult.returnValue));
+    },
+    /** Generation 4: bind node key `kp` ({ publicKey, privateKey } hex) from account `from` with the key's proof. */
+    bondNode: async (from, stake, kp, amount) => {
+      const sig = await bondProof(kp.privateKey, chainId, stake, addressOf(from));
+      return api.send(from, stake, 'bond', ['0x' + String(kp.publicKey).replace(/^0x/, ''), amount, '0x' + sig]);
     },
     fund: async (address, wei) => { const a = createAddressFromString(address); const acc = (await vm.stateManager.getAccount(a)) ?? createAccount({ balance: 0n, nonce: 0n }); acc.balance += wei; await vm.stateManager.putAccount(a, acc); },
     warp: (s) => { offset += s; },

@@ -20,6 +20,7 @@ import { createVM } from '@ethereumjs/vm';
 import { Common, Hardfork, Mainnet } from '@ethereumjs/common';
 import { createBlock } from '@ethereumjs/block';
 import { Address, createAccount, hexToBytes, bytesToHex, createAddressFromString } from '@ethereumjs/util';
+import { bondProof } from '../../protocol/staking.js';
 
 const dir = join(process.cwd(), 'contracts');
 let compiled = null;
@@ -82,6 +83,14 @@ export async function createEvm({ accounts = 24, startTime = 1_800_000_000, star
       ifaces.set(r.created.toLowerCase(), iface);
       return r.created.toLowerCase();
     },
+    /** Deploy a contract compiled elsewhere (a test harness): its ABI and bytecode hex. */
+    deployRaw: async (abi, bytecode, args = [], from = 0) => {
+      const iface = new ethers.Interface(abi);
+      const data = '0x' + bytecode.replace(/^0x/, '') + (args.length ? iface.encodeDeploy(args).slice(2) : '');
+      const r = await run(from, null, data);
+      ifaces.set(r.created.toLowerCase(), iface);
+      return r.created.toLowerCase();
+    },
     /** A state-changing call from account `from`; returns { logs: decoded, gas }. opts.value sends native coin with it. */
     send: async (from, to, fn, args = [], { value = 0n } = {}) => {
       const iface = ifaces.get(to);
@@ -99,6 +108,14 @@ export async function createEvm({ accounts = 24, startTime = 1_800_000_000, star
       const r = await run(from, to, iface.encodeFunctionData(fn, args));
       number -= 1; timestamp -= 1; // a read does not mine
       return iface.decodeFunctionResult(fn, r.ret);
+    },
+    /** block.chainid here (the Mainnet common): what a bond proof must name. */
+    chainId: 1,
+    /** Generation 4: bind node key `kp` ({ publicKey, privateKey } hex, as protocol/keys.js makes them) from
+     *  account `from` — the key signs bondMessage(chainId, stake, from) and `from` calls bond(). */
+    bondNode: async (from, stake, kp, amount) => {
+      const sig = await bondProof(kp.privateKey, 1, stake, addressOf(from));
+      return api.send(from, stake, 'bond', ['0x' + String(kp.publicKey).replace(/^0x/, ''), amount, '0x' + sig]);
     },
     /** A plain transfer of native coin (a contract's receive()). */
     pay: async (from, to, value) => { await run(from, to, '0x', { value }); },

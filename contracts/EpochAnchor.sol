@@ -22,6 +22,13 @@ pragma solidity ^0.8.24;
 ///   - `quorumBps`, the stake contract and `admin` are set by `admin`
 ///     (a multisig behind a timelock).
 ///
+/// Generation 4 (audit 2026-10-21 §4.2 finding 4): propose() reverts
+/// EpochNotOver for an epoch whose hour has not ended (epoch >=
+/// block.timestamp / 3600). v3 accepted future epochs, and a finalized
+/// anchor is immutable, so quorum stake could pre-finalize any future hour.
+/// Nothing else changed: the node anchors pairHash(resultsRoot, statsRoot)
+/// with the positional _pair below, which verifyInclusion already walks.
+///
 /// What a finalized root proves: that nodes holding that share of the
 /// network's stake committed to the same batch. An inclusion proof then
 /// shows a leaf is in that batch; the leaf carries the match's on-chain
@@ -60,6 +67,7 @@ contract EpochAnchor {
     error AlreadyFinalized(uint64 epoch, bytes32 root);
     error ZeroRoot();
     error BadParams();
+    error EpochNotOver(uint64 epoch);
 
     constructor(INodeStakeV3Reader stake_, uint16 quorumBps_, address admin_) {
         if (address(stake_) == address(0) || admin_ == address(0) || quorumBps_ == 0 || quorumBps_ > BPS) revert BadParams();
@@ -78,6 +86,7 @@ contract EpochAnchor {
     /// Propose `root` for `epoch` for bonded node `nodeKey`, from its delegate or operator.
     function propose(uint64 epoch, bytes32 root, bytes32 nodeKey) external {
         if (root == bytes32(0)) revert ZeroRoot();
+        if (epoch >= block.timestamp / 3600) revert EpochNotOver(epoch);
         if (!stake.mayActFor(nodeKey, msg.sender)) revert NotAllowed();
         (, uint256 amount, bool active) = stake.standingOf(nodeKey);
         if (!active) revert NotBonded();
@@ -122,4 +131,6 @@ contract EpochAnchor {
         for (uint256 i = 0; i < 32; i++) { out[2 * i] = alphabet[uint8(v[i] >> 4)]; out[2 * i + 1] = alphabet[uint8(v[i] & 0x0f)]; }
     }
     function adminIsContract() external view returns (bool) { return admin.code.length > 0; }
+    /// Generation tag: 4. A generation-3 EpochAnchor has no version() and reverts.
+    function version() external pure returns (uint16) { return 4; }
 }

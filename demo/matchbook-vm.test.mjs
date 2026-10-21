@@ -15,11 +15,14 @@ import { ethers } from 'ethers';
 import { createEvm } from './lib/evm.mjs';
 import { sha256Hex } from '../protocol/canonical.js';
 import * as mb from '../protocol/matchbook.js';
+import { nodeIdentity } from './lib/ed25519-ref.mjs';
 
 const ONE = 10n ** 18n;
 const PARAMS = { settleWindow: 60n, attestWindow: 120n, escalationWindow: 300n, drawDelay: 2n, hostSlashBps: 1000, witnessSlashBps: 500 };
 const LOCK = 600, AGE = 120, UNBOND = 1200;
-const key = (i) => '0x' + sha256Hex(`node-${i}`);
+// node keys are real ed25519 keys: generation 4 binds a key only with its own signature (NodeStake.bond)
+const ident = (i) => nodeIdentity(`node-${i}`);
+const key = (i) => ident(i).key;
 const H = (s) => '0x' + sha256Hex(s);
 const ADMIN = 0, TREASURY = 23;
 const rejects = (p, re) => assert.rejects(p, (e) => { assert.match(e.message, re); return true; });
@@ -36,10 +39,10 @@ async function mesh(n, bond = () => 1n) {
   for (let i = 1; i <= n; i++) {
     await evm.send(i, token, 'faucet', []);
     await evm.send(i, token, 'approve', [stake, 1000n * ONE]);
-    await evm.send(i, stake, 'stake', [key(i), bond(i) * ONE]);
-    await evm.send(i, book, 'enroll', [key(i)]);
+    await evm.bondNode(i, stake, ident(i), bond(i) * ONE);
   }
   evm.warp(AGE);
+  for (let i = 1; i <= n; i++) await evm.send(i, book, 'enroll', [key(i)]); // generation 4: only an eligible key enrols
   const bondOf = async (i) => (await evm.read(stake, 'standingOf', [key(i)]))[1];
   const treasury = async () => (await evm.read(token, 'balanceOf', [evm.addressOf(TREASURY)]))[0];
   const status = async (id) => mb.STATUS[Number((await evm.read(book, 'statusOf', [id]))[0])];
@@ -281,27 +284,27 @@ test('the protocol decoders fold the REAL event log into official and pending la
   assert.equal(f.pending.stats[p2].wins, 1, 'the pending win shows in the pending view only');
 });
 
-test('EpochAnchor v3: a delegate proposes; support is bonded stake; the root finalizes at quorumBps of the active stake; one proposal per key', { timeout: 120_000 }, async () => {
+test('EpochAnchor v3+: a delegate proposes (for an hour that has ended); support is bonded stake; the root finalizes at quorumBps of the active stake; one proposal per key', { timeout: 120_000 }, async () => {
   const { evm, stake } = await mesh(3, (i) => (i === 3 ? 3n : 1n)); // 1 + 1 + 3 = 5 tokens active
   const anchor = await evm.deploy('EpochAnchor.sol', 'EpochAnchor', [stake, 5000, evm.addressOf(ADMIN)]);
   await evm.send(1, stake, 'setDelegate', [key(1), evm.addressOf(11)]);
   const root = H('root-a'), other = H('root-b');
-  await rejects(evm.send(12, anchor, 'propose', [500_000, root, key(1)]), /NotAllowed/, 'a stranger cannot propose for a key');
-  await rejects(evm.send(11, anchor, 'propose', [500_000, ethers.ZeroHash, key(1)]), /ZeroRoot/);
-  let r = await evm.send(11, anchor, 'propose', [500_000, root, key(1)]); // the delegate, weight 1
+  await rejects(evm.send(12, anchor, 'propose', [499_999, root, key(1)]), /NotAllowed/, 'a stranger cannot propose for a key');
+  await rejects(evm.send(11, anchor, 'propose', [499_999, ethers.ZeroHash, key(1)]), /ZeroRoot/);
+  let r = await evm.send(11, anchor, 'propose', [499_999, root, key(1)]); // the delegate, weight 1
   assert.equal(r.logs[0].name, 'Proposed'); assert.equal(r.logs[0].args.weight, ONE); assert.equal(r.logs[0].args.needed, 5n * ONE / 2n);
   assert.equal(r.logs.length, 1, '1 of 5: not final');
-  await rejects(evm.send(1, anchor, 'propose', [500_000, other, key(1)]), /AlreadyProposed/, 'one proposal per key per epoch');
-  r = await evm.send(2, anchor, 'propose', [500_000, other, key(2)]); // the operator itself, for a DIFFERENT root
+  await rejects(evm.send(1, anchor, 'propose', [499_999, other, key(1)]), /AlreadyProposed/, 'one proposal per key per epoch');
+  r = await evm.send(2, anchor, 'propose', [499_999, other, key(2)]); // the operator itself, for a DIFFERENT root
   assert.equal(r.logs.length, 1, 'conflicting roots coexist');
-  assert.equal((await evm.read(anchor, 'rootOf', [500_000]))[0], ethers.ZeroHash, 'nothing final');
-  r = await evm.send(3, anchor, 'propose', [500_000, root, key(3)]); // weight 3: root now has 4 of 5
+  assert.equal((await evm.read(anchor, 'rootOf', [499_999]))[0], ethers.ZeroHash, 'nothing final');
+  r = await evm.send(3, anchor, 'propose', [499_999, root, key(3)]); // weight 3: root now has 4 of 5
   assert.equal(r.logs.at(-1).name, 'EpochFinalized');
   assert.equal(r.logs.at(-1).args.support, 4n * ONE); assert.equal(r.logs.at(-1).args.totalActive, 5n * ONE);
-  assert.equal((await evm.read(anchor, 'rootOf', [500_000]))[0], root);
-  const [has, needed, fin] = await evm.read(anchor, 'standing', [500_000, root]);
+  assert.equal((await evm.read(anchor, 'rootOf', [499_999]))[0], root);
+  const [has, needed, fin] = await evm.read(anchor, 'standing', [499_999, root]);
   assert.equal(has, 4n * ONE); assert.equal(needed, 5n * ONE / 2n); assert.equal(fin, true);
-  await rejects(evm.send(2, anchor, 'propose', [500_001, root, key(4)]), /NotBonded|NotAllowed/, 'an unbonded key cannot propose');
+  await rejects(evm.send(2, anchor, 'propose', [499_998, root, key(4)]), /NotBonded|NotAllowed/, 'an unbonded key cannot propose');
   // two 1-token nodes cannot outvote the 3-token one: a count quorum would have let them
   const n2 = await mesh(3, (i) => (i === 3 ? 3n : 1n));
   const a2 = await n2.evm.deploy('EpochAnchor.sol', 'EpochAnchor', [n2.stake, 5000, n2.evm.addressOf(ADMIN)]);

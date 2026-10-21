@@ -10,7 +10,7 @@
  *  Steps, each idempotent via contracts/deployed.testnet.json:
  *    1. compile TestLITVM, NodeStake, ERC6699Registry (solc 0.8.28, shanghai)
  *    2. deploy TestLITVM, pull the faucet
- *    3. deploy NodeStake v3(token, minStake, lockTerm, eligibilityAge,
+ *    3. deploy NodeStake v4(token, minStake, lockTerm, eligibilityAge,
  *       unbondingPeriod, admin, treasury) with the values in
  *       contracts/deploy.testnet.json — refused when unbondingPeriod does not
  *       exceed the dispute windows (BUILD-SPEC v0.3 §2.2)
@@ -18,6 +18,8 @@
  *       ReleaseRegistry(admin, activationDelay)
  *       TitleRegistry(activationDelay) — no admin: a title is an ERC-721, its holder publishes
  *    5. generate (or load) the local node identity and bond minStake behind it
+ *       (generation 4: NodeStake.bond with the identity's own signature over
+ *       protocol/staking.js bondMessage — the proof of key possession)
  *    6. write contracts/deployed.testnet.json — the node reads this
  *
  *  --fresh   ignore contracts/deployed.testnet.json and deploy a NEW set of
@@ -37,7 +39,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateKeypair } from '../protocol/keys.js';
-import { nodeKeyBytes32 } from '../protocol/staking.js';
+import { nodeKeyBytes32, bondProof } from '../protocol/staking.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 // DEPLOY_CONFIG / DEPLOY_OUT: a dry run (demo/deploy.test.mjs) points these at temp files and an in-process chain.
@@ -46,9 +48,10 @@ const outPath = process.env.DEPLOY_OUT ?? join(root, 'contracts', 'deployed.test
 const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
 // v3 invariant, checked BEFORE anything is sent: every adjudicator's dispute + escalation windows must fit
 // inside the unbonding period, or a node can leave before it can be slashed for work it did.
-// MatchBook.totalWindow() = settle + 2×attest (one extension) + 2×escalation (feed the ledger, then the nine).
+// MatchBook.totalWindow() = settle + 2×attest (one extension) + 3×escalation (feed the ledger, the nine, then resolve
+// before expire() may void it — generation 4).
 {
-  const w = Number(cfg.MatchBook?.settleWindowS ?? 0) + 2 * Number(cfg.MatchBook?.attestWindowS ?? 0) + 2 * Number(cfg.MatchBook?.escalationWindowS ?? 0);
+  const w = Number(cfg.MatchBook?.settleWindowS ?? 0) + 2 * Number(cfg.MatchBook?.attestWindowS ?? 0) + 3 * Number(cfg.MatchBook?.escalationWindowS ?? 0);
   if (Number(cfg.NodeStake?.unbondingPeriod ?? 0) <= w) { console.error(`NodeStake.unbondingPeriod (${cfg.NodeStake?.unbondingPeriod}s) must exceed the MatchBook windows (${w}s): a node could unbond before a dispute against it resolves`); process.exit(1); }
 }
 const key = process.env.DEPLOYER_KEY;
@@ -69,7 +72,9 @@ const previous = existsSync(outPath) ? JSON.parse(readFileSync(outPath, 'utf8'))
 // v2 files carried `migratedFrom` from the v1 → v2 move, and "has migratedFrom"
 // was the old resume test — which resumed the v2 set on 22 Sep 2026 and put a
 // MatchBook against NodeStake v2. Generations are explicit now.
-const GENERATION = 3;
+// Generation 4 (21 Oct 2026 audit §4.2): NodeStake.bond with key proof, NodeDirectory minStake + keysPage,
+// MatchBook bounded pool + prune + Escalated expiry, EpochAnchor no future epochs; version() = 4 on those four.
+const GENERATION = 4;
 const resuming = fresh && previous?.generation === GENERATION;
 if (fresh && previous && !resuming) {
   const stamp = String(previous.deployedAt ?? new Date().toISOString()).replace(/[:.]/g, '-');
@@ -80,7 +85,8 @@ if (fresh && previous && !resuming) {
 const deployed = previous && (!fresh || resuming) ? previous : {};
 if (fresh && previous && !resuming) deployed.migratedFrom = { generation: previous.generation ?? (previous.NodeStake?.version ?? 1), NodeStake: previous.NodeStake?.address ?? null, EpochAnchor: previous.EpochAnchor?.address ?? null, ERC6699Registry: previous.ERC6699Registry?.address ?? null, NodeDirectory: previous.NodeDirectory?.address ?? null, deployedAt: previous.deployedAt ?? null };
 if (fresh) deployed.generation = GENERATION;
-if (!fresh && previous && (previous.generation ?? (previous.NodeStake?.version ?? 1)) !== GENERATION) { console.error(`${outPath} holds generation ${previous.generation ?? previous.NodeStake?.version ?? 1}; this tool deploys generation ${GENERATION}. Run with --fresh to archive it and deploy the new set.`); process.exit(1); }
+// --only adds standalone contracts beside whatever generation is live, so it is exempt.
+if (!fresh && !argv.includes('--only') && previous && (previous.generation ?? (previous.NodeStake?.version ?? 1)) !== GENERATION) { console.error(`${outPath} holds generation ${previous.generation ?? previous.NodeStake?.version ?? 1}; this tool deploys generation ${GENERATION}. Run with --fresh to archive it and deploy the new set.`); process.exit(1); }
 if (resuming) console.log(`--fresh: resuming the generation-${GENERATION} deployment already in ${outPath}`);
 
 /** Caldera's gateway answers 502 now and then. Every chain call and every
@@ -108,7 +114,7 @@ console.log(`deployer ${wallet.address} · ${ethers.formatEther(balance)} zkLTC 
 if (balance === 0n) { console.error('no zkLTC for gas — use the faucet first'); process.exit(1); }
 
 // ---------------------------------------------------------------- compile
-const files = ['TestLITVM.sol', 'NodeStake.sol', 'ERC6699Registry.sol', 'EpochAnchor.sol', 'PlayerProfile.sol', 'NodeBadge.sol', 'NodeDirectory.sol', 'ReleaseRegistry.sol', 'MatchBook.sol', 'TitleRegistry.sol', 'GasRefund.sol'];
+const files = ['TestLITVM.sol', 'Ed25519.sol', 'NodeStake.sol', 'ERC6699Registry.sol', 'EpochAnchor.sol', 'PlayerProfile.sol', 'NodeBadge.sol', 'NodeDirectory.sol', 'ReleaseRegistry.sol', 'MatchBook.sol', 'TitleRegistry.sol', 'GasRefund.sol'];
 const sources = Object.fromEntries(files.map((f) => [f, { content: readFileSync(join(root, 'contracts', f), 'utf8') }]));
 const compiled = JSON.parse(solc.compile(JSON.stringify({
   language: 'Solidity', sources,
@@ -204,8 +210,8 @@ save();
 await deploy('ERC6699Registry', 'ERC6699Registry.sol', 'ERC6699Registry', [admin]);
 deployed.ERC6699Registry.version = 2;
 await deploy('EpochAnchor', 'EpochAnchor.sol', 'EpochAnchor', [await stake.getAddress(), quorum, admin]);
-deployed.EpochAnchor.version = 3; deployed.EpochAnchor.quorumBps = quorum;
-deployed.NodeStake.version = 3;
+deployed.EpochAnchor.version = GENERATION; deployed.EpochAnchor.quorumBps = quorum;
+deployed.NodeStake.version = GENERATION;
 // the node reads the registry from here (ERC6699 in node.env overrides)
 deployed.ERC6699RegistryV2 = { address: deployed.ERC6699Registry.address };
 // ---------------------------------------------------------------- identity: player profiles + node badges (docs/WALLET-IDENTITY.md)
@@ -213,6 +219,7 @@ await deploy('PlayerProfile', 'PlayerProfile.sol', 'PlayerProfile');
 await deploy('NodeBadge', 'NodeBadge.sol', 'NodeBadge', [await stake.getAddress()]);
 // ---------------------------------------------------------------- discovery: the seed list on chain (docs, "decentralized bootstrap")
 await deploy('NodeDirectory', 'NodeDirectory.sol', 'NodeDirectory', [await stake.getAddress()]);
+deployed.NodeDirectory.version = GENERATION;
 // ---------------------------------------------------------------- releases: which builds a node may run, and from when (§2.4)
 await deploy('ReleaseRegistry', 'ReleaseRegistry.sol', 'ReleaseRegistry', [admin, BigInt(cfg.ReleaseRegistry?.activationDelay ?? 60)]);
 deployed.ReleaseRegistry.activationDelay = Number(cfg.ReleaseRegistry?.activationDelay ?? 60);
@@ -227,6 +234,7 @@ const mbc = cfg.MatchBook ?? {};
 const mbParams = { settleWindow: BigInt(mbc.settleWindowS ?? 60), attestWindow: BigInt(mbc.attestWindowS ?? 120), escalationWindow: BigInt(mbc.escalationWindowS ?? 300), drawDelay: BigInt(mbc.drawDelayBlocks ?? 2), hostSlashBps: Number(mbc.hostSlashBps ?? 1000), witnessSlashBps: Number(mbc.witnessSlashBps ?? 500) };
 const matchBook = await deploy('MatchBook', 'MatchBook.sol', 'MatchBook', [await stake.getAddress(), mbParams, admin]);
 await deployRefund(admin);
+deployed.MatchBook.version = GENERATION;
 Object.assign(deployed.MatchBook, { settleWindowS: Number(mbParams.settleWindow), attestWindowS: Number(mbParams.attestWindow), escalationWindowS: Number(mbParams.escalationWindow), drawDelayBlocks: Number(mbParams.drawDelay), hostSlashBps: mbParams.hostSlashBps, witnessSlashBps: mbParams.witnessSlashBps, admin });
 save();
 const matchBookAddr = await matchBook.getAddress();
@@ -236,6 +244,16 @@ if (admin === wallet.address) {
     console.log(`MatchBook named an adjudicator on NodeStake`);
   }
 } else console.log(`admin is ${admin}: it must call NodeStake.setAdjudicator(${matchBookAddr}, true) for MatchBook to slash`);
+// the escalation pool's ceiling (MatchBook.maxPool, default 256 in the contract); contracts/deploy.testnet.json MatchBook.maxPool overrides
+if (mbc.maxPool != null) {
+  const want = BigInt(mbc.maxPool);
+  if ((await retry('maxPool', () => matchBook.maxPool())) !== want) {
+    if (admin === wallet.address) await retry('setMaxPool', async () => (await matchBook.setMaxPool(want)).wait());
+    else console.log(`admin is ${admin}: it must call MatchBook.setMaxPool(${want})`);
+  }
+}
+deployed.MatchBook.maxPool = Number(await retry('maxPool', () => matchBook.maxPool()));
+save();
 
 // ---------------------------------------------------------------- bond the first node
 const dataDir = process.env.LITNODE_DATA ?? join(root, 'data', 'node-1');
@@ -248,7 +266,13 @@ const [, , active] = await retry('standingOf', () => stake.standingOf(nodeKey));
 if (!active) {
   console.log(`bonding ${ethers.formatEther(minStake)} tLITVM behind node ${identity.publicKey.slice(0, 16)}…`);
   await retry('approve', async () => (await token.approve(await stake.getAddress(), minStake)).wait());
-  await retry('stake', async () => (await stake.stake(nodeKey, minStake)).wait());
+  // generation 4 binds a key only with the key's proof; a generation-3 NodeStake (no version()) takes stake()
+  const gen = await stake.version().then(Number).catch(() => 3);
+  if (gen >= 4) {
+    const chainId = (await retry('network', () => provider.getNetwork())).chainId;
+    const sig = await bondProof(identity.privateKey, chainId, await stake.getAddress(), wallet.address);
+    await retry('bond', async () => (await stake.bond(nodeKey, minStake, '0x' + sig)).wait());
+  } else await retry('stake', async () => (await stake.stake(nodeKey, minStake)).wait());
 }
 const standing = await retry('standingOf', () => stake.standingOf(nodeKey));
 const info = await retry('nodeOf', () => stake.nodeOf(nodeKey));

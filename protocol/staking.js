@@ -8,6 +8,7 @@
  *  staking address, and a node that has not posted the bond is not eligible
  *  for placement no matter what its heartbeat says. */
 import { selector } from './keccak.js';
+import { signRaw, fromHex } from './keys.js';
 
 export const STANDING_OF = 'standingOf(bytes32)';
 
@@ -97,4 +98,39 @@ export function decodeNode(hex) {
     bondedSince: Number(BigInt('0x' + word(3))), unbondAt: Number(BigInt('0x' + word(4))),
     active: BigInt('0x' + word(5)) === 1n, eligible: BigInt('0x' + word(6)) === 1n,
   };
+}
+
+// ------------------------------------------------------------ v4: proof of key (generation 4, audit 2026-10-21 §4.2 finding 1)
+/** A generation-4 NodeStake binds a key only with the key's own signature:
+ *  bond(nodeKey, amount, sig) where sig is ed25519 by the node key over
+ *  bondMessage(chainId, NodeStake, operator). stake() then only tops up a
+ *  key that is already bound. version() answers 4; generation 3 reverts. */
+export const BOND = 'bond(bytes32,uint256,bytes)';
+export const VERSION = 'version()';
+export const BOND_TAG = 'litnode-bond-v1';
+export const versionCall = (contract) => ({ to: contract, data: selector(VERSION) });
+/** A version() answer → the generation number; null for an empty or failed read (generation 3 has no version()). */
+export const decodeVersion = (hex) => { const d = String(hex ?? '').replace(/^0x/, ''); return /^[0-9a-f]{64}/i.test(d) ? Number(BigInt('0x' + d.slice(0, 64))) : null; };
+
+/** The exact bytes the node key signs: "litnode-bond-v1" ‖ 0x00 ‖ uint256 chainId ‖ address NodeStake ‖ address operator
+ *  (88 bytes; NodeStake.bondMessage(operator) returns the same bytes). */
+export function bondMessage(chainId, contractAddr, operatorAddr) {
+  const tag = new TextEncoder().encode(BOND_TAG);
+  const out = new Uint8Array(tag.length + 1 + 32 + 20 + 20);
+  out.set(tag, 0);
+  out[tag.length] = 0;
+  out.set(fromHex(uintWord(chainId)), tag.length + 1);
+  out.set(fromHex(addrWord(contractAddr).slice(24)), tag.length + 33);
+  out.set(fromHex(addrWord(operatorAddr).slice(24)), tag.length + 53);
+  return out;
+}
+
+/** The node's proof: its key signs bondMessage. Hex, 64 bytes. */
+export const bondProof = (privateKeyHex, chainId, contractAddr, operatorAddr) => signRaw(bondMessage(chainId, contractAddr, operatorAddr), privateKeyHex);
+
+/** bond(bytes32 nodeKey, uint256 amount, bytes sig) calldata. */
+export function bondCalldata(nodeIdHex, amountWei, sigHex) {
+  const sig = String(sigHex).replace(/^0x/, '').toLowerCase();
+  if (!/^[0-9a-f]{128}$/.test(sig)) throw new Error('bond proof must be a 64-byte signature');
+  return selector(BOND) + nodeKeyBytes32(nodeIdHex).slice(2) + uintWord(amountWei) + uintWord(96) + uintWord(64) + sig;
 }
