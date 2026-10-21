@@ -1,6 +1,76 @@
+# Generation 4: testnet generation 3 → 4 (the 21 Oct 2026 audit's contract findings)
+
+Source written and tested 21–22 Oct 2026 (`demo/ed25519-vm.test.mjs`, `demo/gen4-vm.test.mjs`); **not deployed**.
+Generation 3 stays live until the steps below run; the node, the tools and the cabinet work against both
+(they ask `version()`: generation 4 answers `4`, generation 3 has no such function and the call reverts).
+
+## Why — and what changed
+
+`audit/audit-2026-10-21.md` §4.2 lists five contract findings; §7 item 3 asks for generation 4 before an external audit.
+
+| contract | finding (audit §4.2) | generation 4 |
+|---|---|---|
+| `NodeStake` | **1, medium.** `stake(nodeKey, amount)` takes no proof that the caller holds the ed25519 key and any amount above zero; the first caller is operator forever (`withdraw` never clears it). A node key is public in gossip before it bonds, so one wei of faucet token squats it and the real operator must rotate identity. | **`bond(bytes32 nodeKey, uint256 amount, bytes sig)`** is the only first binding: `amount ≥ minStake`, and `sig` is the node key's ed25519 signature over `"litnode-bond-v1" ‖ 0x00 ‖ abi.encodePacked(uint256 block.chainid, address(this), address msg.sender)` — 88 bytes, `bondMessage(operator)` returns them. Verified on chain by `contracts/Ed25519.sol` (RFC 8032; SHA-512, strict decoding, S < L, small-order keys refused; about 404k gas for the verification, about 565k for the whole `bond` transaction). The proof names chain, contract and operator, so it replays for nobody else. `stake()` now only tops up a key that is already bound (`NotBound` otherwise; `NotOperator` from another wallet). A withdrawn bond keeps its operator, who re-bonds with `stake()`. New: `Bound` event, errors `NotBound`, `AlreadyBound(operator)`, `BadProof`, `BelowMinimum(minStake)`, `version()`. |
+| `NodeDirectory` | **2, medium.** Announcing needs only operator standing (one wei); `_keys` is append-only and `keys()` returns it whole; every bootstrap and arcade seed search does two `eth_call`s per key against a gateway that 429s at ~25 req/s, and the arcade fails closed. | `announce` requires the key ACTIVE with `amount ≥ NodeStake.minStake()` (`NotBonded`); **`keysPage(uint256 offset, uint256 limit)`** + `count()` page the list. `keys()` is **kept**: readers already in the field (publishers' `sdk/bridge` `resolveNode`, `tools/authority.mjs`, node releases ≤ 0.11.x) call it on whatever address `contracts.json` names and would lose discovery at the flip. New readers page through `protocol/directory.js readDirectoryKeys` (falls back to `keys()` on generation 3) and read entries through a bounded pool (`mapLimit`, `READ_CONCURRENCY`). |
+| `MatchBook` | **3, medium.** `enroll` needs only `mayActFor`; `escalate()` walks the whole pool with external calls; a few thousand junk enrolments push it past the block gas cap and every dispute dies by expiry. **5, low:** no exit from `Escalated` if `resolve` reverts. | `enroll` requires `witnessEligible(key)` NOW and `poolSize() < maxPool` (`NotEligible`, `PoolFull(maxPool)`); `maxPool` is an admin parameter (default 256, `setMaxPool`, at most `MAX_POOL_CAP` = 1024). Permissionless **`prune(nodeKey)`** drops an enrolled key that is no longer ACTIVE (unbonding, withdrawn, below `minStake`); a key inside its eligibility age after a top-up stays (`StillActive`) — pruning it would let anyone evict an operator for adding stake, and the draw skips it anyway. **`expire` has an `Escalated` branch:** after `escalatedAt + 2 × escalationWindow` anyone voids a seated escalation nobody resolved (a `resolve` that reverts — a stake token whose transfer fails — no longer pins a match). `totalWindow()` = settle + 2 × attest + **3** × escalation accordingly. A full pool of 256 keys escalates in about 2.5M gas (measured in `demo/gen4-vm.test.mjs`). The two September attacks `demo/matchbook-vm.test.mjs` executes stay closed. |
+| `EpochAnchor` | **4, medium.** `propose` accepts future epochs and a finalized anchor is immutable; quorum stake could pre-finalize garbage for every future hour. | `propose` reverts `EpochNotOver(epoch)` for `epoch ≥ block.timestamp / 3600`. Nothing else: the node anchors `pairHash(resultsRoot, statsRoot)` with the existing positional `_pair`, which `verifyInclusion` already walks. |
+| `NodeBadge`, `GasRefund` | — | unchanged source; redeployed against the generation-4 NodeStake / MatchBook (their reader interfaces are unchanged). |
+| `PlayerProfile`, `ERC6699Registry`, `ReleaseRegistry`, `TitleRegistry`, `TestLITVM` | — | unchanged; redeployed with `--fresh` so one `deployed.testnet.json` describes one coherent set (titles re-minted, profiles re-registered — testnet). |
+
+### Honest zeroes that generation 4 does NOT fix
+
+- **`GasRefund.withdraw(to, amount)` lets its admin drain the treasury.** On testnet that admin is the deployer EOA
+  `0x04bE…a378` (it is also admin of every other contract). Until a multisig behind a timelock holds `admin`, one
+  key can empty the refund treasury, change every parameter, name adjudicators (who can slash) and register
+  releases. BUILD-SPEC §16 must say so (audit §7 item 3).
+- **The anchor is a quorum-majority statement.** A finalized EpochAnchor root proves that nodes holding
+  `quorumBps` of the active stake committed to it — not that it is correct; that quorum can still finalize a
+  wrong root for an hour that HAS ended.
+- **Pool capacity is first-come.** `maxPool` keys at `minStake` each fill the escalation pool; the admin can raise
+  the cap (to 1024) and `prune` clears inactive keys, but a well-funded squatter that stays bonded holds its seats.
+  The draw still seats one key per operator.
+- **A small-order or non-canonical key cannot bond, a mixed-order one can** — harmless for possession (its
+  holder signed), noted for completeness.
+
+## Deploy order (`npm run deploy:testnet -- --fresh`; the tool's `GENERATION` is now 4)
+
+1. `npm test` green, including `demo/ed25519-vm.test.mjs` and `demo/gen4-vm.test.mjs`. `npm run authority` → snapshot of generation 3.
+2. Check `contracts/deploy.testnet.json`: `NodeStake.unbondingPeriod` must exceed `MatchBook.settleWindowS + 2 × attestWindowS + 3 × escalationWindowS` (live values 1800 + 600 + 900 = 3300 < 3600 ✓). Optional `MatchBook.maxPool` (the tool calls `setMaxPool` when admin is the deployer).
+3. `DEPLOYER_KEY=<admin> npm run deploy:testnet -- --fresh --quorum 5000` archives the generation-3 file as `deployed.testnet.<timestamp>.json` and deploys, in order: TestLITVM → **NodeStake v4** (with `Ed25519.sol` compiled in; no library to link) → ERC6699Registry → **EpochAnchor v4** → PlayerProfile → NodeBadge → **NodeDirectory v4** → ReleaseRegistry → TitleRegistry → **MatchBook v4** → GasRefund; names MatchBook an adjudicator on NodeStake; bonds the local node with `bond()` — the tool reads the node identity it already uses (`$LITNODE_DATA` or `data/node-1`, `identity.json`) and signs the proof itself. Records `generation: 4` and `version: 4` on the four changed contracts. (Dry run of exactly this: `demo/deploy.test.mjs`.)
+4. Fund GasRefund from the treasury (plain transfer), as for generation 3.
+5. Register the current release (`npm run release:registry -- register …`), `node tools/vendor-cabinet.mjs`, `npm run release` + register, redeploy the cabinet — the generation checklist below applies unchanged.
+
+## What every operator must redo
+
+Bonds do not migrate (generation 4 is a new NodeStake). **Every node re-bonds with a proof**:
+
+- **The node's own machine holds the key, so it makes the proof:** `node tools/bond-node.mjs --sign <operator wallet>` prints the 64-byte proof (and the 88-byte message) — the key never leaves the machine. Then from the operator's wallet: `DEPLOYER_KEY=… node tools/bond-node.mjs <nodeId> --proof <sig>`; on a machine that holds both, `node tools/bond-node.mjs <nodeId>` signs from the local identity directly.
+- **AIR operators** (`/air/bond`): unchanged for them — the node signs the proof for its proxy wallet itself (`node/proxy.js`).
+- **MetaMask from the Nodes page:** needs the node's proof (see "cabinet" below); until the node route exists, use `--sign` + `--proof` as above.
+- Then, as for generation 3: delegate the hot key (`npm run delegate`), re-delegate the announcer on NodeDirectory, and let the node enrol itself — on generation 4 the node waits until the key is witness-eligible (`eligibilityAge` after the bond) before it sends `enroll`, since an ineligible enrol reverts.
+- Escalation-pool seats are capped (`maxPool`); a node that finds the pool full stays out until someone `prune`s an inactive key or the admin raises the cap.
+
+## What the node, tools and cabinet need
+
+| part | change (this commit) | still needed |
+|---|---|---|
+| `protocol/staking.js` | `BOND`, `VERSION`, `BOND_TAG`, `bondMessage(chainId, contract, operator)`, `bondProof(privateKey, …)`, `bondCalldata(nodeKey, amount, sig)`, `versionCall`, `decodeVersion`; vendored to the cabinet | — |
+| `protocol/keys.js` | `signRaw(bytes, privateKey)`, `verifyRaw(bytes, sig, publicKey)` (WebCrypto; raw bytes for messages that carry their own domain tag) | — |
+| `protocol/directory.js` | `KEYS_PAGE`, `COUNT`, `keysPageCall`, `countCall`, `readDirectoryKeys` (pages, falls back to `keys()`), `mapLimit`, `READ_CONCURRENCY` | — |
+| `node/chain.js` | the directory reader pages | — |
+| `node/matchbook.js` | auto-enrol waits for `witnessEligible` | — |
+| `node/proxy.js` | `/air/bond` bonds with `bond()` + the node's own proof on generation 4 (`signBond` option, or the node's `identity.json` for its `nodeId`), `stake()` on generation 3 | `node/litnode.js` may pass `signBond` explicitly |
+| `tools/deploy-contracts.mjs` | `GENERATION = 4`, compiles `Ed25519.sol`, bonds with a proof, 3 × escalation in the window check, `maxPool`, `--only` works beside any generation | — |
+| `tools/bond-node.mjs` | `--sign`, `--proof`, `--identity`; detects the generation | — |
+| `tools/params.mjs` | `totalWindow` with 3 × escalation on generation 4 | `setMaxPool` is not in it yet |
+| `cabinet/seeds.js` | pages the directory; per-key reads bounded (2 keys = 4 calls in flight); one failed key no longer empties the list | — |
+| `cabinet/nodeops.js` | `stakeGeneration()`, `bondProofMessage(from)`, `bond(…, { proof })` sends `bond()` on generation 4 and refuses without a proof | **TODO(gen-4 bond proof):** a loopback-only route on `node/litnode.js` that signs `bondMessage(chainId, NodeStake, operator)` with the node key, and the Nodes page fetching it before `bond()` |
+| `sdk/bridge` `resolveNode` | pages the directory | — |
+| `node/litnode.js`, `node/settle.js` | none in this change | the proof route above; `/health` may report `version()` |
+
 # Contract migration: testnet v2 → v3 (Settlement v1.0, phase 1 — no single key)
 
-BUILD-SPEC v0.3 §2.2–2.4. Prepared 21 Sep 2026; **not yet executed**.
+BUILD-SPEC v0.3 §2.2–2.4. Prepared 21 Sep 2026; executed 22 Sep 2026 (records below).
 
 ## Why
 
