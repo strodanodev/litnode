@@ -97,6 +97,9 @@ body.dash-locked .content .panel { opacity: .32; filter: grayscale(.7); pointer-
 .tag.live { color: var(--cyan); border-color: rgba(140,232,255,.45); background: rgba(140,232,255,.08); }
 .tag.hosted { color: var(--peach); border-color: rgba(247,177,122,.45); }
 .tag.court { color: var(--purple); border-color: rgba(200,177,255,.45); }
+/* settlement v4 proof levels: live = L3 verified, checkable = L2, court = L1, plain = L0 */
+.tag.proof { text-transform: lowercase; cursor: help; }
+.tag.checkable { color: var(--green); border-color: rgba(126,240,168,.45); background: rgba(126,240,168,.06); }
 .tag.sample { color: var(--dim); border-style: dashed; }
 .empty { color: var(--dim); font-size: 13px; padding: 10px 0; }
 .chips { display: flex; gap: 6px; flex-wrap: wrap; }

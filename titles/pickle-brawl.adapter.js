@@ -60,10 +60,15 @@ export default defineAttestedTitle({
   teams: 2,
   equipment: 'studio',
   hostPolicy: { affinity: 'operator', publisherNodes: [] }, // the studio's courts host; open fallback stays
+  // Settlement v4: the studio court's key, pinned by this ruleset's hash, so every node accepts it with no COURTS entry
+  // (COURTS stays an operator override). The private key lives only in the studio's managed env.
+  attestors: ['09b2b84947a10dcee1bc2f05deda59c6f4b98dc6f3c6d193071fd7c82d097e23'],
   services: {
     leaderboard: eloLeaderboard({ k: 24 }),
     credits: winnerTakesCredits({ pot: 10, currency: 'pickles' }),
-    stats: { track: ['matches', 'wins', 'ticks'] },
+    // Settlement v4: what the court observes per player, as report.stats (names proposed for the PB session's hand-back;
+    // the node keeps only these names, as non-negative integers).
+    stats: { track: ['matches', 'wins', 'ticks'], schema: { pointsWon: 'sum', aces: 'sum', winners: 'sum', unforcedErrors: 'sum', smashes: 'sum', dinks: 'sum', longestRally: 'max', matchesMvp: 'sum' } },
   },
   validate: validateReport,
 

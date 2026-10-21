@@ -60,9 +60,18 @@ export default defineAttestedTitle({
     url: 'https://play.bagyo.app',
     description: 'Storm of the Day: hold the city against one seeded typhoon. Every run is replayed by the game before it settles.',
   },
-  // one seat: no Elo between players, no pot; the mesh keeps match stats, the game keeps its own board
-  services: { stats: { track: ['matches', 'wins', 'ticks'] } },
+  // one seat: no Elo between players, no pot; the mesh keeps match stats, the game keeps its own board.
+  // Settlement v4: the run's integers fold per player (names and ops from the FLOOD CONTROL contract; the court's
+  // court key joins `attestors` with its hand-back, until then nodes authorize it by COURTS).
+  services: { stats: { track: ['matches', 'wins', 'ticks'], schema: { points: 'max', stars: 'sum', rescued: 'sum', casualties: 'sum', bestChain: 'max', keptDry: 'sum', stormsSurvived: 'sum' } } },
   validate: validateReport,
+  /** The run's stats for its one seat: `report.stats` when the court sends it (v4), else the integers every report
+   *  already carries, so runs settled before the court upgrades fold too. */
+  stats(report, participants) {
+    if (report.stats) return report.stats;
+    const p = participants[0];
+    return { [p]: { points: report.points, stars: report.stars, rescued: report.rescued, casualties: report.casualties, bestChain: report.bestChain, stormsSurvived: report.survived ? 1 : 0, ...(Number.isInteger(report.keptDry) ? { keptDry: report.keptDry } : {}) } };
+  },
 
   /** The run's points to its one player. */
   scores(report, participants) {

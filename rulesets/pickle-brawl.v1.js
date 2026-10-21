@@ -68,7 +68,29 @@ var K = new Uint32Array([
   3329325298
 ]);
 
+// protocol/stats.js
+var STAT_OPS = Object.freeze(["sum", "max", "min", "last"]);
+var NAME_RE = /^[a-zA-Z][a-zA-Z0-9]{0,31}$/;
+var MAX_STATS = 32;
+var RESERVED = Object.freeze(["matches", "wins", "ticks"]);
+function schemaProblem(schema) {
+  if (schema == null) return null;
+  if (typeof schema !== "object" || Array.isArray(schema)) return "stats.schema must be an object { name: op }";
+  const names = Object.keys(schema);
+  if (names.length > MAX_STATS) return `stats.schema has ${names.length} names; at most ${MAX_STATS}`;
+  for (const n of names) {
+    if (!NAME_RE.test(n)) return `stat name ${JSON.stringify(n)} must match ${NAME_RE}`;
+    if (RESERVED.includes(n)) return `stat name ${n} is reserved for the built-in line`;
+    if (!STAT_OPS.includes(schema[n])) return `stat ${n}: op must be one of ${STAT_OPS.join("|")} (got ${JSON.stringify(schema[n])})`;
+  }
+  return null;
+}
+
 // titles/title.js
+var checkSchema = (services, who) => {
+  const p = schemaProblem(services?.stats?.schema ?? null);
+  if (p) throw new Error(`${who}: ${p}`);
+};
 function defineAttestedTitle({
   rulesetId,
   modes = ["ranked", "casual"],
@@ -80,10 +102,17 @@ function defineAttestedTitle({
   services = {},
   validate,
   scores,
-  equipment = "studio"
+  stats = null,
+  equipment = "studio",
+  display = null,
+  // Which courts may sign reports for this title (ed25519 pubkeys, hex). A
+  // node ALSO accepts courts its operator configures (COURTS); a report
+  // from any other key is refused however valid its signature.
+  attestors = []
 }) {
   for (const [name, fn] of Object.entries({ validate, scores }))
     if (typeof fn !== "function") throw new Error(`defineAttestedTitle: ${name} is required`);
+  checkSchema(services, "defineAttestedTitle");
   return {
     manifest: {
       kind: "attested",
@@ -94,6 +123,8 @@ function defineAttestedTitle({
       standingFloor,
       hostPolicy,
       equipment,
+      display,
+      attestors,
       balanceVersion: balance?.version ?? null,
       services: {
         leaderboard: services.leaderboard ?? null,
@@ -103,7 +134,9 @@ function defineAttestedTitle({
     },
     balance,
     validate,
-    scores
+    scores,
+    // (report, participants) → { participant: { name: value } }; the node keeps only the schema's names.
+    stats: typeof stats === "function" ? stats : (report) => report?.stats ?? null
   };
 }
 var eloLeaderboard = ({ k = 24 } = {}) => ({ kind: "elo", k });
@@ -139,10 +172,15 @@ var pickle_brawl_adapter_default = defineAttestedTitle({
   equipment: "studio",
   hostPolicy: { affinity: "operator", publisherNodes: [] },
   // the studio's courts host; open fallback stays
+  // Settlement v4: the studio court's key, pinned by this ruleset's hash, so every node accepts it with no COURTS entry
+  // (COURTS stays an operator override). The private key lives only in the studio's managed env.
+  attestors: ["09b2b84947a10dcee1bc2f05deda59c6f4b98dc6f3c6d193071fd7c82d097e23"],
   services: {
     leaderboard: eloLeaderboard({ k: 24 }),
     credits: winnerTakesCredits({ pot: 10, currency: "pickles" }),
-    stats: { track: ["matches", "wins", "ticks"] }
+    // Settlement v4: what the court observes per player, as report.stats (names proposed for the PB session's hand-back;
+    // the node keeps only these names, as non-negative integers).
+    stats: { track: ["matches", "wins", "ticks"], schema: { pointsWon: "sum", aces: "sum", winners: "sum", unforcedErrors: "sum", smashes: "sum", dinks: "sum", longestRally: "max", matchesMvp: "sum" } }
   },
   validate: validateReport,
   /** Team score to every member. Abandoned games score 0–0 so nothing moves. */

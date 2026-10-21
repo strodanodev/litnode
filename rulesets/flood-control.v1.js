@@ -1,3 +1,5 @@
+// flood-control.v1 · built by tools/bundle-ruleset.mjs
+
 // protocol/canonical.js
 var K = new Uint32Array([
   1116352408,
@@ -66,7 +68,29 @@ var K = new Uint32Array([
   3329325298
 ]);
 
+// protocol/stats.js
+var STAT_OPS = Object.freeze(["sum", "max", "min", "last"]);
+var NAME_RE = /^[a-zA-Z][a-zA-Z0-9]{0,31}$/;
+var MAX_STATS = 32;
+var RESERVED = Object.freeze(["matches", "wins", "ticks"]);
+function schemaProblem(schema) {
+  if (schema == null) return null;
+  if (typeof schema !== "object" || Array.isArray(schema)) return "stats.schema must be an object { name: op }";
+  const names = Object.keys(schema);
+  if (names.length > MAX_STATS) return `stats.schema has ${names.length} names; at most ${MAX_STATS}`;
+  for (const n of names) {
+    if (!NAME_RE.test(n)) return `stat name ${JSON.stringify(n)} must match ${NAME_RE}`;
+    if (RESERVED.includes(n)) return `stat name ${n} is reserved for the built-in line`;
+    if (!STAT_OPS.includes(schema[n])) return `stat ${n}: op must be one of ${STAT_OPS.join("|")} (got ${JSON.stringify(schema[n])})`;
+  }
+  return null;
+}
+
 // titles/title.js
+var checkSchema = (services, who) => {
+  const p = schemaProblem(services?.stats?.schema ?? null);
+  if (p) throw new Error(`${who}: ${p}`);
+};
 function defineAttestedTitle({
   rulesetId,
   modes = ["ranked", "casual"],
@@ -78,6 +102,7 @@ function defineAttestedTitle({
   services = {},
   validate,
   scores,
+  stats = null,
   equipment = "studio",
   display = null,
   // Which courts may sign reports for this title (ed25519 pubkeys, hex). A
@@ -87,6 +112,7 @@ function defineAttestedTitle({
 }) {
   for (const [name, fn] of Object.entries({ validate, scores }))
     if (typeof fn !== "function") throw new Error(`defineAttestedTitle: ${name} is required`);
+  checkSchema(services, "defineAttestedTitle");
   return {
     manifest: {
       kind: "attested",
@@ -108,7 +134,9 @@ function defineAttestedTitle({
     },
     balance,
     validate,
-    scores
+    scores,
+    // (report, participants) → { participant: { name: value } }; the node keeps only the schema's names.
+    stats: typeof stats === "function" ? stats : (report) => report?.stats ?? null
   };
 }
 
@@ -150,9 +178,18 @@ var flood_control_adapter_default = defineAttestedTitle({
     url: "https://play.bagyo.app",
     description: "Storm of the Day: hold the city against one seeded typhoon. Every run is replayed by the game before it settles."
   },
-  // one seat: no Elo between players, no pot; the mesh keeps match stats, the game keeps its own board
-  services: { stats: { track: ["matches", "wins", "ticks"] } },
+  // one seat: no Elo between players, no pot; the mesh keeps match stats, the game keeps its own board.
+  // Settlement v4: the run's integers fold per player (names and ops from the FLOOD CONTROL contract; the court's
+  // court key joins `attestors` with its hand-back, until then nodes authorize it by COURTS).
+  services: { stats: { track: ["matches", "wins", "ticks"], schema: { points: "max", stars: "sum", rescued: "sum", casualties: "sum", bestChain: "max", keptDry: "sum", stormsSurvived: "sum" } } },
   validate: validateReport,
+  /** The run's stats for its one seat: `report.stats` when the court sends it (v4), else the integers every report
+   *  already carries, so runs settled before the court upgrades fold too. */
+  stats(report, participants) {
+    if (report.stats) return report.stats;
+    const p = participants[0];
+    return { [p]: { points: report.points, stars: report.stars, rescued: report.rescued, casualties: report.casualties, bestChain: report.bestChain, stormsSurvived: report.survived ? 1 : 0, ...Number.isInteger(report.keptDry) ? { keptDry: report.keptDry } : {} } };
+  },
   /** The run's points to its one player. */
   scores(report, participants) {
     return Object.fromEntries(participants.map((p) => [p, report.points]));

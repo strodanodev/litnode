@@ -79,7 +79,7 @@ function mergeMeshTitles(titles) {
       tagline: typeof d.description === 'string' ? d.description : 'Hosted on the mesh.', description: typeof d.description === 'string' ? d.description : `A title hosted by ${hosts} node${hosts === 1 ? '' : 's'} on the litVM Games mesh.`,
       controls: Array.isArray(d.controls) ? d.controls.map(String) : [], modes: Array.isArray(t.modes) ? t.modes.map(String) : [], players: t.kind === 'attested' ? 'attested' : `${Array.isArray(t.participants) ? t.participants.join('/') : t.participants}P`,
       url, cover, rulesetId: t.rulesetId, buildHash: t.buildHash,
-      status: t.kind === 'attested' ? 'attested' : 'mesh', tags: ['MESH', ...(t.published ? ['PUBLISHED'] : t.bondedHosts ? ['BONDED HOST'] : [])], badge: url ? new URL(url).host : 'mesh', playable: !!url, mesh: true,
+      kind: t.kind === 'attested' ? 'attested' : 'replayable', status: t.kind === 'attested' ? 'attested' : 'mesh', tags: ['MESH', ...(t.published ? ['PUBLISHED'] : t.bondedHosts ? ['BONDED HOST'] : [])], badge: url ? new URL(url).host : 'mesh', playable: !!url, mesh: true,
     });
     changed = true;
   }
@@ -224,7 +224,7 @@ function history(rid, who = player.id) {
     if (!mine) continue;
     const res = sa === 0.5 ? 'draw' : (mine === 'A') === (sa === 1) ? 'win' : 'loss';
     const opp = (mine === 'A' ? B : A).filter((p) => p !== who);
-    out.push({ matchId: d.matchId, when: d.settledAt, res, opp, ticks: d.ticks ?? 0, rating: tables.rating[who] ?? 1200, mode: d.mode, cosigned: (d.cosigners?.length ?? 0) > 0, verification: d.verification ?? (d.cosigners?.length ? 'verified' : 'unverified'), official: !!d.official, attestation: d.attestation, chain: d.chain ?? null });
+    out.push({ matchId: d.matchId, when: d.settledAt, res, opp, ticks: d.ticks ?? 0, rating: tables.rating[who] ?? 1200, mode: d.mode, proof: matchProof(d), cosigned: (d.cosigners?.length ?? 0) > 0, verification: d.verification ?? (d.cosigners?.length ? 'verified' : 'unverified'), official: !!d.official, attestation: d.attestation, chain: d.chain ?? null });
   }
   return out;
 }
@@ -324,7 +324,26 @@ function nodePanel({ compact = true } = {}) {
 // ═══════════════════════════════════════════════ pieces ══
 const panel = (title, body, more = '', cls = '') => `<section class="panel ${cls}"><div class="panel-h"><h3>${title}</h3>${more}</div><div class="panel-b">${body}</div></section>`;
 const moreLink = (href, label = 'view all') => `<a class="more" href="${href}">${label} ›</a>`;
-const gameTag = () => '<span class="tag live">Live</span>';
+/** Settlement v4 proof levels, one word each, with what a reader should take from it (docs/SETTLEMENT-STANDARD.md §2). */
+const PROOF = {
+  verified: ['proof live', 'L3 verified: independent nodes replayed the player-signed input log. Ranked results count on the official ladder.'],
+  checkable: ['proof checkable', "L2 checkable: an authorized court replayed it, the mesh holds the log, and the title's verifier is registered on litVM — anyone can re-run it."],
+  attested: ['proof court', "L1 attested: an authorized court signed the report and the node checked it against the title's rules. Not re-run by anyone."],
+  host: ['proof', "L0 host: one node's word. Casual only; never counts."],
+};
+const proofTag = (level) => (PROOF[level] ? `<span class="tag ${PROOF[level][0]}" title="${esc(PROOF[level][1])}">${level}</span>` : '');
+/** A result's level: the delta's own `proof` (protocol 4), else what its provenance supported (protocol 3). */
+const matchProof = (d) => d.proof ?? ({ players: 'verified', relay: 'checkable', attested: 'attested' }[d.attestation] ?? 'host');
+/** The best level a title's results reach: a replayable title's are verified; an attested one's are attested, or
+ *  checkable once one of its results here was (the court commits its log and its verifier is registered). */
+const titleProof = (g) => {
+  if (!g.rulesetId) return null;
+  if ((g.kind ?? (g.status === 'attested' ? 'attested' : 'replayable')) === 'replayable') return 'verified';
+  return (S.deltas[g.rulesetId] ?? []).some((d) => d.proof === 'checkable') ? 'checkable' : 'attested';
+};
+/** A title is "on the mesh" only with a ruleset a node runs; anything else is hosted by its studio and says so. */
+const gameTag = (g) => (g?.rulesetId ? proofTag(titleProof(g)) : '<span class="tag" title="Played at the studio\'s own site; no node settles its matches yet.">not on the mesh</span>');
+const settledBy = (g) => ({ verified: 'replay of the player-signed input log (L3 verified)', checkable: "the court's replay, log held by the mesh, verifier registered (L2 checkable)", attested: "the court's signed report, checked against the rules (L1 attested)" }[titleProof(g)] ?? 'not on the mesh yet');
 /** What backs a result, in one word: verified (players signed + independent witness agreed), disputed, or unverified — and whether it counts. */
 const verifyTag = (d) => d.chain === 'final' ? '<span class="tag live" title="finalized on chain: committed before play, settled by the host, attested by three witnesses; counts toward the official ladder">final on chain</span>' : d.chain === 'void' ? '<span class="tag court" title="voided on chain: the witnesses disagreed, or the host never settled">voided</span>' : d.chain && d.chain !== 'none' ? `<span class="tag" title="on chain, ${esc(d.chain)}: attestations still arriving">on chain · ${esc(d.chain)}</span>` : d.verification === 'verified' ? `<span class="tag live" title="players signed, an independent witness reached the same result${d.official ? '; counts toward the official ladder' : ''}">verified${d.official ? '' : ' · unofficial'}</span>` : d.verification === 'disputed' ? '<span class="tag court" title="a witness recomputed a different result">disputed</span>' : `<span class="tag" title="${esc(d.attestation ?? '')}: not independently verified; not on the official ladder">unverified</span>`;
 const statusTag = (g) => g.status === 'attested' ? '<span class="tag court">Court</span>' : g.status === 'external' ? '<span class="tag hosted">Hosted</span>' : g.status === 'mesh' ? '<span class="tag hosted">Mesh</span>' : '';
@@ -576,11 +595,12 @@ function renderGames() {
     </section>
     <div class="section-h aw-lib"><h4>Library</h4></div>
     <div class="cards" id="games-cards"></div>`;
-  $('games-h').innerHTML = `<h1 class="chrome">Arcade</h1><span class="dim">${GAMES.length} titles · settled on litVM</span>`;
+  const onMesh = GAMES.filter((g) => g.rulesetId).length;
+  $('games-h').innerHTML = `<h1 class="chrome">Arcade</h1><span class="dim">${GAMES.length} titles · ${onMesh} settled on the mesh</span>`;
   renderArcadeWindow();
   $('games-cards').innerHTML = GAMES.map((g, i) => `
     <article class="card" style="--ga:${g.accent}">
-      <a class="cover" href="#/game/${g.id}">${coverArt(g)}<span class="tag live live">Live</span><span class="no">0${i + 1}</span></a>
+      <a class="cover" href="#/game/${g.id}">${coverArt(g)}${gameTag(g)}<span class="no">0${i + 1}</span></a>
       <div class="body">
         <div class="ttl"><h2>${esc(g.title)}<sup>™</sup></h2><a class="sel" href="#/game/${g.id}">Select ›</a></div>
         <div class="tagline">${esc(g.tagline)}</div>
@@ -609,13 +629,13 @@ function renderGame(g) {
         <div style="height:16px"></div>
         ${panel('Controls & modes', `<ul class="list">${g.controls.map((c) => `<li>${esc(c)}</li>`).join('')}</ul><div class="section-h"><h4>Modes</h4></div><div class="chips">${g.modes.map((m) => `<span class="chip" style="cursor:default">${esc(m)}</span>`).join('')}</div>`)}
         <div style="height:16px"></div>
-        ${panel('On the mesh', `<dl class="mesh"><div><dt>ruleset</dt><dd>${esc(g.rulesetId ?? '—')}</dd></div><div><dt>build</dt><dd title="${esc(g.buildHash ?? '')}">${g.buildHash ? short(g.buildHash, 20) : '—'}</dd></div><div><dt>settled by</dt><dd>${!g.rulesetId ? 'not on the mesh yet' : g.id === 'pickle-brawl' ? 'attestor signature + rules check' : 'replay of the signed input ledger'}</dd></div><div><dt>settled</dt><dd>${S.online && g.rulesetId ? `${(S.deltas[g.rulesetId] ?? []).length} matches` : '—'}</dd></div></dl>`)}
+        ${panel('On the mesh', `<dl class="mesh"><div><dt>ruleset</dt><dd>${esc(g.rulesetId ?? '—')}</dd></div><div><dt>build</dt><dd title="${esc(g.buildHash ?? '')}">${g.buildHash ? short(g.buildHash, 20) : '—'}</dd></div><div><dt>settled by</dt><dd>${esc(settledBy(g))}</dd></div><div><dt>settled</dt><dd>${S.online && g.rulesetId ? `${(S.deltas[g.rulesetId] ?? []).length} matches` : '—'}</dd></div></dl>`)}
       </div>
       <div class="col">
         ${panel('Leaderboard', g.rulesetId ? boardTable(g.rulesetId, 10) : '<div class="empty">This title is not on the mesh yet — its ruleset lands with the node sync.</div>', g.rulesetId ? moreLink('#/leaderboards') : '')}
         <div style="height:16px"></div>
         ${panel('Your record', me || hist.length || progressLine(g.rulesetId) ? `${recordXp(g.rulesetId)}<div class="stats4" style="margin:0 0 12px"><div class="stat"><div class="k">Rank</div><div class="v">${me ? `#${me.rank}` : '—'}</div></div><div class="stat"><div class="k">Rating</div><div class="v">${me?.rating ?? 1200}</div></div><div class="stat"><div class="k">Matches</div><div class="v">${S.stats[g.rulesetId]?.[player.id]?.matches ?? 0}</div></div><div class="stat"><div class="k">Wins</div><div class="v">${S.stats[g.rulesetId]?.[player.id]?.wins ?? 0}</div></div></div>
-          <table><thead><tr><th>Result</th><th>Opponent</th><th class="num">Length</th><th class="num">Rating</th><th>When</th></tr></thead><tbody>${hist.map((h) => `<tr><td class="res ${h.res[0]}">${h.res.toUpperCase()}</td><td>${h.opp.map((o) => short(o, 10)).join(', ') || '—'}</td><td class="num">${Math.floor(h.ticks / 3600)}:${String(Math.floor((h.ticks / 60) % 60)).padStart(2, '0')}</td><td class="num">${h.rating}</td><td class="dim">${h.when ? new Date(h.when).toLocaleDateString() : '—'} ${verifyTag(h)} <a class="link rcpt-link" href="#/match/${esc(h.matchId)}" title="the match's transactions on the Liteforge explorer">receipt ›</a></td></tr>`).join('') || '<tr><td colspan="5" class="dim">No matches yet.</td></tr>'}</tbody></table>` : `<div class="empty">${S.online ? 'No settled matches under your key yet. Play one — it shows up here once the mesh settles it.' : 'Start a node to load your record.'}</div>`)}
+          <table><thead><tr><th>Result</th><th>Opponent</th><th class="num">Length</th><th class="num">Rating</th><th>When</th></tr></thead><tbody>${hist.map((h) => `<tr><td class="res ${h.res[0]}">${h.res.toUpperCase()}</td><td>${h.opp.map((o) => short(o, 10)).join(', ') || '—'}</td><td class="num">${Math.floor(h.ticks / 3600)}:${String(Math.floor((h.ticks / 60) % 60)).padStart(2, '0')}</td><td class="num">${h.rating}</td><td class="dim">${h.when ? new Date(h.when).toLocaleDateString() : '—'} ${proofTag(h.proof)} ${verifyTag(h)} <a class="link rcpt-link" href="#/match/${esc(h.matchId)}" title="the match's transactions on the Liteforge explorer">receipt ›</a></td></tr>`).join('') || '<tr><td colspan="5" class="dim">No matches yet.</td></tr>'}</tbody></table>` : `<div class="empty">${S.online ? 'No settled matches under your key yet. Play one — it shows up here once the mesh settles it.' : 'Start a node to load your record.'}</div>`)}
       </div>
     </div>`;
   if (g.rulesetId) renderMatchmaking(g);

@@ -39,6 +39,7 @@ export const GAMES = [
     cover: './covers/agent-fighter.jpg',
     rulesetId: 'agent-fighter.v1',
     buildHash: '859e7215418db6473f0ceb1a88a1f51dc279db1974636c2262f547fcafca76da',
+    kind: 'replayable', // L3: both players sign the input log and witnesses replay it
     status: 'live',
     tags: ['PWA', 'CREDITS / TICKETS'],
     badge: 'agentfighter.wtf',
@@ -58,8 +59,9 @@ export const GAMES = [
     cover: './covers/pickle-brawl.jpg',
     logo: './covers/pickle-brawl-logo.webp',
     rulesetId: 'pickle-brawl.v1',
-    buildHash: 'db035b782d23e85d4dcfdab0b2364f9e4f1c828b3dd8b2217c25b62cf0e1cb2e',
-    status: 'live',
+    buildHash: 'd7233fa3e5b838f320952e71a2298411c638c69cd5b116e7c29c65263d35d991',
+    kind: 'attested', // L1 today: the court signs a report the node checks; L2 once it commits a log and a verifier
+    status: 'attested',
     tags: ['THREE.JS', 'PWA', 'PICKLES / BRINE'],
     badge: 'picklebrawl.live',
     playable: true,
@@ -76,7 +78,9 @@ export const GAMES = [
     players: '1P',
     url: 'https://afc-pi-seven.vercel.app/',
     cover: './covers/afc.jpg',
-    status: 'live',
+    // No ruleset yet: hosted by its studio, never labelled as settled on litVM (audit 2026-10-21 §4.3). The adapter
+    // (afc.v1, attested, L2 with its verifier) lands with the AFC hand-back; then this gets rulesetId and login.
+    status: 'external',
     tags: ['THREE.JS', 'PWA', 'SCRAP / SILVER'],
     badge: 'afc-pi-seven.vercel.app',
     playable: true,

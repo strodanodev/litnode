@@ -52,7 +52,9 @@ test('attested: court-signed report settles, witness co-signs attestation-only, 
   // valid signature from any other key is not a court's word.
   const courts = { 'pickle-brawl.v1': [court.publicKey] };
   const host = await spawn({ operator: 'studio', roles: ['mesh', 'settler'], rulesets: [RULESET], courts });
-  const wit = await spawn({ operator: 'guild-a', roles: ['mesh', 'witness'], seeds: [host.addr], courts });
+  // The witness runs the title from its own RULESETS: a rebuilt ruleset is unsigned until its publisher signs or
+  // registers it, and a peer's unsigned build is refused under TITLE_TRUST=trusted (that path is title-registry.test's).
+  const wit = await spawn({ operator: 'guild-a', roles: ['mesh', 'witness'], seeds: [host.addr], rulesets: [RULESET], courts });
   assert.ok(await until(() => wit.rulesets()['pickle-brawl.v1']));
 
   const r1 = await fetch(`${host.addr}/ledger`, { method: 'POST', body: JSON.stringify(await submission(court, report('pb-1', 'doubles', 11, 7, 0))) });
@@ -96,8 +98,9 @@ test('attested: court-signed report settles, witness co-signs attestation-only, 
   // ranked without a placement is refused, court or no court
   const rr = await fetch(`${host.addr}/ledger`, { method: 'POST', body: JSON.stringify({ ...(await submission(court, report('pb-7', 'singles', 11, 3, 0))), mode: 'ranked' }) });
   assert.equal(rr.status, 400); assert.match((await rr.json()).error, /ranked: participants must be player keys/);
-  // a node that authorizes no court for the title refuses everything for it
+  // a node with no COURTS entry still knows the title's own court (manifest `attestors`, settlement v4) and refuses
+  // any other key; this test's court is not the studio's, so it is refused there
   const none = await spawn({ operator: 'guild-b', roles: ['mesh', 'settler'], rulesets: [RULESET] });
   const rn = await fetch(`${none.addr}/ledger`, { method: 'POST', body: JSON.stringify(await submission(court, report('pb-8', 'singles', 11, 3, 0))) });
-  assert.equal(rn.status, 400); assert.match((await rn.json()).error, /no authorized court/);
+  assert.equal(rn.status, 400); assert.match((await rn.json()).error, /is not an authorized court/);
 });
