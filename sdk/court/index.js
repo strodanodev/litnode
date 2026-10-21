@@ -156,9 +156,11 @@ export function checkReport(report, participants = null) {
     const c = report.commitments;
     if (!isObj(c)) e.push('report.commitments must be an object');
     else {
-      if (typeof c.logFormat !== 'string' || !c.logFormat) e.push('report.commitments.logFormat: a non-empty string');
+      // The same rules the node applies (node/settle.js commitmentsOf), so a court finds out here, not from a 400.
+      if (typeof c.logFormat !== 'string' || !c.logFormat || c.logFormat.length > 64) e.push('report.commitments.logFormat: a non-empty string of at most 64 characters');
       if (c.inputsHash !== null && !HEX64.test(c.inputsHash ?? '')) e.push('report.commitments.inputsHash: lowercase hex sha256 of the exact log bytes, or null');
-      for (const k of ['finalHash', 'verifierHash']) if (c[k] !== null && typeof c[k] !== 'string') e.push(`report.commitments.${k}: a string or null`);
+      if (c.finalHash !== null && (typeof c.finalHash !== 'string' || !c.finalHash || c.finalHash.length > 128)) e.push('report.commitments.finalHash: a string of at most 128 characters, or null');
+      if (c.verifierHash !== null && !HEX64.test(c.verifierHash ?? '')) e.push('report.commitments.verifierHash: lowercase hex sha256("verifier" NUL tar), or null');
     }
   }
   if (report.stats !== undefined) {
@@ -517,7 +519,8 @@ export async function settle(env, { node = 'auto', log = null, fetch: fetchImpl 
   const p = await request(fetchImpl, `${base}/ledger`, { method: 'POST', body: JSON.stringify(body), retries, backoffMs, timeoutMs });
   if (p.ok && isObj(p.body)) {
     // The node answers a matchId it already settled with that delta: another court's (or another report's) is not ours.
-    const theirs = p.body.attestor && env.attestor?.id && p.body.attestor !== env.attestor.id;
+    // Nodes from 0.12 mark that answer `existing: true`; older ones are told apart by the court that signed it.
+    const theirs = p.body.existing === true || (p.body.attestor && env.attestor?.id && p.body.attestor !== env.attestor.id);
     return out({ status: theirs ? 'already' : 'settled', delta: p.body, protocol, logAttached: attach && !theirs });
   }
   if (p.status && p.status >= 400 && p.status < 500 && p.status !== 408 && p.status !== 429) return out({ status: 'refused', error: p.error, httpStatus: p.status, protocol });

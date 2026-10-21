@@ -298,7 +298,8 @@ export function createSettlement({
   /** Host / settler side: bind, verify what can be verified, replay, sign. */
   const intake = async (sub) => {
     if (!sub?.matchId || typeof sub.matchId !== 'string' || !Array.isArray(sub.participants) || !sub.rulesetId) throw new Error('malformed submission');
-    if (deltas.has(sub.matchId)) return decorate(deltas.get(sub.matchId));
+    // An id already settled answers with what it settled, marked so a court tells "already" from "just now".
+    if (deltas.has(sub.matchId)) return { ...decorate(deltas.get(sub.matchId)), existing: true };
     if (!['ranked', 'casual', undefined].includes(sub.mode)) throw new Error(`unknown mode ${sub.mode}`);
     const mode = sub.mode ?? 'casual';
     if (new Set(sub.participants).size !== sub.participants.length) throw new Error('duplicate participant');
