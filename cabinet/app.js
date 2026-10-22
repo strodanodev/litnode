@@ -1139,7 +1139,7 @@ document.addEventListener('click', (e) => {
   // Everything a title needs to run and settle the placed match (sdk/client.js):
   // the host's address to POST /ledger to, the build to sign for, the mode the
   // node will require, the participant order the log is recorded in.
-  else if ('mmLaunch' in t.dataset) { if (MM.game && MM.check?.ok) play(MM.game, { matchId: MM.match.matchId, host: MM.match.host, hostAddr: MM.host?.addr ?? null, witness: MM.check.witness, wsAddr: MM.relay ?? MM.host?.wsAddr ?? null, beacon: MM.match.beacon, beaconSource: MM.match.beaconSource ?? null, participants: MM.match.participants, mode: MM.match.mode ?? null, buildHash: MM.match.buildHash ?? null, rulesetId: MM.match.rulesetId ?? MM.game.rulesetId ?? null }); }
+  else if ('mmLaunch' in t.dataset) { if (MM.game && MM.check?.ok) play(MM.game, { matchId: MM.match.matchId, host: MM.match.host, hostAddr: MM.host?.addr ?? null, witness: MM.check.witness, wsAddr: MM.relay ?? MM.host?.wsAddr ?? null, beacon: MM.match.beacon, beaconSource: MM.match.beaconSource ?? null, participants: MM.match.participants, mode: MM.match.mode ?? null, buildHash: MM.match.buildHash ?? null, rulesetId: MM.match.rulesetId ?? MM.game.rulesetId ?? null, descriptor: MM.match.envelope ?? null }); }
   else if (t.dataset.lb) { lbTab = t.dataset.lb; render(); }
   else if (t.dataset.cards) { cardKind = t.dataset.cards; render(); }
   else if ('cardsHeld' in t.dataset) { cardHeld = !cardHeld; render(); }
@@ -1154,7 +1154,7 @@ document.addEventListener('click', (e) => {
 // ═══════════════════════════════════════════════ play ══
 // Shell → game: { type:'cabinet:init', version:1, player:{id,guest,name}, air:{id,email,address,tokenId,name}|null, node:{url,online}, game:{id,title},
 //                 chain:{chainId, rpc, generation, contracts:{NodeDirectory:{address},NodeStake:{address},…}}   ← the CURRENT contract set: a title that discovers the mesh on its own takes these, never its own constants
-//                 match?:{matchId, host, hostAddr, witness, wsAddr, beacon, beaconSource, participants, mode, buildHash, rulesetId} }   ← present when launched from a verified placement
+//                 match?:{matchId, host, hostAddr, witness, wsAddr, beacon, beaconSource, participants, mode, buildHash, rulesetId, descriptor} }   ← present when launched from a verified placement; `descriptor` is the host's signed envelope: send it back with the ledger (sdk/client.js settle)
 //                 login:'arcade'|null   ← 'arcade': this title signs in through this page (below), never with its own dialog
 // Game → shell: { type:'cabinet:hello' } (ask for init) · { type:'cabinet:exit' }
 //

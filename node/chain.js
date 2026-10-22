@@ -193,6 +193,27 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
     }
     return out;
   };
+  /** NodeStake.standingOf for ONE key AT a block — a placement's pinned beacon block: the stake table of the
+   *  moment the mesh placed the match, not of now, for a placing key no heartbeat reaches any more (it restarted,
+   *  or the placement outlived the 15 minutes the book keeps it). An RPC that holds no state that far back is
+   *  asked at `latest` instead and the answer says so (`at`). Cached per key and block; a failed read is not. */
+  const standingAtCache = new Map();
+  const standingAt = async (nodeId, block) => {
+    if (!nodeStake || offline) return null;
+    const tag = Number.isInteger(block) && block >= 0 ? '0x' + block.toString(16) : 'latest';
+    const k = `${nodeId}|${tag}`;
+    if (standingAtCache.has(k)) return standingAtCache.get(k);
+    let out = null;
+    try { out = { ...decodeStanding(await call('eth_call', [standingCall(nodeStake, nodeId), tag])), at: tag }; }
+    catch (e) {
+      if (tag === 'latest') { lastError = String(e.message ?? e); return null; }
+      try { out = { ...decodeStanding(await call('eth_call', [standingCall(nodeStake, nodeId), 'latest'])), at: 'latest', fallback: String(e.message ?? e) }; }
+      catch (e2) { lastError = String(e2.message ?? e2); return null; }
+    }
+    standingAtCache.set(k, out);
+    if (standingAtCache.size > 2000) standingAtCache.delete(standingAtCache.keys().next().value);
+    return out;
+  };
   /** eth_getLogs for a filter (protocol/matchbook.js logsFilter). Throws on an RPC failure so a cursor is never advanced past a gap. */
   const getLogs = async (filter) => { if (offline) return []; return await call('eth_getLogs', [filter]); };
   const blockNumber = async () => { if (offline) return null; return parseInt(await call('eth_blockNumber', []), 16); };
@@ -265,7 +286,7 @@ export function createChain({ rpc, offline = false, nodeStake = null, playerProf
   };
 
   return {
-    pollBlock, beaconFor, standings, nodeInfo, stakeAdminIsContract, releaseStatus, titleBuild, titleOwner, getLogs, blockNumber, profiles, profileName, directory, agentAt, rpc: call,
+    pollBlock, beaconFor, standings, standingAt, nodeInfo, stakeAdminIsContract, releaseStatus, titleBuild, titleOwner, getLogs, blockNumber, profiles, profileName, directory, agentAt, rpc: call,
     // The last n blocks this node sampled (number, hash, timestamp) — for a dashboard's block strip; real hashes, not a fixture.
     recentBlocks: (n = 12) => blocks.slice(-n).map((b) => ({ number: b.number, hash: b.hash, timestamp: b.timestamp })),
     /** The head's base fee in wei, or null (no base fee on this chain / nothing polled yet). */

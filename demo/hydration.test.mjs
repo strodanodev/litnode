@@ -27,19 +27,23 @@ const ALICE = '0x' + 'a1'.repeat(20), BOB = '0x' + 'b0'.repeat(20), MALLORY = '0
 const word = (h) => h.replace(/^0x/, '').padStart(64, '0');
 const enc = (s) => Buffer.from(s).toString('hex');
 
-/** A mock chain holding a v2 registry, profiles, and blocks that advance so a chain beacon exists. */
-function mockChain({ tokens, bindings }) {
-  // A deterministic chain: block n always has the same timestamp and hash, and `latest` is the height the clock has
-  // reached (four blocks a second, like LiteForge). The old mock minted a new block on every call, so the beacon — the
-  // first block at or after a bucket's end — depended on who asked when, and host, client and witness could seed one
-  // match differently ("match not finished").
-  const BASE = 0x1000, T0 = Date.now() - 60_000;
-  const block = (n) => ({ number: '0x' + n.toString(16), timestamp: '0x' + Math.floor((T0 + (n - BASE) * 250) / 1000).toString(16), hash: '0x' + n.toString(16).padStart(64, '0') });
+/** A mock chain holding a v2 registry, profiles, and ONE deterministic block per height, so a chain beacon exists
+ *  and every node derives the same one. A height is a function of the clock (one block a second from a genesis a
+ *  minute back), its hash and timestamp a function of the height: `latest` is the same block for every caller
+ *  within the second, and a block asked for by number is the same block whoever asks. The mock used to mint a
+ *  fresh height on every call, so the host and the witness pinned different "first blocks after the bucket" for
+ *  the same bucket, derived different match ids for the same pair, and the witness's smaller id replaced the
+ *  host's placement after the client had already fetched it ("ranked: no placement descriptor"). */
+function mockChain({ tokens, bindings, genesisMs = Date.now() - 60_000, periodMs = 1000 }) {
+  const BASE = 0x1000;
+  const headNo = () => BASE + Math.floor((Date.now() - genesisMs) / periodMs);
+  const blockAt = (n) => ({ number: '0x' + n.toString(16), timestamp: '0x' + Math.floor((genesisMs + (n - BASE) * periodMs) / 1000).toString(16), hash: '0x' + n.toString(16).padStart(64, '0') });
   const calls = { registry: 0, blocks: new Set() };
   return async (url, { body }) => {
     const { id, method, params } = JSON.parse(body);
     let result;
-    if (method === 'eth_getBlockByNumber') { const want = params?.[0]; const head = BASE + Math.floor((Date.now() - T0) / 250); const n = want === 'latest' || want == null ? head : Math.min(parseInt(want, 16), head); result = block(n); }
+    if (method === 'eth_getBlockByNumber') { const n = params[0] === 'latest' ? headNo() : parseInt(params[0], 16); result = n <= headNo() ? blockAt(n) : null; }
+    else if (method === 'eth_blockNumber') result = '0x' + headNo().toString(16);
     else if (method === 'eth_call') {
       const data = params[0].data, to = params[0].to;
       if (to === PROF && data.startsWith(selector(OWNER_OF_KEY))) { const b = bindings[data.slice(10)] ?? { owner: '0x' + '0'.repeat(40), tokenId: 0n, active: false }; result = '0x' + word(b.owner) + word(b.tokenId.toString(16)) + word(b.active ? '1' : '0'); }

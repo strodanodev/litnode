@@ -269,7 +269,7 @@ if (!m) throw new Error('opened with Play, not from a placed match: nothing to s
 const sim = createSim(title, { seed: matchSeed(m), participants: m.participants, ctx: { agents: externalAgents(m.participants) } });
 const rec = createRecorder({ matchId: m.matchId, participants: m.participants, rulesetId: 'my-game.v1', buildHash: m.buildHash, mode: m.mode });
 // each tick:  sim.step(inputs); rec.record(inputs); render(sim.view());
-// at the end: await settle({ nodeUrl: m.hostAddr, recorder: rec, signers: { [shell.player.id]: shell, [them]: theirSig } });   // theirSig: the other player's, over your transport
+// at the end: await settle({ nodeUrl: m.hostAddr, recorder: rec, signers: { [shell.player.id]: shell, [them]: theirSig }, descriptor: m.descriptor });   // theirSig: the other player's, over your transport; descriptor: the host's signed placement, so the ledger binds even after the host's book let the placement go
 ```
 
 The client imports the same file the node replays. The arcade shell signs
