@@ -4,5 +4,8 @@
   "engine": "af-core-9",
   "afCommit": "29d4400",
   "bytes": 97975,
-  "builtAt": "2026-10-22T20:10:00.497Z"
+  "builtAt": "2026-10-22T20:10:00.497Z",
+  "publisher": "4d8759b0dab63817f0984a6eec1ec0d6ac4933a9c0aeb26a0de2d61755e08150",
+  "sig": "c4cab77cdb054825471640fd6b7e815ec69e2e0a248b7317ad9f3128705a059fc093abfc098c5f1b9ba50513db280701399c8a1e250abfebbbe40dfb7e451a06",
+  "signedAt": "2026-10-22T20:12:47.437Z"
 }
