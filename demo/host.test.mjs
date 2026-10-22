@@ -15,8 +15,10 @@ import { createNode } from '../node/litnode.js';
 import { parseEnv, writeEnv, readEnv, validateEnv, effectiveConfig, daemonEnv, ensureIdentity, readIdentity, preflight, inspect, plan, serviceStatus, ROOT } from '../sdk/host/index.mjs';
 
 const RULESET = join(ROOT, 'rulesets', 'tug.v1.js');
+// The disk floor is the operator's concern, not this machine's: a nearly full dev disk must not fail the harness tests.
+process.env.LITNODE_MIN_FREE_MB = '0';
 const cli = (home, args, env = {}) => {
-  const r = spawnSync(process.execPath, [join(ROOT, 'sdk', 'host', 'cli.mjs'), ...args, '--json'], { cwd: ROOT, encoding: 'utf8', env: { ...process.env, LITNODE_HOME: home, LITNODE_NO_UPDATE: '1', ...env }, timeout: 90_000 });
+  const r = spawnSync(process.execPath, [join(ROOT, 'sdk', 'host', 'cli.mjs'), ...args, '--json'], { cwd: ROOT, encoding: 'utf8', env: { ...process.env, LITNODE_HOME: home, LITNODE_NO_UPDATE: '1', LITNODE_MIN_FREE_MB: '0', ...env }, timeout: 90_000 });
   let json = null; try { json = JSON.parse(r.stdout); } catch { /* not json */ }
   return { code: r.status, json, stdout: r.stdout, stderr: r.stderr };
 };

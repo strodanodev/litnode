@@ -350,7 +350,8 @@ export async function preflight(cfg, { env = readEnv(cfg.home), fetchImpl = fetc
     const fsInfo = statfsSync(cfg.dataDir);
     const free = Number(fsInfo.bavail) * Number(fsInfo.bsize);
     const gb = (x) => `${(x / 2 ** 30).toFixed(1)} GB`;
-    add('log-storage', free > 2 ** 30, `${n} log(s), ${(bytes / 2 ** 20).toFixed(1)} MB held; ${gb(free)} free on the data disk`, 'free at least 1 GB on the disk holding DATA_DIR: ledgers and court logs are kept for custody, not evicted');
+    const minFree = Number(process.env.LITNODE_MIN_FREE_MB ?? 1024) * 2 ** 20; // LITNODE_MIN_FREE_MB: the floor, 1 GB by default (tests set 0)
+    add('log-storage', free >= minFree, `${n} log(s), ${(bytes / 2 ** 20).toFixed(1)} MB held; ${gb(free)} free on the data disk`, `free at least ${Math.round(minFree / 2 ** 20)} MB on the disk holding DATA_DIR: ledgers and court logs are kept for custody, not evicted`);
   } catch (e) { add('log-storage', null, `unreadable (${e.message})`); }
   // VERIFIERS=<rulesetId>:<verifierHash>[,<hash>];… — an operator override beside TitleRegistry (settlement v4 checkable).
   if (env?.VERIFIERS) {
