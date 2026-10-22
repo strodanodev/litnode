@@ -382,24 +382,26 @@ new build hash. Old results are never relabelled.
 | | Agent Fighter | Pickle Brawl | FLOOD CONTROL |
 | --- | --- | --- | --- |
 | Kind / level | replayable, L3 | attested; L2 once its verifier is registered | attested; L2 once its verifier is registered |
-| Build | `859e7215…76da` (af-core-8, signed); af-core-9 builds to `290200cf…7691` | `98d23e4e…90d1` | `b16bc0a2…1977` |
+| Build | `7414ddf3…4423` (af-core-9, from the deployed agent-fighter `29d4400`; replaces signed af-core-8 `859e7215…`) | `98d23e4e…90d1` | `b16bc0a2…1977` |
 | Identity | keys. The relay is casual-only and records a key only after its ledger signature verifies | keys for arcade-placed matches, and for matchmaker matches whose AIR profile holds the key; `pb:` otherwise | the arcade key when the shell signs the run (`cabinet:sign-run`); `fc:` otherwise |
 | `attestors` | — | court `09b2b849…7e23` | court `f82a5ef3…da87` |
 | Stats schema | kos, roundsWon, perfectRounds, damageDealt, supersLanded, throwTechs (sum); maxCombo (max); fastestKo (min, absent without a KO) | pointsWon, aces, winners, unforcedErrors, smashes, dinks, matchesMvp (sum); longestRally (max) | points, bestChain (max); stars, rescued, casualties, keptDry (whole percent), stormsSurvived (sum) |
-| Commitments / log | n/a (the ledger is the log) | `pb-court-inputs@1`, `pbstate1:` finalHash, verifier `pickle-brawl.v1` | `arc-runlog@1`, `arc-final@1` finalHash, verifier `56cfff04…0a57` |
+| Commitments / log | n/a (the ledger is the log) | `pb-court-inputs@1`, `pbstate1:` finalHash, verifier `e4cb7337…13b3` | `arc-runlog@1`, `arc-final@1` finalHash, verifier `56cfff04…0a57` |
 | Server bundle | gauntlet, `npm run bundle:server -- gauntlets/agent-fighter.server.json` | court (`gauntlets/pickle-brawl.json`, checkout) | none (Vercel board) |
 | Chain lifecycle | ranked through the gauntlet only | not yet | casual only |
 
 AFC joins later: attested, `hmc-match@2` log, L2 planned (§13 applies
 unchanged).
 
-**Hashes that move with this release.** Pickle Brawl's verifier was packed
-before `bundle-server.mjs` dropped the commit from the hashed manifest, so
-its court must repack (`node services/court/verifier/bundle.mjs`) and name
-the new hash before anyone registers `58e4f0b6…`. FLOOD CONTROL builds its
-own tar without a commit, so `56cfff04…` stands. Agent Fighter's registered
-server bundle `00f7319c…` is superseded by the af-core-9 server; rebuild it
-here.
+**Hashes registered with this release.** Agent Fighter ruleset `7414ddf3…4423`
+and server bundle `e8d8f22b…02fd` (built here from agent-fighter `29d4400`;
+the af-core-8 server `00f7319c…` is superseded). Pickle Brawl ruleset
+`98d23e4e…90d1` and verifier `e4cb7337…13b3` (repacked after the commit left
+the hashed manifest; `58e4f0b6…` is never registered). FLOOD CONTROL ruleset
+`b16bc0a2…1977` and verifier `56cfff04…0a57` (its `.tgz` and sidecar live in
+the game repo's `.deploy/verifier`). The Agent Fighter banner names the
+agent-fighter commit it was built from, so a rebuild from another commit is
+a different hash.
 
 ## 15. Deviations from the shared contract (for the title sessions)
 

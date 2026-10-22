@@ -1,4 +1,4 @@
-// agent-fighter.v1 · engine af-core-8 · af-core 67d734a · built by tools/bundle-ruleset.mjs
+// agent-fighter.v1 · engine af-core-9 · af-core 29d4400 · built by tools/bundle-ruleset.mjs
 
 // protocol/canonical.js
 var canonical = (value) => JSON.stringify(value, (_k, v) => {
@@ -136,7 +136,29 @@ function sha256Hex(input) {
   return out;
 }
 
+// protocol/stats.js
+var STAT_OPS = Object.freeze(["sum", "max", "min", "last"]);
+var NAME_RE = /^[a-zA-Z][a-zA-Z0-9]{0,31}$/;
+var MAX_STATS = 32;
+var RESERVED = Object.freeze(["matches", "wins", "ticks"]);
+function schemaProblem(schema) {
+  if (schema == null) return null;
+  if (typeof schema !== "object" || Array.isArray(schema)) return "stats.schema must be an object { name: op }";
+  const names = Object.keys(schema);
+  if (names.length > MAX_STATS) return `stats.schema has ${names.length} names; at most ${MAX_STATS}`;
+  for (const n of names) {
+    if (!NAME_RE.test(n)) return `stat name ${JSON.stringify(n)} must match ${NAME_RE}`;
+    if (RESERVED.includes(n)) return `stat name ${n} is reserved for the built-in line`;
+    if (!STAT_OPS.includes(schema[n])) return `stat ${n}: op must be one of ${STAT_OPS.join("|")} (got ${JSON.stringify(schema[n])})`;
+  }
+  return null;
+}
+
 // titles/title.js
+var checkSchema = (services, who) => {
+  const p = schemaProblem(services?.stats?.schema ?? null);
+  if (p) throw new Error(`${who}: ${p}`);
+};
 function defineTitle({
   rulesetId,
   tickRate,
@@ -149,17 +171,23 @@ function defineTitle({
   hostPolicy = { affinity: "open" },
   replicas = 3,
   standingFloor = 0,
-  exclusive: exclusive2 = false,
+  exclusive = false,
   init,
   step: step2,
   done,
   scores,
   serialize: serialize2,
   view,
-  services = {}
+  stats = null,
+  services = {},
+  // How the arcade lists the title: { title, url, description?, cover?, accent? }.
+  // url is where the game runs; the cabinet launches it with cabinet:init.
+  display = null
 }) {
   for (const [name, fn] of Object.entries({ init, step: step2, done, scores, serialize: serialize2, view }))
     if (typeof fn !== "function") throw new Error(`defineTitle: ${name} is required`);
+  checkSchema(services, "defineTitle");
+  if (services.stats?.schema && typeof stats !== "function") throw new Error("defineTitle: services.stats.schema needs stats(state, participants)");
   return {
     manifest: {
       kind: "replayable",
@@ -173,7 +201,8 @@ function defineTitle({
       replicas,
       standingFloor,
       hostPolicy,
-      exclusive: exclusive2,
+      exclusive,
+      display,
       balanceVersion: balance2?.version ?? null,
       services: {
         leaderboard: services.leaderboard ?? null,
@@ -190,7 +219,9 @@ function defineTitle({
     // nothing that differs between two honest hosts.
     serialize: serialize2,
     // harness.observe() in Article VII step 5: what may cross to a client.
-    view
+    view,
+    // (state, participants) → { participant: { name: non-negative integer } }, read from the final state only.
+    ...typeof stats === "function" ? { stats } : {}
   };
 }
 var eloLeaderboard = ({ k = 24 } = {}) => ({ kind: "elo", k });
@@ -366,7 +397,7 @@ var STAGE = {
 };
 var TICKS_PER_SEC = 60;
 var ROUND_SECONDS = 99;
-var ENGINE_VERSION = "af-core-8";
+var ENGINE_VERSION = "af-core-9";
 var TUNING_INIT = {
   roundsToWin: 2,
   // best of 3
@@ -1047,34 +1078,22 @@ var characters = [
   loadCharacter(ANALOG),
   loadCharacter(ANALOG)
 ];
-var setCharacters = (c0, c1) => {
-  characters[0] = c0;
-  characters[1] = c1;
-};
 var ITEM_SLOTS = 3;
 var matchItems = [[], []];
-var setMatchItems = (i0, i1) => {
-  const clampSide = (side) => (side ?? []).slice(0, ITEM_SLOTS).map((e) => ({
-    kind: e.kind,
-    amount: Math.max(0, Math.min(500, Math.trunc(e.amount))),
-    durationTicks: Math.max(0, Math.min(7200, Math.trunc(e.durationTicks)))
-  }));
-  matchItems[0] = clampSide(i0);
-  matchItems[1] = clampSide(i1);
-};
+var clampLoadout = (side) => (side ?? []).slice(0, ITEM_SLOTS).map((e) => ({
+  kind: e.kind,
+  amount: Math.max(0, Math.min(500, Math.trunc(e.amount))),
+  durationTicks: Math.max(0, Math.min(7200, Math.trunc(e.durationTicks)))
+}));
 var matchAuras = [{ ...NO_AURA }, { ...NO_AURA }];
-var setMatchPets = (a0, a1) => {
-  matchAuras[0] = clampAura(a0);
-  matchAuras[1] = clampAura(a1);
-};
 var ITEM_KIND_CODE = {
   heal: 1,
   damageMult: 2,
   defenseMult: 3,
   meterGain: 4
 };
-var carriedItem = (i, s) => {
-  const e = matchItems[i][s];
+var carriedItem = (loadout, s) => {
+  const e = loadout[s];
   return e ? { kind: ITEM_KIND_CODE[e.kind], amount: e.amount, dur: e.durationTicks } : { kind: 0, amount: 0, dur: 0 };
 };
 var SPAWN_OFFSET = 180;
@@ -1143,6 +1162,15 @@ var spawnFighter = (x, facing, ch, _side) => ({
   auraHpAcc: 0,
   auraMeterAcc: 0,
   critFlash: 0,
+  // Match stats start at zero; resetRound carries the match-scoped ones.
+  stKos: 0,
+  stPerfects: 0,
+  stDamage: 0,
+  stMaxCombo: 0,
+  stSupers: 0,
+  stTechs: 0,
+  stFastestKo: 0,
+  stTouched: 0,
   dirHist: new Array(HIST_LEN).fill(5)
 });
 var emptyProjectile = () => ({
@@ -1163,12 +1191,22 @@ var spawnOffsetFor = (wallL, wallR) => {
   const halfGap = fpToPx((wallR - wallL) / 2);
   return Math.max(0, Math.min(SPAWN_OFFSET, halfGap - 20));
 };
-var createGameState = (seed, bounds = DEFAULT_BOUNDS) => {
+var withChars = (s, chars) => Object.defineProperty(s, "chars", {
+  value: chars,
+  enumerable: false,
+  writable: false,
+  configurable: true
+});
+var charsOf = (s) => s.chars ?? characters;
+var createGameState = (seed, bounds = DEFAULT_BOUNDS, pins = {}) => {
   const wallL = wallLFp(bounds);
   const wallR = wallRFp(bounds);
   const cx = centerPx(wallL, wallR);
   const off = spawnOffsetFor(wallL, wallR);
-  return {
+  const chars = pins.chars ?? [characters[0], characters[1]];
+  const items = pins.items ? [clampLoadout(pins.items[0]), clampLoadout(pins.items[1])] : matchItems;
+  const pets = pins.pets ? [clampAura(pins.pets[0]), clampAura(pins.pets[1])] : matchAuras;
+  return withChars({
     tick: 0,
     rngSeed: seed | 0,
     phase: 0 /* PreRound */,
@@ -1184,25 +1222,24 @@ var createGameState = (seed, bounds = DEFAULT_BOUNDS) => {
     wallL,
     wallR,
     fighters: [
-      spawnItemFighter(0, cx, off),
-      spawnItemFighter(1, cx, off)
+      spawnItemFighter(0, cx, off, chars[0], items[0], pets[0]),
+      spawnItemFighter(1, cx, off, chars[1], items[1], pets[1])
     ],
     projectiles: Array.from({ length: PROJECTILE_SLOTS }, emptyProjectile)
-  };
+  }, chars);
 };
-var spawnItemFighter = (i, cx, off) => {
+var spawnItemFighter = (i, cx, off, ch, loadout, aura) => {
   const f = spawnFighter(
     cx + (i === 0 ? -off : off),
     i === 0 ? 1 : -1,
-    characters[i],
+    ch,
     i
   );
-  loadCarriedSlots(f, i);
-  installAura(f, i);
+  loadCarriedSlots(f, loadout);
+  installAura(f, aura);
   return f;
 };
-var installAura = (f, i) => {
-  const a = matchAuras[i];
+var installAura = (f, a) => {
   f.auraAtk = a.atk;
   f.auraDef = a.def;
   f.auraCrit = a.crit;
@@ -1212,10 +1249,10 @@ var installAura = (f, i) => {
   f.auraMeterAcc = 0;
   f.critFlash = 0;
 };
-var loadCarriedSlots = (f, i) => {
-  const s0 = carriedItem(i, 0);
-  const s1 = carriedItem(i, 1);
-  const s2 = carriedItem(i, 2);
+var loadCarriedSlots = (f, loadout) => {
+  const s0 = carriedItem(loadout, 0);
+  const s1 = carriedItem(loadout, 1);
+  const s2 = carriedItem(loadout, 2);
   f.itemKind0 = s0.kind;
   f.itemAmount0 = s0.amount;
   f.itemDur0 = s0.dur;
@@ -1229,12 +1266,13 @@ var loadCarriedSlots = (f, i) => {
 var resetRound = (s) => {
   const cx = centerPx(s.wallL, s.wallR);
   const off = spawnOffsetFor(s.wallL, s.wallR);
+  const chars = charsOf(s);
   for (const i of [0, 1]) {
     const prev = s.fighters[i];
     const fresh = spawnFighter(
       cx + (i === 0 ? -off : off),
       i === 0 ? 1 : -1,
-      characters[i],
+      chars[i],
       i
     );
     fresh.meter = prev.meter;
@@ -1252,6 +1290,13 @@ var resetRound = (s) => {
     fresh.auraCrit = prev.auraCrit;
     fresh.auraHpRegen = prev.auraHpRegen;
     fresh.auraEnergyRegen = prev.auraEnergyRegen;
+    fresh.stKos = prev.stKos;
+    fresh.stPerfects = prev.stPerfects;
+    fresh.stDamage = prev.stDamage;
+    fresh.stMaxCombo = prev.stMaxCombo;
+    fresh.stSupers = prev.stSupers;
+    fresh.stTechs = prev.stTechs;
+    fresh.stFastestKo = prev.stFastestKo;
     s.fighters[i] = fresh;
   }
   for (let i = 0; i < PROJECTILE_SLOTS; i++) s.projectiles[i] = emptyProjectile();
@@ -1262,14 +1307,24 @@ var resetRound = (s) => {
   s.superFlashLeft = 0;
   s.roundNum++;
 };
-var snapshot = (s) => ({
+var snapshot = (s) => withChars({
   ...s,
   fighters: [
     { ...s.fighters[0], dirHist: s.fighters[0].dirHist.slice() },
     { ...s.fighters[1], dirHist: s.fighters[1].dirHist.slice() }
   ],
   projectiles: s.projectiles.map((p) => ({ ...p }))
-});
+}, charsOf(s));
+var STAT_FIELDS = [
+  "stKos",
+  "stPerfects",
+  "stDamage",
+  "stMaxCombo",
+  "stSupers",
+  "stTechs",
+  "stFastestKo",
+  "stTouched"
+];
 var FIGHTER_FIELDS = [
   "x",
   "y",
@@ -1327,7 +1382,10 @@ var FIGHTER_FIELDS = [
   "auraEnergyRegen",
   "auraHpAcc",
   "auraMeterAcc",
-  "critFlash"
+  "critFlash",
+  // Appended in af-core-9 (settlement v4): the match stats. Everything above
+  // is the af-core-8 layout, unchanged — legacyStateHash() relies on that.
+  ...STAT_FIELDS
 ];
 var PROJECTILE_FIELDS = [
   "active",
@@ -1371,8 +1429,8 @@ var serialize = (s) => {
   }
   return out;
 };
-var stateHash = (s) => {
-  const data = serialize(s);
+var stateHash = (s) => fnv(serialize(s));
+var fnv = (data) => {
   let h2 = 2166136261;
   for (let i = 0; i < data.length; i++) {
     const v = data[i];
@@ -1386,6 +1444,43 @@ var stateHash = (s) => {
     h2 = Math.imul(h2, 16777619);
   }
   return h2 >>> 0;
+};
+
+// ../AGENT FIGHTER/agent-fighter/packages/core/src/stats.ts
+var STATS_SCHEMA = {
+  kos: "sum",
+  // rounds won by KO
+  roundsWon: "sum",
+  // rounds won (a drawn round counts for both, as in scoring)
+  perfectRounds: "sum",
+  // rounds won outright without taking damage
+  damageDealt: "sum",
+  // health removed from the opponent: hits, chip, throws
+  maxCombo: "max",
+  // longest combo landed, in hits
+  supersLanded: "sum",
+  // supers that landed a clean hit
+  throwTechs: "sum",
+  // throws escaped with a tech
+  fastestKo: "min"
+  // fewest round-clock ticks (60/s) to a KO; absent if none
+};
+var matchStats = (s) => {
+  const line = (i) => {
+    const f = s.fighters[i];
+    const out = {
+      kos: f.stKos,
+      roundsWon: i === 0 ? s.roundsWon0 : s.roundsWon1,
+      perfectRounds: f.stPerfects,
+      damageDealt: f.stDamage,
+      maxCombo: f.stMaxCombo,
+      supersLanded: f.stSupers,
+      throwTechs: f.stTechs
+    };
+    if (f.stFastestKo > 0) out.fastestKo = f.stFastestKo;
+    return out;
+  };
+  return [line(0), line(1)];
 };
 
 // ../AGENT FIGHTER/agent-fighter/packages/core/src/sim.ts
@@ -1880,7 +1975,9 @@ var strike = (s, src, vic, hb) => {
   if (vicAir && inCombo && hb.juggleCost > vic.juggleBudget) return 0;
   const dir = src.facing;
   if (canBlock(vic, src.x, hb.guard)) {
+    const hpBefore2 = vic.health;
     vic.health = Math.max(0, vic.health - (hb.chip > 0 ? buffScaled(hb.chip, src, vic, 0) : 0));
+    tallyDamage(src.buff, vic, hpBefore2);
     vic.blockstunLeft = hb.blockstun;
     vic.velX = dir * fp(hb.pushbackBlock);
     vic.pushblocked = 0;
@@ -1914,7 +2011,13 @@ var strike = (s, src, vic, hb) => {
     TUNING.scalingFloor
   );
   if (vicAir) vic.juggleBudget -= hb.juggleCost;
+  const hpBefore = vic.health;
   vic.health = Math.max(0, vic.health - dmg);
+  tallyDamage(src.buff, vic, hpBefore);
+  if (vic.comboHits > src.buff.stMaxCombo) src.buff.stMaxCombo = vic.comboHits;
+  if (src.move.type === "super" && (!src.attacker || src.attacker.attackConnected !== 1)) {
+    src.buff.stSupers++;
+  }
   const stun = Math.max(
     hb.hitstun - (vic.comboHits >> TUNING.hitstunDecayShift),
     TUNING.minHitstun
@@ -1953,6 +2056,12 @@ var strike = (s, src, vic, hb) => {
   if (vic.health <= 0) koFighter(vic, dir);
   return 1;
 };
+var tallyDamage = (by, vic, hpBefore) => {
+  const dealt = hpBefore - vic.health;
+  if (dealt <= 0) return;
+  by.stDamage += dealt;
+  vic.stTouched = 1;
+};
 var cornerTransfer = (vic, src, push, dir) => {
   const atWall = dir < 0 && vic.x <= WALL_L + CORNER || dir > 0 && vic.x >= WALL_R - CORNER;
   if (atWall && src.attacker && grounded(src.attacker)) {
@@ -1965,7 +2074,7 @@ var koFighter = (f, dir) => {
   setAction(f, 19 /* KO */);
 };
 var spawnProjectile = (s, owner, f, moveIdx) => {
-  const move = characters[owner].b.moves[moveIdx];
+  const move = charsOf(s)[owner].b.moves[moveIdx];
   const pd = move.projectile;
   for (const p of s.projectiles) if (p.active && p.owner === owner) return;
   for (const p of s.projectiles) {
@@ -1982,8 +2091,8 @@ var spawnProjectile = (s, owner, f, moveIdx) => {
     }
   }
 };
-var projectileRect = (p) => {
-  const pd = characters[p.owner].b.moves[p.moveIdx].projectile;
+var projectileRect = (s, p) => {
+  const pd = charsOf(s)[p.owner].b.moves[p.moveIdx].projectile;
   const facing = p.velX >= 0 ? 1 : -1;
   return worldRect(p.x, p.y, facing, pd.rect);
 };
@@ -1999,7 +2108,7 @@ var updateProjectiles = (s) => {
     for (let j = i + 1; j < PROJECTILE_SLOTS; j++) {
       const b = s.projectiles[j];
       if (!b.active || a.owner === b.owner) continue;
-      if (overlaps(projectileRect(a), projectileRect(b))) {
+      if (overlaps(projectileRect(s, a), projectileRect(s, b))) {
         a.active = 0;
         b.active = 0;
       }
@@ -2036,9 +2145,10 @@ var resolveGrabs = (s) => {
     const att = s.fighters[i];
     if (att.action !== 17 /* Grab */) continue;
     const vic = s.fighters[1 - i];
-    const ch = characters[i];
+    const ch = charsOf(s)[i];
     if (vic.techLeft === -1) {
       vic.techLeft = 0;
+      vic.stTechs++;
       att.velX = -att.facing * fp(7);
       vic.velX = -vic.facing * fp(7);
       setAction(att, 0 /* Idle */);
@@ -2054,7 +2164,10 @@ var resolveGrabs = (s) => {
         TUNING.scalingFloor
       );
       vic.juggleBudget = TUNING.juggleBudget;
+      const hpBefore = vic.health;
       vic.health = Math.max(0, vic.health - ch.b.throwDamage);
+      tallyDamage(att, vic, hpBefore);
+      if (att.stMaxCombo < 1) att.stMaxCombo = 1;
       vic.velX = dir * fp(ch.b.throwTossVelX);
       vic.velY = fp(ch.b.throwTossVelY);
       vic.hitstunLeft = 60;
@@ -2070,7 +2183,7 @@ var step = (s, inputs) => {
   WALL_R = s.wallR;
   s.tick++;
   const [f0, f1] = s.fighters;
-  const [c0, c1] = characters;
+  const [c0, c1] = charsOf(s);
   const io0 = gatherInputs(f0, inputs[0]);
   const io1 = gatherInputs(f1, inputs[1]);
   if (s.phase === 3 /* MatchOver */) return;
@@ -2158,10 +2271,10 @@ var step = (s, inputs) => {
   for (const p of s.projectiles) {
     if (!p.active || p.hasHit) continue;
     const vic = s.fighters[1 - p.owner];
-    const vicCh = characters[1 - p.owner];
-    const move = characters[p.owner].b.moves[p.moveIdx];
+    const vicCh = p.owner === 0 ? c1 : c0;
+    const move = (p.owner === 0 ? c0 : c1).b.moves[p.moveIdx];
     const pd = move.projectile;
-    const rectW = projectileRect(p);
+    const rectW = projectileRect(s, p);
     for (const vb of hurtboxesOf(vic, vicCh)) {
       if (overlaps(rectW, worldRect(vic.x, vic.y, vic.facing, vb))) {
         const owner = s.fighters[p.owner];
@@ -2184,6 +2297,9 @@ var step = (s, inputs) => {
   const dead1 = f1.health <= 0;
   if (dead0 || dead1) {
     endRound(s, dead0 && dead1 ? 2 : dead0 ? 1 : 0);
+    const clock = ROUND_SECONDS * TICKS_PER_SEC - s.timerTicks;
+    if (dead1) tallyKo(f0, clock);
+    if (dead0) tallyKo(f1, clock);
   } else if (s.timerTicks <= 0) {
     endRound(s, f0.health === f1.health ? 2 : f0.health > f1.health ? 0 : 1);
   }
@@ -2237,8 +2353,15 @@ var endRound = (s, winner) => {
   s.roundWinner = winner;
   if (winner === 0 || winner === 2) s.roundsWon0++;
   if (winner === 1 || winner === 2) s.roundsWon1++;
+  if ((winner === 0 || winner === 1) && s.fighters[winner].stTouched === 0) {
+    s.fighters[winner].stPerfects++;
+  }
   s.phase = 2 /* RoundOver */;
   s.phaseTimer = TUNING.roundOverTicks;
+};
+var tallyKo = (f, clock) => {
+  f.stKos++;
+  if (f.stFastestKo === 0 || clock < f.stFastestKo) f.stFastestKo = clock;
 };
 
 // ../AGENT FIGHTER/agent-fighter/packages/core/src/anim.ts
@@ -2270,11 +2393,10 @@ var moveHasGuard = (mv, kind) => {
 };
 var SUPER_SKILL_FLOOR = 30;
 var canSuper = (ai, ch, me) => ai.idxSuper >= 0 && me.meter >= (ch.b.moves[ai.idxSuper]?.meterCost ?? 9999);
-var superOdds = (ai, me, op, dist, comboEnder) => {
+var superOdds = (ai, me, op, dist, comboEnder, oppMax) => {
   const r = skillRamp(ai, SUPER_SKILL_FLOOR);
   if (r === 0) return 0;
   let odds = Math.trunc((comboEnder ? 195 : 105) * r / 100);
-  const oppMax = characters[ai.side === 0 ? 1 : 0]?.b.maxHealth ?? 1e4;
   if (op.health <= Math.trunc(oppMax / 4)) odds += Math.trunc(115 * r / 100);
   if (me.meter >= TUNING.meterMax) odds += Math.trunc(60 * r / 100);
   if (dist > 300) odds -= 70;
@@ -2438,7 +2560,9 @@ var drinkSlot = (me, op, maxHealth, tick, dist, t) => {
 var aiPoll = (ai, g) => {
   const me = g.fighters[ai.side];
   const op = g.fighters[1 - ai.side];
-  const ch = characters[ai.side];
+  const chars = charsOf(g);
+  const ch = chars[ai.side];
+  const oppMax = chars[ai.side === 0 ? 1 : 0]?.b.maxHealth ?? 1e4;
   if (!ai.bookBuilt) buildBook(ai, ch);
   if (ai.lastHealth < 0) ai.lastHealth = me.health;
   if (g.phase !== 1 /* Fighting */) {
@@ -2460,7 +2584,7 @@ var aiPoll = (ai, g) => {
     if (!aiGrounded(op)) ai.eatJump = Math.min(9, ai.eatJump + 1);
     else if (op.action === 17 /* Grab */ || me.action === 18 /* Thrown */) ai.eatThrow = Math.min(9, ai.eatThrow + 1);
     else if (op.action === 3 /* Crouch */ || op.action === 9 /* Attack */) {
-      const opCh = characters[1 - ai.side];
+      const opCh = chars[1 - ai.side];
       const mv = op.moveIdx >= 0 ? opCh.b.moves[op.moveIdx] : null;
       if (moveHasGuard(mv, "low") || mv?.stance === "crouch") ai.eatLow = Math.min(9, ai.eatLow + 1);
     }
@@ -2514,7 +2638,7 @@ var aiPoll = (ai, g) => {
     }
     case 9 /* Attack */: {
       if (me.attackConnected === 1) {
-        const next = comboNext(ai, ch, me, op, dist);
+        const next = comboNext(ai, ch, me, op, dist, oppMax);
         if (next) return emit(me, null, 0, false);
       } else if (me.attackConnected === 2 && chance(ai, lerp2(ai, 90, 30))) {
         const gi = ai.bookGround.indexOf(me.moveIdx);
@@ -2570,7 +2694,7 @@ var aiPoll = (ai, g) => {
     }
   }
   if (op.action === 9 /* Attack */ && op.attackConnected === 0 && seen(ai.oppActionAt) && dist < 170 && chance(ai, lerp2(ai, 40, 200))) {
-    if (canSuper(ai, ch, me) && ai.queue.length === 0 && g.tick >= ai.nextSuperAt && chance(ai, superOdds(ai, me, op, dist, true))) {
+    if (canSuper(ai, ch, me) && ai.queue.length === 0 && g.tick >= ai.nextSuperAt && chance(ai, superOdds(ai, me, op, dist, true, oppMax))) {
       qFireball(ai, 16 /* LP */ | 32 /* MP */);
       ai.nextSuperAt = g.tick + 90;
       return emit(me, null, 0, false);
@@ -2579,10 +2703,9 @@ var aiPoll = (ai, g) => {
     ai.intentUntil = g.tick + 40;
   }
   if (canSuper(ai, ch, me) && ai.queue.length === 0 && g.tick >= ai.nextSuperAt && dist < 260 && aiGrounded(op)) {
-    const oppMax = characters[ai.side === 0 ? 1 : 0]?.b.maxHealth ?? 1e4;
     const finisher = op.health <= Math.trunc(oppMax / 4);
     const overflowing = me.meter >= TUNING.meterMax;
-    if ((finisher || overflowing) && chance(ai, superOdds(ai, me, op, dist, false))) {
+    if ((finisher || overflowing) && chance(ai, superOdds(ai, me, op, dist, false, oppMax))) {
       qFireball(ai, 16 /* LP */ | 32 /* MP */);
       ai.nextSuperAt = g.tick + 150;
       return emit(me, null, 0, false);
@@ -2704,7 +2827,7 @@ var openString = (ai, ch, dist) => {
   }
   qTapButton(ai, 16 /* LP */);
 };
-var comboNext = (ai, ch, me, op, dist) => {
+var comboNext = (ai, ch, me, op, dist, oppMax) => {
   const flub = !chance(ai, lerp2(ai, 150, 246));
   const delay = flub ? 3 + rnd(ai, 5) : 0;
   const gi = ai.bookGround.indexOf(me.moveIdx);
@@ -2714,7 +2837,7 @@ var comboNext = (ai, ch, me, op, dist) => {
       qTapButton(ai, buttonOfMove(ch, ai.bookGround[gi + 1]));
       return true;
     }
-    if (canSuper(ai, ch, me) && chance(ai, superOdds(ai, me, op, dist, true))) {
+    if (canSuper(ai, ch, me) && chance(ai, superOdds(ai, me, op, dist, true, oppMax))) {
       qFireball(ai, 16 /* LP */ | 32 /* MP */);
       return true;
     }
@@ -2891,7 +3014,6 @@ var decodeLedger = (encoded) => {
 };
 
 // titles/agent-fighter.adapter.js
-var exclusive = true;
 var ENGINE = ENGINE_VERSION;
 var balance = defineBalance({
   atk: (s) => Math.round(lerp(0, AURA_MAX, s.strength / 65535)),
@@ -2925,7 +3047,7 @@ var agent_fighter_adapter_default = defineTitle({
   services: {
     leaderboard: eloLeaderboard({ k: 24 }),
     credits: winnerTakesCredits({ pot: 10, currency: "credits" }),
-    stats: { track: ["matches", "wins", "ticks"] }
+    stats: { track: ["matches", "wins", "ticks"], schema: STATS_SCHEMA }
   },
   /** seed: hex string from H(beacon, matchId). participants: [playerId, playerId]
    *  in side order. ctx.agents: playerId → hydrated ERC-6699 agent.
@@ -2961,10 +3083,11 @@ var agent_fighter_adapter_default = defineTitle({
       seedInt = parseInt(String(seed).slice(0, 8), 16) | 0;
       bounds = ctx.bounds ?? void 0;
     }
-    setCharacters(loadCharacter(sides[0].bundle), loadCharacter(sides[1].bundle));
-    setMatchPets(sides[0].aura, sides[1].aura);
-    setMatchItems(sides[0].items, sides[1].items);
-    const state = createGameState(seedInt, bounds);
+    const state = createGameState(seedInt, bounds, {
+      chars: [loadCharacter(sides[0].bundle), loadCharacter(sides[1].bundle)],
+      items: [sides[0].items, sides[1].items],
+      pets: [sides[0].aura, sides[1].aura]
+    });
     state.pins = {
       engine: ENGINE,
       seed: seedInt,
@@ -2990,6 +3113,13 @@ var agent_fighter_adapter_default = defineTitle({
   scores(s) {
     const [a, b] = s.pins.participants;
     return { [a]: s.roundsWon0, [b]: s.roundsWon1 };
+  },
+  /** Settlement v4: per-match stats from the final state's integer counters
+   *  (serialized, so every witness recomputes them bit-exactly). */
+  stats(s) {
+    const [a, b] = s.pins.participants;
+    const [la, lb] = matchStats(s);
+    return { [a]: la, [b]: lb };
   }
 });
 var engine = {
@@ -3010,6 +3140,5 @@ var engine = {
 export {
   balance,
   agent_fighter_adapter_default as default,
-  engine,
-  exclusive
+  engine
 };

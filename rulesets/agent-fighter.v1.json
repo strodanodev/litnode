@@ -1,11 +1,8 @@
 {
   "rulesetId": "agent-fighter.v1",
-  "buildHash": "859e7215418db6473f0ceb1a88a1f51dc279db1974636c2262f547fcafca76da",
-  "engine": "af-core-8",
-  "afCommit": "67d734a",
-  "bytes": 92991,
-  "builtAt": "2026-09-12T15:02:40.415Z",
-  "publisher": "4d8759b0dab63817f0984a6eec1ec0d6ac4933a9c0aeb26a0de2d61755e08150",
-  "sig": "d038d5066439c30b7b8694c5e838db1ca8b1fe15f456160be894f678ae536aecfb4746cb7b972ce6a70f848242569eff01af503c1634d866d348e19f0a1cf70d",
-  "signedAt": "2026-09-17T13:09:42.622Z"
+  "buildHash": "7414ddf3d7f170cfae4ce2d31ada1776a6cf45150c7d3416558ed8ed17204423",
+  "engine": "af-core-9",
+  "afCommit": "29d4400",
+  "bytes": 97975,
+  "builtAt": "2026-10-22T20:10:00.497Z"
 }
