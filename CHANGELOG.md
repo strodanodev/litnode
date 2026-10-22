@@ -74,8 +74,46 @@ shared prompt listed in §15. **Protocol 4**: protocol-3 and protocol-4 nodes ex
 3. Courts keep posting v3-shaped reports (they settle at `attested`) until they move to `sdk/court`.
 4. Redeploy the arcade once the desktop node runs 0.12.0 (the cabinet's vendored protocol is version 4).
 
+### The title hand-backs (22 Oct: Agent Fighter, Pickle Brawl, FLOOD CONTROL)
+- **Agent Fighter's adapter on af-core-9** (`titles/agent-fighter.adapter.js`; it builds to `290200cf…7691`). The
+  committed `rulesets/agent-fighter.v1.js` stays the release-signed af-core-8 build until Agent Fighter deploys its
+  af-core-9 client and relay together, because the relay refuses other engines and peers load only signed or
+  registered builds. Match pins live on
+  the state (`createGameState(seed, bounds, { chars, items, pets })`), so the process-global pins and `exclusive` are
+  gone. `stats(state)` reads the engine's integer counters with `core.STATS_SCHEMA`: kos, roundsWon, perfectRounds,
+  damageDealt, maxCombo, supersLanded, throwTechs, fastestKo.
+- **FLOOD CONTROL's adapter from its repo** (buildHash `b16bc0a2…1977`): court `f82a5ef3…da87` in `attestors`; stats
+  checked against the report they sit in; `keptDry` in whole percent.
+- **Pickle Brawl** `seats()` names a proven key as itself (`98d23e4e…90d1`). `POST /gauntlet/direct` passes a seat's
+  proven `key` through to `LITNODE_SEATS` and the seat ticket.
+- **The relay is casual-only** (`tools/af-watch.mjs`, `tools/lib/af-submission.mjs`; Agent Fighter ADR 0014). A relay
+  row settles unplaced, under the relay's own id, with no player signatures. A row the gauntlet archived is skipped.
+- **Bundle hashes are machine-independent.** `tools/bundle-server.mjs` bundles from the checkout's directory
+  (`absWorkingDir`), and keeps the git commit out of the hashed manifest (it moves to the sidecar), for servers and
+  verifiers. Pickle Brawl's verifier must be repacked; Agent Fighter's af-core-9 server builds to `101661fb…dd62` from
+  any directory.
+- **A title's process inherits an allowlist** of the node's environment (`INHERITED_ENV`: OS and runtime basics),
+  plus what its config names in `inheritEnv`. It was a denylist of four operator keys.
+- **`sdk/court`:**
+  - `settle(…, { oversizeLog: 'skip' })`.
+  - With `node: 'auto'`, settle remembers the settler for `cacheMs` (5 min) and falls through up to `fallbacks`
+    (2) other candidates.
+  - `signRun` / `verifyRun` / `RUN_TAG`.
+  - `Fetch` takes the global `fetch`.
+- **The arcade signs single-player runs:** `cabinet:sign-run { body: { rulesetId, inputsHash } }` →
+  `cabinet:run-signed`, only under the launched title's ruleset.
+- **Node routes.** `GET /delta/<id>?chain=1` carries `chain` / `official` (opt-in: witnesses read the bare delta), and
+  `GET /deltas?player=<id>` filters by player.
+  `contracts.json` names the `explorer`.
+- **Conformance** recognises stat counters serialized as 32-bit hex words.
+- **The verifier contract is settled in SETTLEMENT-STANDARD §11:** async `verify`; a throw counts as "does not
+  reproduce"; standard optional manifest fields; `runtime` ceilings `memoryMb ≤ 2048`, `timeoutS ≤ 900`; bytes
+  travel by hash from peers like server bundles (the route lands with the phase-2 runner); results settled before a
+  verifier is active stay attested.
+
 ### Not built (designed in docs/SETTLEMENT-STANDARD.md)
 - Running a verifier on challenge in the escalation panel (§11), which is what makes L2 prize-eligible.
+- Serving verifier bundles by hash (`GET /verifier/<id>?build=`, `VERIFIER_BUNDLES`), with that runner.
 - Anchoring L1/L2 results and their stats on EpochAnchor (§12): v4.0 anchors L3 and its stats; off-chain titles'
   stats prove against a node's local root.
 
@@ -84,6 +122,10 @@ shared prompt listed in §15. **Protocol 4**: protocol-3 and protocol-4 nodes ex
   v4-shaped reports, the log held/served/custodied, checkable vs attested, refusals, stats proofs, a replayable
   title's `stats(state)`), `demo/court.test.mjs`, `demo/skills.test.mjs`; `demo/pack.test.mjs` fails when a suite is
   left out of `npm test`. Version literals in tests use the constants.
+- Hand-backs: `demo/court.test.mjs` (settle with `node: 'auto'` reuses the settler with no chain read and falls through
+  when one stops answering; `oversizeLog: 'skip'`; `signRun` byte-equal to `protocol/keys.js`, bound to the title) and
+  `demo/gauntlet.test.mjs` (the env allowlist with `inheritEnv`, operator keys never; a proven direct-seat key reaches
+  `LITNODE_SEATS` and the ticket).
 - `demo/hydration.test.mjs`: the mock chain is deterministic (block n has one timestamp and hash; `latest` follows
   the clock), so host, client and witness derive the same beacon; it had started failing "match not finished"
   about 3 runs in 7 under v4's extra gossip work (0 in 6 before v4, 0 in 6 after this fix).

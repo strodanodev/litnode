@@ -1,5 +1,3 @@
-// pickle-brawl.v1 · built by tools/bundle-ruleset.mjs
-
 // protocol/canonical.js
 var K = new Uint32Array([
   1116352408,
@@ -195,7 +193,7 @@ var pickle_brawl_adapter_default = defineAttestedTitle({
 });
 var seats = (report) => {
   const claims = [...report.claims].sort((x, y) => x.team - y.team || (x.slot ?? 0) - (y.slot ?? 0));
-  const id = (c) => `pb:${c.sub}`;
+  const id = (c) => /^[0-9a-f]{64}$/.test(c.sub) ? c.sub : `pb:${c.sub}`;
   const teams = [claims.filter((c) => c.team === 0).map(id), claims.filter((c) => c.team === 1).map(id)];
   return { participants: [...teams[0], ...teams[1]], teams };
 };

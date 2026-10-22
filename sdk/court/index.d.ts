@@ -1,10 +1,13 @@
 /** sdk/court — the court client for an attested litnode title. See README.md. */
 
 export type Bytes = Uint8Array | ArrayBuffer | ArrayBufferView | string;
-export type Fetch = (input: string, init?: Record<string, unknown>) => Promise<{ status?: number; ok?: boolean; headers?: { get(name: string): string | null }; text?(): Promise<string>; json?(): Promise<unknown> }>;
+/** Any fetch: the global one is assignable as is (no cast), and so is a test double with the fields settle reads. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type Fetch = (input: string, init?: any) => Promise<{ status?: number; ok?: boolean; headers?: { get(name: string): string | null }; text?(): Promise<string>; json?(): Promise<unknown> }>;
 
 export const ATTEST_TAG: 'attest';
 export const WHOAMI_TAG: 'whoami';
+export const RUN_TAG: 'run';
 export const LOG_MAX_BYTES: number;
 export const LOG_PROTOCOL: 4;
 export const SETTLING_ROLES: readonly ['host', 'settler', 'relay'];
@@ -65,6 +68,10 @@ export function attestBody(env: { matchId: string; rulesetId: string; report: Re
 export function signReport(body: { matchId: string; rulesetId: string; report: Report }, identity: Identity): Promise<Attestor>;
 export function verifySignature(tag: string, body: unknown, sigHex: string, publicKeyHex: string): Promise<boolean>;
 export function verifyEnvelope(env: Envelope): Promise<boolean>;
+export function runBody(o: { rulesetId: string; inputsHash: string }): { inputsHash: string; rulesetId: string };
+/** A player's signature over a single-player run's log (the arcade's cabinet:sign-run). */
+export function signRun(o: { rulesetId: string; inputsHash: string }, identity: Identity): Promise<{ player: string; sig: string }>;
+export function verifyRun(o: { rulesetId: string; inputsHash: string }, sig: string, player: string): Promise<boolean>;
 export function checkReport(report: unknown, participants?: string[] | null): string[];
 export function checkEnvelope(env: unknown): string[];
 /** Throws a TypeError listing every problem. */
@@ -128,6 +135,12 @@ export interface SettleOptions {
   timeoutMs?: number;
   /** findSettler options when node is 'auto'. */
   discovery?: DiscoveryOptions;
+  /** 'throw' (default): a log over LOG_MAX_BYTES is a caller error. 'skip': settle without it (logSkipped: 'oversize'). */
+  oversizeLog?: 'throw' | 'skip';
+  /** node 'auto': reuse the last settler that answered for this long. Default 5 min; 0 = discover every time. */
+  cacheMs?: number;
+  /** node 'auto': other candidates tried after one is unreachable or has no settling role. Default 2. */
+  fallbacks?: number;
 }
 export interface SettleResult {
   status: 'settled' | 'already' | 'refused' | 'unreachable';
@@ -138,6 +151,8 @@ export interface SettleResult {
   httpStatus?: number | null;
   protocol?: number;
   logAttached: boolean;
+  logSkipped?: 'oversize';
 }
 /** Never throws for a network failure; throws for a caller error (log too big, or not hashing to report.commitments.inputsHash). */
 export function settle(env: Envelope | Record<string, unknown>, o?: SettleOptions): Promise<SettleResult>;
+export function forgetSettlers(): void;

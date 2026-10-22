@@ -41,7 +41,9 @@ export async function bundleServer(spec, { checkout, esbuildMain = null, log = (
   // The bundled server sits at the entry's own path (extension .mjs) so its import.meta.url-relative root is the archive root.
   const bundledPath = spec.entry.replace(/\.(m?ts|m?js|cjs)$/, '') + '.mjs';
   const r = await build({
-    entryPoints: [entryAbs], bundle: true, write: false, format: 'esm', platform: 'node', target: spec.target ?? 'node20',
+    // absWorkingDir: esbuild's per-module path comments are relative to it, so the checkout (not wherever litnode
+    // was run from) is the base and the same checkout gives the same hash on any machine (Agent Fighter hand-back, 22 Oct).
+    absWorkingDir: src, entryPoints: [entryAbs], bundle: true, write: false, format: 'esm', platform: 'node', target: spec.target ?? 'node20',
     external: [...builtinModules, ...builtinModules.map((m) => `node:${m}`), ...(spec.external ?? [])],
     banner: { js: `// ${spec.rulesetId} ${kind === 'verifier' ? 'verifier' : 'match server'} · built by litnode tools/bundle-server.mjs\nimport { createRequire as __litnodeRequire } from 'node:module'; const require = __litnodeRequire(import.meta.url);` },
     legalComments: 'none', logLevel: 'silent', alias: spec.alias ?? {},
@@ -62,11 +64,11 @@ export async function bundleServer(spec, { checkout, esbuildMain = null, log = (
     rulesetId: spec.rulesetId, entry: 'run.mjs', runtime: spec.runtime ?? { node: '>=20' },
     ...pick(spec, ['env', 'portRange', 'readyMs', 'ttlMs', 'ticketTtlMs', 'settledGraceMs']),
     // No builtAt here: the manifest is inside the hashed bytes, and the same checkout must give the same hash (the sidecar carries the time).
-    source: { entry: spec.entry, ...(spec.repo ? { repo: spec.repo } : {}), ...(commit ? { commit } : {}) },
+    // No commit either: the commit that records the hash would change the hash. The sidecar carries both.
+    source: { entry: spec.entry, ...(spec.repo ? { repo: spec.repo } : {}) },
   };
-  if (kind === 'verifier' && commit) manifest.source.commit = commit;
   const out = packBundle(manifest, files, { kind });
-  return { ...out, files: Object.keys(files), bundledPath };
+  return { ...out, files: Object.keys(files), bundledPath, commit };
 }
 const pick = (o, keys) => Object.fromEntries(keys.filter((k) => o[k] != null).map((k) => [k, o[k]]));
 /** A tiny glob: `*` matches within one path segment; `**` matches any number of segments. Returns posix paths relative to base. */
@@ -99,7 +101,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const tgz = join(outDir, `${spec.rulesetId}.${kind}.tgz`), side = join(outDir, `${spec.rulesetId}.${kind}.json`);
     if (kind === 'verifier') {
       writeFileSync(tgz, b.gz);
-      writeFileSync(side, JSON.stringify({ kind: 'verifier', rulesetId: spec.rulesetId, verifierHash: b.hash, bytes: b.tar.length, gzBytes: b.gz.length, files: b.files.length, entry: b.manifest.entry, logFormat: b.manifest.logFormat, builtAt: new Date().toISOString(), source: b.manifest.source }, null, 2) + '\n');
+      writeFileSync(side, JSON.stringify({ kind: 'verifier', rulesetId: spec.rulesetId, verifierHash: b.hash, bytes: b.tar.length, gzBytes: b.gz.length, files: b.files.length, entry: b.manifest.entry, logFormat: b.manifest.logFormat, builtAt: new Date().toISOString(), source: { ...b.manifest.source, ...(b.commit ? { commit: b.commit } : {}) } }, null, 2) + '\n');
       console.log(`${tgz}  ${b.gz.length} bytes gzipped (${b.tar.length} in the archive)\nverifierHash ${b.hash}\n\nput it in the court's report:          report.commitments.verifierHash = '${b.hash}'\nregister it under the title (publisher):  npm run publish:title -- set-build ${side}\nuntil then, a node may accept it with:   VERIFIERS=${spec.rulesetId}:${b.hash}`);
       process.exit(0);
     }
@@ -107,7 +109,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     // Keep a publisher attestation an earlier sign:build wrote only if it is for THIS hash.
     const prev = existsSync(side) ? JSON.parse(readFileSync(side, 'utf8')) : {};
     const keep = prev.serverHash === b.hash && prev.publisher ? { publisher: prev.publisher, sig: prev.sig, signedAt: prev.signedAt } : {};
-    writeFileSync(side, JSON.stringify({ kind: 'server', rulesetId: spec.rulesetId, serverHash: b.hash, bytes: b.tar.length, gzBytes: b.gz.length, files: b.files.length, entry: b.manifest.entry, builtAt: new Date().toISOString(), source: b.manifest.source, ...keep }, null, 2) + '\n');
+    writeFileSync(side, JSON.stringify({ kind: 'server', rulesetId: spec.rulesetId, serverHash: b.hash, bytes: b.tar.length, gzBytes: b.gz.length, files: b.files.length, entry: b.manifest.entry, builtAt: new Date().toISOString(), source: { ...b.manifest.source, ...(b.commit ? { commit: b.commit } : {}) }, ...keep }, null, 2) + '\n');
     const show = (p) => { const r = root.replace(/\\/g, '/'), q = resolve(p).replace(/\\/g, '/'); return q.startsWith(`${r}/`) ? q.slice(r.length + 1) : q; };
     console.log(`${tgz}  ${b.gz.length} bytes gzipped (${b.tar.length} in the archive, ${b.files.length} files)\nserverHash ${b.hash}\n\nregister it under the title (the publisher's wallet):  npm run publish:title -- set-build ${show(side)}\nserve it from this node:                                GAUNTLET_SERVERS=${spec.rulesetId}=${show(tgz)}\noperators run it with:                                   GAUNTLET_SERVERS=${spec.rulesetId}`);
   } catch (e) { console.error(`✗ ${e.message}`); process.exit(1); }

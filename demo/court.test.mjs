@@ -284,3 +284,51 @@ test('end to end on a real node: v3-shaped report and one with commitments + sta
   const auto = await settle(await make(pbReport('court-e2e-6')), { fetch: chainFetch, discovery: { contracts: { NodeDirectory: DIR, NodeStake: STAKE }, rpc: 'http://rpc.test', maxRps: 0 } });
   assert.equal(auto.status, 'settled', JSON.stringify(auto)); assert.equal(auto.node, node.addr);
 });
+
+test('settle node auto: remembers the settler, falls through when one stops answering; oversizeLog skip; signRun / verifyRun', async () => {
+  court.forgetSettlers();
+  const m = await mesh();
+  let rpcCalls = 0;
+  const posted = [];
+  const f = async (url, init) => {
+    url = String(url);
+    if (url.startsWith('http://rpc')) rpcCalls++;
+    const u = new URL(url);
+    if (u.pathname === '/ledger') {
+      if (u.origin === 'http://good.test') throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } });
+      posted.push(u.origin);
+      return reply(200, { matchId: JSON.parse(init.body).matchId });
+    }
+    return m.fetchImpl(url, init);
+  };
+  const discovery = { contracts: { NodeDirectory: DIR, NodeStake: STAKE }, rpc: ['http://rpc-b.test'], backoffMs: 1, maxRps: 100 };
+  const one = { matchId: 'auto-1', rulesetId: 'pickle-brawl.v1', report: {} };
+  const r1 = await settle(one, { fetch: f, discovery, retries: 0, backoffMs: 1 });
+  assert.deepEqual([r1.status, r1.node], ['settled', 'http://older.test'], 'the newest settler stopped answering; the next candidate settled it');
+  const reads = rpcCalls;
+  const r2 = await settle({ ...one, matchId: 'auto-2' }, { fetch: f, discovery, retries: 0, backoffMs: 1 });
+  assert.deepEqual([r2.status, r2.node], ['settled', 'http://older.test']);
+  assert.equal(rpcCalls, reads, 'the remembered settler is used: no chain read per run');
+  court.forgetSettlers();
+  const r3 = await settle({ ...one, matchId: 'auto-3' }, { fetch: f, discovery, retries: 0, backoffMs: 1, fallbacks: 0 });
+  assert.equal(r3.status, 'unreachable', 'fallbacks: 0 reports the first failure');
+
+  // A log past the cap: an error by default, settled without it on request.
+  const big = new Uint8Array(LOG_MAX_BYTES + 1).fill(7);
+  const env = { matchId: 'big-1', rulesetId: 'flood-control.v1', report: { commitments: { logFormat: 'x@1', inputsHash: await inputsHash(big), finalHash: null, verifierHash: null } } };
+  const sent = [];
+  const v4 = async (url, init) => { const u = new URL(String(url)); if (u.pathname === '/health') return reply(200, { protocol: 4 }); if (u.pathname.startsWith('/delta/')) return reply(404, {}); sent.push(JSON.parse(init.body)); return reply(200, { matchId: 'big-1' }); };
+  await assert.rejects(settle(env, { node: 'http://v4.test', log: big, fetch: v4 }), RangeError);
+  const rs = await settle(env, { node: 'http://v4.test', log: big, fetch: v4, oversizeLog: 'skip' });
+  assert.deepEqual([rs.status, rs.logAttached, rs.logSkipped], ['settled', false, 'oversize']);
+  assert.equal('log' in sent[0], false, 'the bytes stay with the court; the commitment stays in the report');
+
+  // A player's run signature is the protocol's sign('run', { rulesetId, inputsHash }).
+  const kp = await generateKeypair();
+  const body = { rulesetId: 'flood-control.v1', inputsHash: 'ab'.repeat(32) };
+  const { player, sig } = await court.signRun(body, kp);
+  assert.equal(player, kp.publicKey);
+  assert.equal(await verify(court.RUN_TAG, body, sig, kp.publicKey), true, 'protocol/keys.js verifies it');
+  assert.equal(await court.verifyRun(body, sig, kp.publicKey), true);
+  assert.equal(await court.verifyRun({ ...body, rulesetId: 'pickle-brawl.v1' }, sig, kp.publicKey), false, 'bound to the title');
+});

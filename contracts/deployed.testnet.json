@@ -125,6 +125,7 @@
   },
   "chainId": 4441,
   "rpc": "https://liteforge.rpc.caldera.xyz/http",
+  "explorer": "https://liteforge.explorer.caldera.xyz",
   "deployedAt": "2026-09-20T22:34:07.928Z",
   "deployer": "0x04bE2b954346324Ee54c4B4c0189DF5bb577a378",
   "GasRefund": {

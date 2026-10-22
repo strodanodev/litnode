@@ -1579,7 +1579,10 @@ export async function createNode({
       }
       if (req.method === 'GET' && url.pathname.startsWith('/delta/')) {
         const d = settlement.delta(decodeURIComponent(url.pathname.slice(7)));
-        return d ? json(res, 200, d) : json(res, 404, { error: 'unknown match' });
+        // ?chain=1: the same chain view /deltas gives, so a results screen can tell "final on MatchBook" from one
+        // route. Opt-in: witnesses and custodians fetch the delta itself here, and must get it unannotated.
+        if (!d) return json(res, 404, { error: 'unknown match' });
+        return json(res, 200, url.searchParams.get('chain') === '1' ? withChain([d])[0] : d);
       }
       // Settlement v4: the exact log bytes a court committed (report.commitments.inputsHash), content-addressed.
       if (req.method === 'GET' && url.pathname.startsWith('/log/')) {
@@ -1589,7 +1592,14 @@ export async function createNode({
         res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': bytes.length, 'cache-control': 'public, max-age=31536000, immutable', 'x-log-sha256': hash });
         return res.end(bytes);
       }
-      if (req.method === 'GET' && url.pathname === '/deltas') return json(res, 200, { deltas: withChain(settlement.list(url.searchParams.get('ruleset') ?? undefined, { scope: url.searchParams.get('scope') === 'official' ? 'official' : 'all' })) });
+      if (req.method === 'GET' && url.pathname === '/deltas') {
+        // ?player=<id> keeps one player's results (a key, or a prefixed casual id), so an in-game history does not
+        // download every result of the title.
+        const who = url.searchParams.get('player');
+        let ds = settlement.list(url.searchParams.get('ruleset') ?? undefined, { scope: url.searchParams.get('scope') === 'official' ? 'official' : 'all' });
+        if (who) ds = ds.filter((d) => d.participants?.includes(who));
+        return json(res, 200, { deltas: withChain(ds) });
+      }
       if (req.method === 'POST' && url.pathname === '/dispute') {
         const dsp = await readBody(req);
         if (stakes) { const w = stakes[dsp.witnessId], me = stakes[nodeId]; if (!w?.active) return json(res, 200, { ok: false, reason: 'witness not bonded' }); if (me?.operator && w.operator === me.operator) return json(res, 200, { ok: false, reason: 'witness shares the host\'s staking address' }); }

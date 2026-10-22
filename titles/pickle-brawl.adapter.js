@@ -83,11 +83,11 @@ export default defineAttestedTitle({
   },
 });
 
-/** Participants and teams from a court report: `pb:<AIR sub>`, team A first,
+/** Participants and teams from a court report: the player key, else `pb:<AIR sub>`, team A first,
  *  by slot. Stable, so the same report always yields the same ordering. */
 export const seats = (report) => {
   const claims = [...report.claims].sort((x, y) => x.team - y.team || (x.slot ?? 0) - (y.slot ?? 0));
-  const id = (c) => `pb:${c.sub}`;
+  const id = (c) => (/^[0-9a-f]{64}$/.test(c.sub) ? c.sub : `pb:${c.sub}`); // a proven arcade key is the seat; any other sub is pb:<AIR sub>
   const teams = [claims.filter((c) => c.team === 0).map(id), claims.filter((c) => c.team === 1).map(id)];
   return { participants: [...teams[0], ...teams[1]], teams };
 };

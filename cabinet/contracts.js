@@ -4,6 +4,7 @@ export const CONTRACTS = {
   "generation": 3,
   "chainId": 4441,
   "rpc": "https://liteforge.rpc.caldera.xyz/http",
+  "explorer": "https://liteforge.explorer.caldera.xyz",
   "deployedAt": "2026-09-20T22:34:07.928Z",
   "contracts": {
     "TestLITVM": {

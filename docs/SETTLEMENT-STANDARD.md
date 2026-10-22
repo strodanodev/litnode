@@ -298,6 +298,42 @@ the existing `setBuild` (`npm run publish:title -- set-build
 verifiers/<id>.verifier.json`). **In v4 the node only checks the hash is
 registered and active; it does not run it.**
 
+The verifier contract, settled with the Pickle Brawl and FLOOD CONTROL
+hand-backs (22 Oct 2026):
+
+- **`verify` may be async** (FLOOD CONTROL unpacks its level grid with
+  `DecompressionStream`). It resolves `{ finalHash, result }`.
+- **A log that does not replay throws** (`refused: <reason>`). A challenge
+  runner counts a throw as "does not reproduce the committed `finalHash`",
+  the same as a different hash: the court committed a log its own verifier
+  refuses.
+- **Manifest fields.** Required: `kind`, `rulesetId`, `entry`, `exports`,
+  `logFormat`, `runtime`, `source`. Standard optional: `finalFormat` (the
+  name of the `finalHash` preimage, e.g. `arc-final@1`), `levels` (data the
+  bundle embeds), `source.esbuild`. Anything else is ignored. **No commit
+  and no time inside the hashed manifest**; the sidecar carries both, so the
+  commit that records a hash does not change it (`tools/bundle-server.mjs`
+  since 0.12.0, which also bundles from the checkout's own directory so a
+  hash is the same on every machine).
+- **`runtime`** is `{ node, memoryMb?, timeoutS? }`. The phase-2 runner
+  gives every `verify()` call **its own process** (an engine may boot one
+  session per process: Pickle Brawl's does), honours the manifest up to the
+  ceilings **`memoryMb ≤ 2048`, `timeoutS ≤ 900`**, and refuses a bundle
+  that asks for more. Pickle Brawl declares `{ node: ">=22", memoryMb: 1024,
+  timeoutS: 600 }`; FLOOD CONTROL `{ node: ">=20" }`.
+- **How the bytes travel:** like server bundles. A node that holds a
+  verifier serves it by hash (`GET /verifier/<rulesetId>?build=<hash>`,
+  advertised in the heartbeat), the publisher's node first, and a
+  challenge seat fetches it from any peer and checks the hash before it runs
+  anything. The route and `VERIFIER_BUNDLES=<rulesetId>=<file.tgz>` land with
+  the phase-2 runner. Until then the publisher keeps the `.tgz` and its
+  sidecar beside the registration (for example, release assets).
+- **Committing before registering.** A court may name `verifierHash` from
+  its first deploy. Results settled before the hash is registered and
+  active settle `attested` and stay so; results after it are `checkable`. A
+  verifier is a `setBuild` like any other, so the title's
+  `activationDelay` applies to it.
+
 Phase 2 (not built): a challenge.
 
 1. Anyone posts `challenge(matchKey, verifierHash)` with a bond against an
@@ -341,16 +377,29 @@ A title ships, pinned by hash on its `TitleRegistry` token:
 A consensus-relevant change (sim, adapter, validator, stat derivation) is a
 new build hash. Old results are never relabelled.
 
-## 14. Conformance of the four titles (0.12.0)
+## 14. Conformance of the titles (0.12.0, after the 22 Oct hand-backs)
 
-| | Agent Fighter | Pickle Brawl | FLOOD CONTROL | AFC |
-| --- | --- | --- | --- | --- |
-| Kind / level | replayable, L3 | attested, L1 | attested, L1 → L2 with log + verifier | not on the mesh; attested L2 planned |
-| Identity | keys | keys when arcade-placed; `pb:` otherwise | `fc:` (keys inside the arcade: FC hand-back) | — |
-| `attestors` | — | court `09b2b849…7e23` | pending FC hand-back (court key) | pending AFC hand-back |
-| Stats schema | pending AF hand-back (`stats(state)`) | 8 names (proposed, pending PB hand-back) | points, stars, rescued, casualties, bestChain, keptDry, stormsSurvived | pending |
-| Commitments / log | n/a (the ledger is the log) | null until phase A | `arc-runlog@1` (FC hand-back) | `hmc-match@2` (AFC hand-back) |
-| Chain lifecycle | 2 final matches | never reached | casual only | — |
+| | Agent Fighter | Pickle Brawl | FLOOD CONTROL |
+| --- | --- | --- | --- |
+| Kind / level | replayable, L3 | attested; L2 once its verifier is registered | attested; L2 once its verifier is registered |
+| Build | `859e7215…76da` (af-core-8, signed); af-core-9 builds to `290200cf…7691` | `98d23e4e…90d1` | `b16bc0a2…1977` |
+| Identity | keys. The relay is casual-only and records a key only after its ledger signature verifies | keys for arcade-placed matches, and for matchmaker matches whose AIR profile holds the key; `pb:` otherwise | the arcade key when the shell signs the run (`cabinet:sign-run`); `fc:` otherwise |
+| `attestors` | — | court `09b2b849…7e23` | court `f82a5ef3…da87` |
+| Stats schema | kos, roundsWon, perfectRounds, damageDealt, supersLanded, throwTechs (sum); maxCombo (max); fastestKo (min, absent without a KO) | pointsWon, aces, winners, unforcedErrors, smashes, dinks, matchesMvp (sum); longestRally (max) | points, bestChain (max); stars, rescued, casualties, keptDry (whole percent), stormsSurvived (sum) |
+| Commitments / log | n/a (the ledger is the log) | `pb-court-inputs@1`, `pbstate1:` finalHash, verifier `pickle-brawl.v1` | `arc-runlog@1`, `arc-final@1` finalHash, verifier `56cfff04…0a57` |
+| Server bundle | gauntlet, `npm run bundle:server -- gauntlets/agent-fighter.server.json` | court (`gauntlets/pickle-brawl.json`, checkout) | none (Vercel board) |
+| Chain lifecycle | ranked through the gauntlet only | not yet | casual only |
+
+AFC joins later: attested, `hmc-match@2` log, L2 planned (§13 applies
+unchanged).
+
+**Hashes that move with this release.** Pickle Brawl's verifier was packed
+before `bundle-server.mjs` dropped the commit from the hashed manifest, so
+its court must repack (`node services/court/verifier/bundle.mjs`) and name
+the new hash before anyone registers `58e4f0b6…`. FLOOD CONTROL builds its
+own tar without a commit, so `56cfff04…` stands. Agent Fighter's registered
+server bundle `00f7319c…` is superseded by the af-core-9 server; rebuild it
+here.
 
 ## 15. Deviations from the shared contract (for the title sessions)
 
@@ -370,6 +419,37 @@ new build hash. Old results are never relabelled.
 8. **FLOOD CONTROL's adapter derives stats** from the report's own integers
    when `report.stats` is absent, so today's runs fold before the court
    upgrades.
+9. **No log, no `commitments`.** `logFormat` must be a string, so a court
+   with nothing recorded omits `commitments` entirely; there is no all-null
+   form (Pickle Brawl's pattern).
+10. **Prefixed seats keep stats lines**, e.g. under `fc:<handle>`, on the
+    title's own ladder. They are casual, never bind to a profile and never
+    count for rewards (§3).
+11. **A single-player run seats the arcade key** through the shell's
+    `cabinet:sign-run { body: { rulesetId, inputsHash } }` →
+    `cabinet:run-signed { inputsHash, player, sig }`, with
+    `sig = sign('run', { rulesetId, inputsHash })`. The shell signs only
+    under the launched title's `rulesetId`. The court checks it with
+    `sdk/court verifyRun` before it names the key as the seat.
+12. **`sdk/court` additions (0.12.0):**
+    - `settle(…, { oversizeLog: 'skip' })` settles without a log past
+      512 KiB (`logSkipped: 'oversize'`), keeping the commitment, so the
+      result is `attested`.
+    - With `node: 'auto'`, `settle` reuses the last settler for `cacheMs`
+      (default 5 min) and tries up to `fallbacks` (default 2) other
+      candidates when one is unreachable or has no settling role.
+    - `signRun` and `verifyRun`.
+    - `Fetch` accepts the global `fetch` without a cast.
+    - Re-vendor at release.
+13. **A publisher's matchmaker may pass a proven `key` per seat** to
+    `POST /gauntlet/direct`. It reaches `LITNODE_SEATS` and the seat's
+    ticket.
+14. **A title's process inherits an allowlist of the node's environment**
+    (OS and runtime basics only). Anything else goes in its gauntlet config
+    `env`, or by name in `inheritEnv`.
+15. **`GET /delta/<id>?chain=1` carries `chain` and `official`** like `/deltas` (witnesses read the bare delta), and
+    **`GET /deltas?player=<id>`** keeps one player's results. The arcade's
+    `contracts.json` names the `explorer`.
 
 ## 16. Upgrading from protocol 3
 

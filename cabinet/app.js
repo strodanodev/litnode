@@ -13,6 +13,8 @@ import { loadPlayer as loadKeypair, createClient, IDENTITY_KEY } from './client.
 import { roomCodeFor } from './protocol/pairing.js';
 import { chainHead, ledgerBody, signLedger } from './protocol/log.js';
 import { signSeat, NONCE_RE } from './protocol/challenge.js';
+import { sign as signTagged } from './protocol/keys.js';
+const RUN_TAG = 'run'; // sdk/court RUN_TAG: a player's signature over a single-player run
 import { applyDelta, sortDeltas } from './protocol/derive.js';
 import { levelOf as levelFromXp } from './protocol/progression.js';
 import { NODE_URL, GAMES as CONFIG_GAMES } from './config.js';
@@ -1157,6 +1159,9 @@ document.addEventListener('click', (e) => {
 //                 match?:{matchId, host, hostAddr, witness, wsAddr, beacon, beaconSource, participants, mode, buildHash, rulesetId, descriptor} }   ← present when launched from a verified placement; `descriptor` is the host's signed envelope: send it back with the ledger (sdk/client.js settle)
 //                 login:'arcade'|null   ← 'arcade': this title signs in through this page (below), never with its own dialog
 // Game → shell: { type:'cabinet:hello' } (ask for init) · { type:'cabinet:exit' }
+// Game → shell: { type:'cabinet:sign-run', body:{ rulesetId, inputsHash } }   a single-player run's committed log
+// Shell → game: { type:'cabinet:run-signed', inputsHash, player, sig } | { type:'cabinet:run-signed', inputsHash, error }
+//               sig = sign('run', { rulesetId, inputsHash }) by the player key, only under the launched title's rulesetId
 //
 // Universal login (docs/UNIVERSAL-LOGIN.md), for titles config.js marks `login: 'arcade'`:
 // Game → shell: { type:'cabinet:air', id, token?:true }   the session (and a fresh AIR token when asked)
@@ -1244,6 +1249,17 @@ window.addEventListener('message', async (e) => {
     if (!ok) { frame.contentWindow.postMessage({ type: 'cabinet:seat-signed', matchId: c.matchId ?? null, error: 'not a seat in the match this shell launched' }, '*'); return; }
     const sig = await signSeat(c, player.kp.privateKey);
     frame.contentWindow.postMessage({ type: 'cabinet:seat-signed', matchId: c.matchId, nonce: c.nonce, player: player.id, sig }, '*');
+  }
+  // A single-player title asks this shell to sign the run log its court will commit (settlement v4, FLOOD CONTROL's
+  // daily): sign('run', { rulesetId, inputsHash }) — sdk/court verifyRun is the court's check before it seats this
+  // key. Only under the ruleset of the title this shell launched, so a title never gets the player's signature over
+  // another title's run; no placement is involved, so nothing here is ranked.
+  if (e.data.type === 'cabinet:sign-run') {
+    const b = e.data.body ?? {};
+    const ok = current?.rulesetId && player?.kp && b.rulesetId === current.rulesetId && /^[0-9a-f]{64}$/.test(b.inputsHash ?? '');
+    if (!ok) { frame.contentWindow.postMessage({ type: 'cabinet:run-signed', inputsHash: b.inputsHash ?? null, error: current?.rulesetId ? 'not a run of the title this shell launched' : 'this title names no ruleset' }, '*'); return; }
+    const sig = await signTagged(RUN_TAG, { inputsHash: b.inputsHash, rulesetId: current.rulesetId }, player.kp.privateKey);
+    frame.contentWindow.postMessage({ type: 'cabinet:run-signed', inputsHash: b.inputsHash, player: player.id, sig }, '*');
   }
 });
 document.addEventListener('load', (e) => { if (e.target === frame) sendInit(); }, true);

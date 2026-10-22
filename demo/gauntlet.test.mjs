@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { createNode } from '../node/litnode.js';
-import { mintTicket, verifyTicket, seatsFor, loadGauntletConfigs, createGauntlets } from '../node/gauntlet.js';
+import { mintTicket, verifyTicket, seatsFor, loadGauntletConfigs, createGauntlets, inheritedEnv } from '../node/gauntlet.js';
 import { generateKeypair, seal } from '../protocol/keys.js';
 import { QUEUE_TAG, bucketOf, roomCodeFor } from '../protocol/pairing.js';
 import { signSeat } from '../protocol/challenge.js';
@@ -250,4 +250,27 @@ test('gauntlet: the process gets the placement\'s seed H(beacon, matchId), the b
   assert.equal(seen[0].GAUNTLET_BUILD, 'b'.repeat(64));
   assert.equal(seen[0].GAUNTLET_RULESET, 'agent-fighter.v1');
   assert.equal(seen[0].GAUNTLET_PLACED_MODE, 'ranked');
+});
+
+test('gauntlet: a title process inherits an allowlist of the node env, plus inheritEnv; a direct seat keeps its proven key', async (t) => {
+  const env = inheritedEnv({ Path: 'p', SystemRoot: 's', TEMP: 't', AIR_PARTNER_ID: 'air', OPERATOR_KEY: 'k', SUPABASE_SERVICE_KEY: 'sb', COURT_LOG_DIR: 'logs' }, ['COURT_LOG_DIR', 'OPERATOR_KEY']);
+  assert.deepEqual(env, { Path: 'p', SystemRoot: 's', TEMP: 't', COURT_LOG_DIR: 'logs' }, 'OS basics (any case) and named extras; operator keys never, even when named');
+
+  const seen = [];
+  const fakeSpawn = (cmd, args, opts) => { seen.push(opts.env); const child = { pid: 1, stdout: null, stderr: null, on: (ev, fn) => { if (ev === 'exit') child.exit = fn; }, kill: () => child.exit?.(0) }; return child; };
+  const base = { command: 'x', args: [], cwd: ROOT, env: { LITNODE_SEATS: '${seats}' }, portRange: [7890, 7899], readyMs: 50, ttlMs: 60_000, ticketTtlMs: 60_000, inheritEnv: ['LITNODE_TEST_EXTRA'] };
+  process.env.LITNODE_TEST_EXTRA = 'kept'; process.env.LITNODE_TEST_OTHER = 'dropped';
+  t.after(() => { delete process.env.LITNODE_TEST_EXTRA; delete process.env.LITNODE_TEST_OTHER; });
+  const g = createGauntlets({ configs: { 'pickle-brawl.v1': base }, port: 0, nodeUrl: 'http://127.0.0.1:1', log: () => {}, spawnImpl: fakeSpawn, nodeId: 'H' });
+  await g.listen();
+  t.after(() => g.stopAll());
+  const key = 'c'.repeat(64);
+  const r = await g.startDirect({ rulesetId: 'pickle-brawl.v1', matchId: 'cd'.repeat(32), format: 'singles', seats: [{ sub: 'air-a', team: 0, slot: 0, key }, { sub: 'air-b', team: 1, slot: 0, key: 'not-a-key' }], owner: 'pb' });
+  assert.ok(r.run, JSON.stringify(r));
+  assert.ok(await until(() => seen.length === 1, 5000), 'spawned');
+  assert.equal(seen[0].LITNODE_TEST_EXTRA, 'kept');
+  assert.equal(seen[0].LITNODE_TEST_OTHER, undefined, 'the rest of the operator env stays out');
+  assert.deepEqual(JSON.parse(seen[0].LITNODE_SEATS).map((s) => s.key ?? null), [key, null], 'a proven key passes; anything else is dropped');
+  const [claims] = r.run.tickets['air-a'].ticket.split('.');
+  assert.equal(JSON.parse(Buffer.from(claims, 'base64url')).key, key, 'and is signed into the seat ticket');
 });

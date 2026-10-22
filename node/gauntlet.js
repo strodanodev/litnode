@@ -46,6 +46,18 @@ import { h } from '../protocol/canonical.js';
 
 export const OPERATOR_SECRETS = ['OPERATOR_KEY', 'DEPLOYER_KEY', 'PUBLISHER_KEY', 'ADMIN_KEY'];
 
+/** What a title's process inherits from the node's environment: the OS and runtime basics a process needs to start,
+ *  nothing of the operator's. Anything else a server reads is named in its config's `env` (filled per match) or
+ *  listed by name in `inheritEnv` (copied as the operator set it). Was a denylist of OPERATOR_SECRETS until 0.12.0:
+ *  any other variable the operator exported (AIR_*, RPC keys, tunnel tokens) reached every server (Agent Fighter
+ *  hand-back, 22 Oct). Matched case-insensitively, because Windows spells them Path, SystemRoot, windir. */
+export const INHERITED_ENV = ['PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'SYSTEMDRIVE', 'COMSPEC', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA', 'PROGRAMFILES', 'PROGRAMFILES(X86)', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'OS', 'LANG', 'LC_ALL', 'TZ', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY'];
+export const inheritedEnv = (source, extra = []) => {
+  const allow = new Set([...INHERITED_ENV, ...extra.map((k) => String(k).toUpperCase())]);
+  for (const k of OPERATOR_SECRETS) allow.delete(k);
+  return Object.fromEntries(Object.entries(source).filter(([k]) => allow.has(k.toUpperCase())));
+};
+
 const ROOM_RE = /^\/(LIT-[0-9A-F]{32})(\/ticket)?\/?$/;
 
 /** PB-compatible join ticket: base64url(claims JSON) '.' base64url(HMAC-SHA256(payload, secret)). */
@@ -134,10 +146,9 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
       // (a bundle fetched by hash, node/server-bundle.js, has no checkout to keep them in). Created on first use.
       if (cfg.stateDir) mkdirSync(cfg.stateDir, { recursive: true });
       const vars = { port: run.port, secret, publicUrl: publicWs(room), seats: JSON.stringify(seats), matchId, room, nodeUrl, gateway: `http://127.0.0.1:${actualPort}`, mode, placedMode: placedMode ?? 'casual', rulesetId, node: process.execPath, seed, buildHash: buildHash ?? '', stateDir: cfg.stateDir ?? '' };
-      // The node's own keys never reach a title's process (same rule as
-      // publisher services); a config that needs a secret names it in `env`.
-      const inherited = { ...process.env };
-      for (const k of OPERATOR_SECRETS) delete inherited[k];
+      // The node's environment never reaches a title's process beyond the allowlist (same rule as publisher
+      // services); a config that needs a value names it in `env` or `inheritEnv`. Operator keys never pass.
+      const inherited = inheritedEnv(process.env, cfg.inheritEnv ?? []);
       const env = { ...inherited, ...Object.fromEntries(Object.entries(cfg.env).map(([k, v]) => [k, fill(v, vars)])), GAUNTLET_MATCH_ID: matchId, GAUNTLET_ROOM: room, GAUNTLET_PORT: String(run.port), GAUNTLET_SECRET: secret, GAUNTLET_SEATS: vars.seats, GAUNTLET_PUBLIC_URL: vars.publicUrl, GAUNTLET_NODE_URL: nodeUrl, GAUNTLET_MODE: mode, GAUNTLET_PLACED_MODE: vars.placedMode, GAUNTLET_SEED: seed, GAUNTLET_BUILD: vars.buildHash, GAUNTLET_RULESET: rulesetId, ...(cfg.stateDir ? { GAUNTLET_STATE_DIR: cfg.stateDir } : {}), ...(cfg.bundle ? { GAUNTLET_SERVER: cfg.bundle } : {}) };
       const child = spawnImpl(fill(cfg.command, vars), cfg.args.map((a) => fill(a, vars)), { cwd: cfg.cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
       run.child = child; run.pid = child.pid ?? null;
@@ -146,7 +157,7 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
       child.on('error', (e) => { run.lastError = e.message; run.state = 'failed'; log(`gauntlet ${rulesetId} ${matchId.slice(0, 12)}: ${e.message}`); });
       child.on('exit', (code) => { run.exitCode = code; if (run.state !== 'stopped') { run.state = code === 0 ? 'exited' : 'failed'; emit('gauntlet', { matchId, rulesetId, state: run.state, code }); } used.delete(run.port); rooms.delete(room); clearTimeout(run.timer); });
       const exp = Date.now() + cfg.ticketTtlMs;
-      for (const s of seats) run.tickets[s.sub] = { ticket: mintTicket({ sub: s.sub, matchId, team: s.team, slot: s.slot, mode, exp }, secret), team: s.team, slot: s.slot, exp };
+      for (const s of seats) run.tickets[s.sub] = { ticket: mintTicket({ sub: s.sub, matchId, team: s.team, slot: s.slot, mode, exp, ...(s.key ? { key: s.key } : {}) }, secret), team: s.team, slot: s.slot, exp };
       const t0 = Date.now();
       while (Date.now() - t0 < cfg.readyMs && run.state === 'starting') { if (await canConnect(run.port)) break; await new Promise((r) => setTimeout(r, 250)); }
       if (run.state !== 'starting') throw new Error(run.lastError ?? `process ended before listening (${run.lastLine ?? 'no output'})`);
@@ -181,8 +192,10 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
     if (!/^[0-9a-f]{64}$/.test(matchId ?? '')) return { code: 400, error: 'matchId must be 64 lowercase hex characters' };
     const problem = directSeatsProblem(format, seats);
     if (problem) return { code: 400, error: problem };
-    const want = seats.map((s) => ({ sub: s.sub, team: s.team, slot: s.slot }));
-    const key = (list) => list.map((s) => `${s.team}${s.slot}:${s.sub}`).sort().join('|');
+    // `key` (64 hex) passes through when the publisher's matchmaker proved it for the seat (Pickle Brawl: the AIR
+    // account's PlayerProfile holds this browser key), so LITNODE_SEATS and the tickets name the same seat.
+    const want = seats.map((s) => ({ sub: s.sub, team: s.team, slot: s.slot, ...(/^[0-9a-f]{64}$/.test(s.key ?? '') ? { key: s.key } : {}) }));
+    const key = (list) => list.map((s) => `${s.team}${s.slot}:${s.sub}:${s.key ?? ''}`).sort().join('|');
     const existing = active.get(matchId);
     if (existing) {
       if (!existing.direct || existing.owner !== owner || existing.mode !== format || key(existing.seats) !== key(want)) return { code: 409, error: 'that matchId is already running with other seats' };

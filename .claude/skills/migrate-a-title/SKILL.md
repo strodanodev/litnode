@@ -66,13 +66,27 @@ what changes is that one message per finished match reaches a node.
    `settled | already | refused | unreachable` (`sdk/court/README.md`).
    Add `report.commitments = { logFormat, inputsHash, finalHash, verifierHash }`
    (`makeCommitments` computes `inputsHash` from the exact log bytes, never
-   by hand; `null` where there is no log) and `report.stats`. `settle`
-   attaches the log (≤ 512 KiB) only when the node says `protocol >= 4`.
+   by hand; with no log, omit `commitments` entirely: `logFormat` must be a
+   string) and `report.stats`. `settle` attaches the log (≤ 512 KiB) only
+   when the node says `protocol >= 4`; a court whose logs can run longer
+   passes `oversizeLog: 'skip'` (the commitment stays, the result settles
+   `attested`). With `node: 'auto'` it remembers the settler for 5 minutes
+   and falls through to the next candidate, so a serverless court does not
+   re-read the chain per match.
+   A single-player title framed by the arcade seats the player's key: the
+   game asks the shell `cabinet:sign-run { body: { rulesetId, inputsHash } }`,
+   sends `{ key, sig }` with the run, and the court checks it with
+   `verifyRun` before naming the key; without it the seat stays a prefixed,
+   casual id.
 3c. **Reaching L2 `checkable`.** Package the court's headless replay as a
    verifier bundle: a spec like the server's (`gauntlets/*.server.json`)
    with an entry exporting `verify(logBytes, spec) → { finalHash, result }`,
    then `npm run bundle:verifier -- <spec.json> --root <checkout>` prints
-   `verifierHash`. The court puts it in `commitments.verifierHash`; the
+   `verifierHash` (no commit or time inside the hashed bytes, so the same
+   checkout gives the same hash on any machine; `verify` may be async and
+   throws `refused: …` for a log that does not replay; `runtime` may ask
+   for `memoryMb ≤ 2048`, `timeoutS ≤ 900`). The court puts it in
+   `commitments.verifierHash`; the
    publisher registers it (`npm run publish:title -- set-build
    verifiers/<id>.verifier.json`; until then an operator may accept it with
    `VERIFIERS=<id>:<hash>`). Results then settle `proof: 'checkable'` on any
@@ -92,7 +106,9 @@ what changes is that one message per finished match reaches a node.
    - nothing should be hosted anywhere else: **gauntlet**. The node runs
      their headless match server per placed match (`docs/BRING-YOUR-BACKEND.md`
      section 6a). Write `gauntlets/<id>.json` (command, cwd, env with
-     `${port} ${secret} ${publicUrl} ${seats} ${nodeUrl}`, command `${node}`),
+     `${port} ${secret} ${publicUrl} ${seats} ${nodeUrl}`, command `${node}`;
+     the server inherits only the OS basics of the node's environment, so
+     anything else it reads goes in `env` or by name in `inheritEnv`),
      add `GAUNTLETS=` and `RELAY_PORT=` to the host's `node.env` (or
      `GAUNTLET_GATEWAY_PORT=` when that node already fronts another title's
      relay on `RELAY_PORT`; `npm run host -- doctor` checks it), have their server verify

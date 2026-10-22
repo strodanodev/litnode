@@ -23,5 +23,10 @@
   "readyMs": 120000,
   "ttlMs": 900000,
   "ticketTtlMs": 600000,
-  "settledGraceMs": 150000
+  "settledGraceMs": 150000,
+  "inheritEnv": [
+    "COURT_LOG_DIR",
+    "COURT_DIAG",
+    "LITNODE_RPC"
+  ]
 }

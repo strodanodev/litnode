@@ -120,7 +120,8 @@ export async function check(source, { ticks = 240, sandbox = null, timeoutMs = 2
         add('stats: non-negative integers, schema names, participants only', !err, err);
         add('stats: deterministic (same numbers twice)', JSON.stringify(a.result.stats ?? null) === JSON.stringify(b.result.stats ?? null), 'stats() must depend on the state alone');
         add('stats: something to fold', clean != null, 'stats() returned nothing for the schema names on the smoke replay (warning: fine if the counters only move in real play)', { warn: true });
-        const inState = !clean || Object.values(clean).every((line) => Object.values(line).every((v) => a.result.serialized.includes(String(v))));
+        // decimal in a JSON state, or one 32-bit hex word in a hexed Int32Array (Agent Fighter's serialize)
+        const inState = !clean || Object.values(clean).every((line) => Object.values(line).every((v) => a.result.serialized.includes(String(v)) || a.result.serialized.includes((v >>> 0).toString(16).padStart(8, '0'))));
         add('stats: the counters are in serialize()', inState, 'keep the counters in the state and serialize them, so the root commits to them (warning)', { warn: true });
       }
     }

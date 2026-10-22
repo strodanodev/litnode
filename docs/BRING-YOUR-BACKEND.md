@@ -187,7 +187,10 @@ a gauntlet config:
 
 1. spawns your command on a free local port with the match in its
    environment: a per-match seat secret, the seats it will admit (JSON),
-   its public URL, the node's loopback URL for the outcome report;
+   its public URL, the node's loopback URL for the outcome report; from the
+   node's own environment it inherits only the OS and runtime basics (PATH,
+   TEMP, HOME and the like), so anything else your server reads goes in the
+   config's `env`, or by name in `inheritEnv`;
 2. mints one join ticket per placed player (`base64url(claims).base64url(HMAC-SHA256)`,
    claims `{ sub: <player key>, matchId, team, slot, mode, exp }`, which is
    what Pickle Brawl's court verifies at its gate);

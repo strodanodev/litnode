@@ -22,6 +22,9 @@
 
 export const ATTEST_TAG = 'attest';
 export const WHOAMI_TAG = 'whoami';
+/** A player's signature over a single-player run's committed log: sign('run', { rulesetId, inputsHash }) with the
+ *  arcade key (the shell's cabinet:sign-run), so a court can seat that key for a run no node placed. */
+export const RUN_TAG = 'run';
 /** The largest input log a node accepts beside an envelope, decoded. */
 export const LOG_MAX_BYTES = 512 * 1024;
 /** The node protocol from which POST /ledger takes `log` (and serves GET /log/<inputsHash>). */
@@ -141,6 +144,25 @@ export async function signReport({ matchId, rulesetId, report }, identity) {
   const key = await importSigner(identity);
   return { id: identity.publicKey, sig: toHex(new Uint8Array(await subtle().sign({ name: 'Ed25519' }, key, bytes))) };
 }
+
+/** The body a player signs for a run: { rulesetId, inputsHash }. */
+export const runBody = ({ rulesetId, inputsHash: ih }) => ({ inputsHash: ih, rulesetId });
+
+/** A player's signature over a run (what the arcade shell does for cabinet:sign-run). → { player, sig } */
+export async function signRun({ rulesetId, inputsHash: ih }, identity) {
+  if (typeof rulesetId !== 'string' || !RULESET_RE.test(rulesetId)) throw new TypeError('signRun: rulesetId like <id>.v1');
+  if (!HEX64.test(ih ?? '')) throw new TypeError('signRun: inputsHash (64 lowercase hex)');
+  const bytes = signingBytes(RUN_TAG, runBody({ rulesetId, inputsHash: ih }));
+  if (typeof identity?.sign === 'function') {
+    const sig = await identity.sign(bytes);
+    return { player: identity.publicKey, sig: typeof sig === 'string' ? sig.toLowerCase() : toHex(toBytes(sig)) };
+  }
+  const key = await importSigner(identity);
+  return { player: identity.publicKey, sig: toHex(new Uint8Array(await subtle().sign({ name: 'Ed25519' }, key, bytes))) };
+}
+
+/** Did `player` sign this run? The court's check before it seats the key. Never throws. */
+export const verifyRun = ({ rulesetId, inputsHash: ih }, sig, player) => verifySignature(RUN_TAG, runBody({ rulesetId, inputsHash: ih }), sig, player);
 
 /** Does `attestor` sign this envelope's report? The node's own check, for a studio's tests. */
 export const verifyEnvelope = (env) => verifySignature(ATTEST_TAG, attestBody(env ?? {}), env?.attestor?.sig, env?.attestor?.id);
@@ -489,21 +511,46 @@ export async function findSettler({ rulesetId = null, contracts = null, contract
  *    already      the node held this matchId before (its delta, which may not be this envelope's)
  *    refused      the node answered and will not settle it (400: the reason; 403: no settling role) — resending will not help
  *    unreachable  no answer worth acting on after `retries` (network, timeout, 429, 5xx): try later or another node */
-export async function settle(env, { node = 'auto', log = null, fetch: fetchImpl = globalThis.fetch, retries = 3, backoffMs = 500, timeoutMs = 30_000, discovery = {} } = {}) {
+const settlers = new Map(); // discovery key → { at, url }: what node: 'auto' found, reused for cacheMs
+/** Drop every settler settle() remembered (tests; or after the mesh changed under a long-lived court). */
+export const forgetSettlers = () => settlers.clear();
+
+export async function settle(env, { node = 'auto', log = null, oversizeLog = 'throw', fetch: fetchImpl = globalThis.fetch, retries = 3, backoffMs = 500, timeoutMs = 30_000, discovery = {}, cacheMs = 300_000, fallbacks = 2 } = {}) {
   if (!isObj(env) || typeof env.matchId !== 'string' || !env.matchId) throw new TypeError('settle: an envelope with a matchId');
   const matchId = env.matchId;
-  let logBytes = null;
+  let logBytes = null, logSkipped = null;
   if (log != null) {
     logBytes = toBytes(log);
-    if (logBytes.length > LOG_MAX_BYTES) throw new RangeError(`settle: log is ${logBytes.length} bytes; a node takes at most ${LOG_MAX_BYTES}`);
+    if (logBytes.length > LOG_MAX_BYTES && oversizeLog !== 'skip') throw new RangeError(`settle: log is ${logBytes.length} bytes; a node takes at most ${LOG_MAX_BYTES} (oversizeLog: 'skip' settles without it)`);
     const want = env.report?.commitments?.inputsHash, got = await inputsHash(logBytes);
     if (want !== got) throw new Error(`settle: the log hashes to ${got}, report.commitments.inputsHash is ${want ?? 'missing'}`);
+    // 'skip': the commitment stays in the signed report and the bytes stay with the court; the result settles attested.
+    if (logBytes.length > LOG_MAX_BYTES) { logBytes = null; logSkipped = 'oversize'; }
   }
-  let base;
-  if (!node || node === 'auto') {
-    try { base = (await findSettler({ rulesetId: env.rulesetId ?? null, fetch: fetchImpl, backoffMs, ...discovery })).url; }
-    catch (e) { return { status: 'unreachable', matchId, node: null, error: e.message, logAttached: false }; }
-  } else base = trim(typeof node === 'string' ? node : node.url);
+  const extra = logSkipped ? { logSkipped } : {};
+  if (node && node !== 'auto') return { ...(await postTo(trim(typeof node === 'string' ? node : node.url))), ...extra };
+
+  // node: 'auto'. Discovery reads the chain and probes every seed; a serverless court calling it per run is what
+  // 429s the gateway. The last settler that answered is reused for cacheMs; one that stops answering (or has no
+  // settling role) is passed over and the next candidate tried, up to `fallbacks` times.
+  const dkey = JSON.stringify([env.rulesetId ?? null, discovery.contractsUrl ?? null, discovery.contracts ?? null, discovery.rpc ?? null]);
+  const exclude = [...(discovery.exclude ?? [])];
+  let last = null;
+  for (let attempt = 0; attempt <= fallbacks; attempt++) {
+    let base = null;
+    const hit = settlers.get(dkey);
+    if (hit && Date.now() - hit.at < cacheMs && !exclude.includes(hit.url)) base = hit.url;
+    else {
+      try { base = (await findSettler({ rulesetId: env.rulesetId ?? null, fetch: fetchImpl, backoffMs, ...discovery, exclude })).url; }
+      catch (e) { return last ? { ...last, ...extra } : { status: 'unreachable', matchId, node: null, error: e.message, logAttached: false, ...extra }; }
+    }
+    const r = await postTo(base);
+    if (r.status !== 'unreachable' && !(r.status === 'refused' && r.httpStatus === 403)) { if (cacheMs > 0) settlers.set(dkey, { at: Date.now(), url: base }); return { ...r, ...extra }; }
+    settlers.delete(dkey); exclude.push(base); last = r;
+  }
+  return { ...last, ...extra };
+
+  async function postTo(base) {
   const out = (o) => ({ matchId, node: base, logAttached: false, ...o });
 
   const h = await request(fetchImpl, `${base}/health`, { retries, backoffMs, timeoutMs: Math.min(timeoutMs, 10_000) });
@@ -525,4 +572,5 @@ export async function settle(env, { node = 'auto', log = null, fetch: fetchImpl 
   }
   if (p.status && p.status >= 400 && p.status < 500 && p.status !== 408 && p.status !== 429) return out({ status: 'refused', error: p.error, httpStatus: p.status, protocol });
   return out({ status: 'unreachable', error: p.error, httpStatus: p.status, protocol });
+  }
 }

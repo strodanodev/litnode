@@ -4,7 +4,7 @@ import { canonical, h } from '../protocol/canonical.js';
 import * as core from '@af/core';
 
 /** Agent Fighter — strodanodev/agent-fighter, written against @af/core as it
- *  actually exports (af-core-8), not the shape the previous adapter assumed.
+ *  actually exports (af-core-9), not the shape the previous adapter assumed.
  *
  *  What the engine really gives us:
  *    createGameState(seed: int32, bounds?)   — not createState(hex)
@@ -12,20 +12,16 @@ import * as core from '@af/core';
  *                                              bitfields by SIDE, not by player
  *    Phase.MatchOver                          — not isOver()
  *    serialize(state): Int32Array, stateHash(): 32-bit FNV
- *    setCharacters / setMatchPets / setMatchItems — MODULE-LEVEL pins that
- *      must be installed before createGameState on every simulating peer
+ *    createGameState(seed, bounds, { chars, items, pets }) — the match pins
+ *      live on the state (af-core-9); no process globals
+ *    matchStats(state) / STATS_SCHEMA — integer per-side counters kept in
+ *      serialize(), so every witness recomputes them
  *
  *  There is no fallback sim. This file is bundled together with @af/core into
  *  one import-free artifact by tools/bundle-ruleset.mjs, so buildHash pins the
  *  engine and the adapter as one thing. If the engine is absent the build
  *  fails; nothing silently runs a stub in its place.
- *
- *  LIMIT (stated, not hidden): the engine's pins are process globals, so one
- *  process may simulate ONE match at a time. The node must run each match in
- *  its own worker until @af/core moves pins into GameState. `exclusive` below
- *  is the flag the runtime should honour. */
-
-export const exclusive = true;
+ */
 
 const ENGINE = core.ENGINE_VERSION;
 
@@ -79,7 +75,7 @@ export default defineTitle({
   services: {
     leaderboard: eloLeaderboard({ k: 24 }),
     credits: winnerTakesCredits({ pot: 10, currency: 'credits' }),
-    stats: { track: ['matches', 'wins', 'ticks'] },
+    stats: { track: ['matches', 'wins', 'ticks'], schema: core.STATS_SCHEMA },
   },
 
   /** seed: hex string from H(beacon, matchId). participants: [playerId, playerId]
@@ -121,13 +117,14 @@ export default defineTitle({
       bounds = ctx.bounds ?? undefined;
     }
 
-    // The engine's process-global pins. Every simulating peer — host, witness,
-    // rollback client — installs exactly these before createGameState.
-    core.setCharacters(core.loadCharacter(sides[0].bundle), core.loadCharacter(sides[1].bundle));
-    core.setMatchPets(sides[0].aura, sides[1].aura);
-    core.setMatchItems(sides[0].items, sides[1].items);
-
-    const state = core.createGameState(seedInt, bounds);
+    // The match pins live on the state (af-core-9): every simulating peer —
+    // host, witness, rollback client — passes exactly these, and a process may
+    // replay any number of matches side by side.
+    const state = core.createGameState(seedInt, bounds, {
+      chars: [core.loadCharacter(sides[0].bundle), core.loadCharacter(sides[1].bundle)],
+      items: [sides[0].items, sides[1].items],
+      pets: [sides[0].aura, sides[1].aura],
+    });
     // Everything the state root must commit to beyond the engine's own bytes.
     // Two honest hosts with different engines or bundles reach different roots.
     state.pins = {
@@ -160,6 +157,14 @@ export default defineTitle({
   scores(s) {
     const [a, b] = s.pins.participants;
     return { [a]: s.roundsWon0, [b]: s.roundsWon1 };
+  },
+
+  /** Settlement v4: per-match stats from the final state's integer counters
+   *  (serialized, so every witness recomputes them bit-exactly). */
+  stats(s) {
+    const [a, b] = s.pins.participants;
+    const [la, lb] = core.matchStats(s);
+    return { [a]: la, [b]: lb };
   },
 });
 

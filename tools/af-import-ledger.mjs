@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
-import { meshRooms, toSubmission } from './lib/af-submission.mjs';
+import { toSubmission } from './lib/af-submission.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const AF_ROOT = resolve(process.env.AF_ROOT ?? 'E:/NPC/AGENT FIGHTER/agent-fighter');
@@ -37,8 +37,8 @@ for (const [i, id] of pin.chars.entries()) {
   const digest = createHash('sha256').update(readFileSync(join(AF_ROOT, 'characters', id, 'character.json'))).digest('hex');
   if (pin.charDigests?.[i] && pin.charDigests[i] !== digest) console.warn(`WARNING: bundle ${id} retuned since the match (digest differs)`);
 }
-const rooms = post && pin.room ? await meshRooms(post) : new Map();
-const submission = toSubmission(row, { engine, manifest, afRoot: AF_ROOT, rooms });
+const submission = toSubmission(row, { engine, manifest, afRoot: AF_ROOT });
+if (!submission) { console.error(`${row.match_id}: archived by the gauntlet, which settles its own matches — nothing to import`); process.exit(1); }
 const outDir = join(root, 'data', 'ledgers-import');
 mkdirSync(outDir, { recursive: true });
 const out = join(outDir, `${row.match_id}.json`);
