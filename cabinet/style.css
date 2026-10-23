@@ -391,7 +391,7 @@ ol.steps li { margin: 2px 0; }
 
 /* ── grid spans + responsive ─────────────────────────────── */
 .s3 { grid-column: span 3; } .s4 { grid-column: span 4; } .s5 { grid-column: span 5; } .s6 { grid-column: span 6; } .s7 { grid-column: span 7; } .s12 { grid-column: span 12; }
-@media (max-width: 1100px) { .s3, .s4, .s5 { grid-column: span 6; } .s7 { grid-column: span 12; } .nav a { padding: 0 9px; font-size: 10px; } .podium { grid-template-columns: 1fr; } .rankcard.r1 { order: 0; } }
+@media (max-width: 1100px) { .s3, .s4, .s5 { grid-column: span 6; } .s7 { grid-column: span 12; } .nav a { padding: 0 9px; font-size: 10px; } .podium { grid-template-columns: minmax(0, 1fr); } .rankcard.r1 { order: 0; } }
 @media (max-width: 760px) {
   .s3, .s4, .s5, .s6, .s7 { grid-column: span 12; }
   .topbar { gap: 10px; padding: 0 12px; backdrop-filter: none; background: rgba(6,9,15,.88); } .me-name { display: none; } .logo-sub { display: none; } .logo .chrome { font-size: 20px; }
