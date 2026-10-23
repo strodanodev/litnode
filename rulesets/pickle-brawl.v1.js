@@ -150,7 +150,10 @@ var validateReport = (r) => {
   const a = r.scoreA, b = r.scoreB;
   if (!Number.isInteger(a) || !Number.isInteger(b) || a < 0 || b < 0) return "scores must be non-negative integers";
   if (r.winnerTeam !== 0 && r.winnerTeam !== 1 && r.winnerTeam !== null) return "winnerTeam must be 0, 1 or null";
-  if (r.winnerTeam !== null) {
+  if (r.forfeitTeam !== void 0) {
+    if (r.forfeitTeam !== 0 && r.forfeitTeam !== 1) return "forfeitTeam must be 0 or 1 when present";
+    if (r.winnerTeam !== 1 - r.forfeitTeam) return "a forfeit is won by the side that did not quit";
+  } else if (r.winnerTeam !== null) {
     const [w, l] = r.winnerTeam === 0 ? [a, b] : [b, a];
     if (w <= l) return "winner must have the higher score";
     if (w < GAME_TO) return `a won game reaches at least ${GAME_TO}`;
@@ -181,13 +184,19 @@ var pickle_brawl_adapter_default = defineAttestedTitle({
     stats: { track: ["matches", "wins", "ticks"], schema: { pointsWon: "sum", aces: "sum", winners: "sum", unforcedErrors: "sum", smashes: "sum", dinks: "sum", longestRally: "max", matchesMvp: "sum" } }
   },
   validate: validateReport,
-  /** Team score to every member. Abandoned games score 0–0 so nothing moves. */
+  /** Team score to every member. Abandoned games score 0–0 so nothing moves.
+   *  The node ranks a match by these numbers (protocol/derive.js), so a
+   *  forfeit's winner must come out ahead: the side that stayed keeps its
+   *  points, raised to one past the quitter's when it was behind or level. */
   scores(report, participants, teams) {
     const out = {};
     const [A, B] = teams;
     const won = report.winnerTeam;
-    for (const p of A) out[p] = won === null ? 0 : report.scoreA;
-    for (const p of B) out[p] = won === null ? 0 : report.scoreB;
+    let a = report.scoreA, b = report.scoreB;
+    if (report.forfeitTeam === 1) a = Math.max(a, b + 1);
+    if (report.forfeitTeam === 0) b = Math.max(b, a + 1);
+    for (const p of A) out[p] = won === null ? 0 : a;
+    for (const p of B) out[p] = won === null ? 0 : b;
     return out;
   }
 });

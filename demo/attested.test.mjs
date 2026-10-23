@@ -43,6 +43,13 @@ test('rulebook validation', () => {
   assert.match(validateReport(report('m', 'singles', 5, 3, 0)), /at least 11/);
   assert.match(validateReport(report('m', 'singles', 9, 11, 0)), /higher score/);
   assert.match(validateReport({ ...report('m', 'doubles', 11, 5, 0), claims: report('m', 'singles', 11, 5, 0).claims }), /4 seats/);
+  // a forfeit is won by the side that stayed, whatever the score; the quitter can never be the winner
+  assert.equal(validateReport({ ...report('m', 'singles', 3, 5, 0), forfeitTeam: 1 }), null, 'leader quits, trailer wins');
+  assert.equal(validateReport({ ...report('m', 'singles', 0, 0, 1), forfeitTeam: 0 }), null, 'forfeit at 0–0');
+  assert.match(validateReport({ ...report('m', 'singles', 3, 5, 1), forfeitTeam: 1 }), /did not quit/);
+  assert.match(validateReport({ ...report('m', 'singles', 3, 5, null), forfeitTeam: 1 }), /did not quit/);
+  assert.match(validateReport({ ...report('m', 'singles', 3, 5, 0), forfeitTeam: 2 }), /forfeitTeam must be 0 or 1/);
+  assert.match(validateReport(report('m', 'singles', 6, 3, 0)), /at least 11/, 'no forfeitTeam: still to 11');
 });
 
 test('attested: court-signed report settles, witness co-signs attestation-only, doubles team Elo', { timeout: 60_000 }, async (t) => {
@@ -103,4 +110,18 @@ test('attested: court-signed report settles, witness co-signs attestation-only, 
   const none = await spawn({ operator: 'guild-b', roles: ['mesh', 'settler'], rulesets: [RULESET] });
   const rn = await fetch(`${none.addr}/ledger`, { method: 'POST', body: JSON.stringify(await submission(court, report('pb-8', 'singles', 11, 3, 0))) });
   assert.equal(rn.status, 400); assert.match((await rn.json()).error, /is not an authorized court/);
+
+  // Forfeit: dan led 5–3 and left; carol stayed and wins. The node ranks by score, so carol must come out ahead.
+  const ff = (matchId, winnerTeam, extra = {}) => ({ ...report(matchId, 'singles', 3, 5, winnerTeam), claims: [{ sub: 'air:carol', team: 0, slot: 0 }, { sub: 'air:dan', team: 1, slot: 0 }], ...extra });
+  const rff = await fetch(`${host.addr}/ledger`, { method: 'POST', body: JSON.stringify(await submission(court, ff('pb-9', 0, { forfeitTeam: 1 }))) });
+  const dff = await rff.json();
+  assert.equal(rff.status, 200, JSON.stringify(dff));
+  assert.equal(dff.scores['pb:air:carol'], 6, 'the side that stayed is raised to one past the quitter');
+  assert.equal(dff.scores['pb:air:dan'], 5, 'the quitter keeps its own points');
+  const lbf = Object.fromEntries((await (await fetch(`${host.addr}/leaderboard?ruleset=pickle-brawl.v1&scope=all`)).json()).leaderboard.map((r) => [r.player, r.rating]));
+  assert.ok(lbf['pb:air:carol'] > lbf['pb:air:dan'], 'the forfeit winner is ranked ahead');
+  const rq = await fetch(`${host.addr}/ledger`, { method: 'POST', body: JSON.stringify(await submission(court, ff('pb-10', 1, { forfeitTeam: 1 }))) });
+  assert.equal(rq.status, 400); assert.match((await rq.json()).error, /did not quit/);
+  const rlow = await fetch(`${host.addr}/ledger`, { method: 'POST', body: JSON.stringify(await submission(court, report('pb-11', 'singles', 6, 3, 0))) });
+  assert.equal(rlow.status, 400); assert.match((await rlow.json()).error, /at least 11/);
 });

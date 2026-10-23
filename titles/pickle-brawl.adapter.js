@@ -29,8 +29,15 @@ import { defineAttestedTitle, eloLeaderboard, winnerTakesCredits } from './title
 export const RULESET_ID = 'pickle-brawl.v1';
 
 /** USA Pickleball Official Rulebook (2025) §4: games to 11, win by 2. The
- *  court's `winnerTeam: null` means abandoned/forfeited — no winner is
- *  derived, and no ladder movement is derived either. */
+ *  court's `winnerTeam: null` means abandoned before play (a no-contest): no
+ *  winner is derived, and no ladder movement is derived either.
+ *
+ *  A forfeit is not a no-contest. When a side leaves after both sides had
+ *  gathered and does not come back inside the court's grace window, the court
+ *  ends the match against it: `forfeitTeam` names the side that quit and
+ *  `winnerTeam` the other, whatever the score (a leader who quits still loses,
+ *  or quitting would be the way to keep a loss off the ladder). The score is
+ *  the score at the moment of the forfeit, so neither 11 nor win-by-2 holds. */
 const GAME_TO = 11;
 
 export const validateReport = (r) => {
@@ -40,7 +47,10 @@ export const validateReport = (r) => {
   const a = r.scoreA, b = r.scoreB;
   if (!Number.isInteger(a) || !Number.isInteger(b) || a < 0 || b < 0) return 'scores must be non-negative integers';
   if (r.winnerTeam !== 0 && r.winnerTeam !== 1 && r.winnerTeam !== null) return 'winnerTeam must be 0, 1 or null';
-  if (r.winnerTeam !== null) {
+  if (r.forfeitTeam !== undefined) {
+    if (r.forfeitTeam !== 0 && r.forfeitTeam !== 1) return 'forfeitTeam must be 0 or 1 when present';
+    if (r.winnerTeam !== 1 - r.forfeitTeam) return 'a forfeit is won by the side that did not quit';
+  } else if (r.winnerTeam !== null) {
     const [w, l] = r.winnerTeam === 0 ? [a, b] : [b, a];
     if (w <= l) return 'winner must have the higher score';
     if (w < GAME_TO) return `a won game reaches at least ${GAME_TO}`;
@@ -72,13 +82,19 @@ export default defineAttestedTitle({
   },
   validate: validateReport,
 
-  /** Team score to every member. Abandoned games score 0–0 so nothing moves. */
+  /** Team score to every member. Abandoned games score 0–0 so nothing moves.
+   *  The node ranks a match by these numbers (protocol/derive.js), so a
+   *  forfeit's winner must come out ahead: the side that stayed keeps its
+   *  points, raised to one past the quitter's when it was behind or level. */
   scores(report, participants, teams) {
     const out = {};
     const [A, B] = teams;
     const won = report.winnerTeam;
-    for (const p of A) out[p] = won === null ? 0 : report.scoreA;
-    for (const p of B) out[p] = won === null ? 0 : report.scoreB;
+    let a = report.scoreA, b = report.scoreB;
+    if (report.forfeitTeam === 1) a = Math.max(a, b + 1);
+    if (report.forfeitTeam === 0) b = Math.max(b, a + 1);
+    for (const p of A) out[p] = won === null ? 0 : a;
+    for (const p of B) out[p] = won === null ? 0 : b;
     return out;
   },
 });

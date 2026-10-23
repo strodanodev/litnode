@@ -17,6 +17,14 @@ follows [Keep a Changelog](https://keepachangelog.com/).
   answered; a JSON-RPC error is the chain's answer and is not retried. `sdk/court` discovery tries an arcade
   `contracts.json`'s `rpcFallback` after its `rpc`, before its built-in list. Agent Fighter's client already reads it.
 
+### Fixed
+- **Pickle Brawl forfeits settle.** A side that leaves after both had gathered loses by forfeit, whatever the score;
+  the adapter refused those results (`a won game reaches at least 11`). The court (Pickle Brawl `16b2a7b`) now
+  signs `forfeitTeam: 0|1`: `validate` requires `winnerTeam` to be the other side and skips the to-11, win-by-2 and
+  higher-score checks; `scores` raises the side that stayed to one past the quitter, so it is ranked ahead. Ruleset
+  build `866bb9eb…974d` (`npm run bundle:title -- titles/pickle-brawl.adapter.js`), not yet registered; nodes keep
+  `98d23e4e…90d1` until it is.
+
 ### Removed
 - **litnode's Agent Fighter relay glue.** Agent Fighter's always-on relay is casual play and its results stay in
   Agent Fighter's own database; they no longer come to the mesh. The only Agent Fighter intake is the gauntlet in

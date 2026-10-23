@@ -1,8 +1,8 @@
 {
   "rulesetId": "pickle-brawl.v1",
-  "buildHash": "98d23e4eacbd0130fe2281a40cccfe7f48d32cecb87d8ac2d116a1d82ea690d1",
-  "bytes": 6720,
+  "buildHash": "866bb9ebe0ad9e620a4ed931a86e0190523c61cfd4463a3bb225adcc12f2974d",
+  "bytes": 7326,
   "kind": "attested",
   "display": null,
-  "builtAt": "2026-10-22T15:33:59.167Z"
+  "builtAt": "2026-10-23T13:09:30.081Z"
 }
