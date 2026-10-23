@@ -165,7 +165,7 @@ async function pollNode() {
       if (!g.rulesetId) continue;
       const rid = encodeURIComponent(g.rulesetId);
       // An attested title (a court's reports, never official) has no official ladder by construction: show its own, labelled (docs/SETTLEMENT-STANDARD.md §4).
-      const [lb, st, ds, pg] = await Promise.all([api(`/leaderboard?ruleset=${rid}${g.status === 'attested' ? '&scope=all' : ''}`).catch(() => ({})), api(`/stats?ruleset=${rid}`).catch(() => ({})), wantDeltas ? api(`/deltas?ruleset=${rid}`).catch(() => null) : null,
+      const [lb, st, ds, pg] = await Promise.all([api(`/leaderboard?ruleset=${rid}${g.status === 'attested' ? '&scope=all' : ''}`).catch(() => ({})), api(`/stats?ruleset=${rid}${g.status === 'attested' ? '&scope=all' : ''}`).catch(() => ({})), wantDeltas ? api(`/deltas?ruleset=${rid}`).catch(() => null) : null,
         player?.id ? api(`/progress?ruleset=${rid}&player=${player.id}`).catch(() => null) : null]);
       S.boards[g.rulesetId] = lb.leaderboard ?? [];
       S.stats[g.rulesetId] = st && !st.error ? st : {};
@@ -230,8 +230,34 @@ function history(rid, who = player.id) {
   }
   return out;
 }
-const myBoardRow = (rid) => (S.boards[rid] ?? []).find((r) => r.player === player.id) ?? null;
+const myBoardRow = (rid) => ladderRows(rid).find((r) => r.player === player.id) ?? null;
 const ticksToHours = (t) => t / 60 / 3600;
+
+// Settlement v4: each title declares its own match stats (services.stats.schema), folded by the node into the /stats
+// lines. The names below get a label; any other title's names show humanized.
+const STAT_LABEL = { kos: 'KOs', roundsWon: 'Rounds won', perfectRounds: 'Perfect rounds', damageDealt: 'Damage dealt', maxCombo: 'Best combo', supersLanded: 'Supers landed', throwTechs: 'Throw techs', fastestKo: 'Fastest KO',
+  pointsWon: 'Points won', aces: 'Aces', winners: 'Winners', unforcedErrors: 'Unforced errors', smashes: 'Smashes', dinks: 'Dinks', longestRally: 'Longest rally', matchesMvp: 'MVP',
+  points: 'Best score', stars: 'Stars', rescued: 'Rescued', casualties: 'Casualties', bestChain: 'Best chain', keptDry: 'Kept dry', stormsSurvived: 'Storms survived' };
+/** Where only a few fit (profile, ranks columns) these lead, in schema order, then the rest. */
+const STAT_HEAD = new Set(['kos', 'perfectRounds', 'maxCombo', 'fastestKo', 'aces', 'winners', 'longestRally', 'matchesMvp', 'points', 'rescued', 'bestChain', 'stormsSurvived']);
+const statNames = (rid, n = Infinity) => { const all = Object.keys(S.snapshot?.manifests?.[rid]?.services?.stats?.schema ?? {}); return [...all.filter((k) => STAT_HEAD.has(k)), ...all.filter((k) => !STAT_HEAD.has(k))].slice(0, n); };
+const statLabel = (k) => STAT_LABEL[k] ?? k.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase());
+const hasTitleStats = (rid, line) => !!line && statNames(rid).some((k) => line[k] != null);
+/** A stat as shown: fastestKo is engine ticks (60/s); keptDry is a percent summed over runs, shown per run. */
+function statValue(k, line) {
+  const v = line?.[k];
+  if (typeof v !== 'number') return '—';
+  if (k === 'fastestKo') return `${(v / 60).toFixed(1)}<small>s</small>`;
+  if (k === 'keptDry') return `${line.matches ? Math.round(v / line.matches) : 0}<small>% avg</small>`;
+  return v.toLocaleString();
+}
+const statTiles = (rid, line, n) => `<div class="tstats">${statNames(rid, n).map((k) => `<div class="stat"><div class="k">${esc(statLabel(k))}</div><div class="v">${statValue(k, line)}</div></div>`).join('')}</div>`;
+/** The profile's per-title block: each title's own stats under my key; titles with none are left out. */
+function titleStats() {
+  const rows = GAMES.filter((g) => g.rulesetId && hasTitleStats(g.rulesetId, S.stats[g.rulesetId]?.[player.id]));
+  if (!rows.length) return '';
+  return `<div class="section-h"><h4>Per title</h4></div>${rows.map((g) => { const line = S.stats[g.rulesetId][player.id]; return `<a class="tline" href="#/game/${g.id}"><div class="tt">${esc(g.title)}<span>${line.matches} match${line.matches === 1 ? '' : 'es'} ›</span></div>${statTiles(g.rulesetId, line, 4)}</a>`; }).join('')}`;
+}
 
 // ═══════════════════════════════════════════════ chrome ══
 function renderChrome() {
@@ -467,6 +493,7 @@ function profilePanel() {
       <div class="big"><div class="icon">◆</div><div><div class="k">Skill rating</div><div class="v">${rating}<small> ${row ? 'SR' : 'unrated'}</small></div></div></div>
       <a class="big" href="#/cards"><div class="icon">▣</div><div><div class="k">Cards</div><div class="v">${DECK.filter((c) => c.held).length}<small> / ${DECK.length} sample</small></div></div></a>
     </div>
+    ${titleStats()}
     <div class="source">${S.online ? `Derived from ${t.matches} settled match${t.matches === 1 ? '' : 'es'} on the mesh. Account XP and cards sync with Agent Fighter.` : 'Start a node to load your mesh record.'}</div>
   `, '', 'profile s4');
 }
@@ -520,16 +547,30 @@ function gamesPanel() {
   return panel('Game library', `<div class="glist">${rows}</div>`, moreLink('#/games', 'all games'), 's3');
 }
 
-function boardTable(rid, limit, q = '') {
-  const rows = S.boards[rid] ?? [];
+/** A title with no rating ladder (one seat, no Elo: FLOOD CONTROL) ranks by its lead stat instead; `byStat` names it. */
+function statRanking(rid) {
+  const k = statNames(rid, 1)[0];
+  if (!k) return [];
+  const asc = S.snapshot?.manifests?.[rid]?.services?.stats?.schema?.[k] === 'min';
+  const rows = Object.entries(S.stats[rid] ?? {}).filter(([, l]) => typeof l[k] === 'number')
+    .sort(([pa, a], [pb, b]) => (asc ? a[k] - b[k] : b[k] - a[k]) || (pa < pb ? -1 : 1))
+    .map(([p], i) => ({ rank: i + 1, player: p, rating: null }));
+  return Object.assign(rows, { byStat: k });
+}
+const ladderRows = (rid) => (S.boards[rid]?.length ? S.boards[rid] : statRanking(rid));
+
+function boardTable(rid, limit, q = '', cols = 0) {
+  const rows = ladderRows(rid);
   const st = S.stats[rid] ?? {};
   const list = (q ? rows.filter((r) => r.player.includes(q)) : rows).slice(0, limit);
   const me = myBoardRow(rid);
-  const tr = (r) => { const s = st[r.player] ?? {}; return `<tr class="${r.player === player.id ? 'me' : ''}"><td class="rank ${r.rank <= 3 ? 'top' : ''}">#${r.rank}</td><td><div class="pl"><img src="${r.player === player.id ? player.avatar : identicon(r.player, 40)}" alt=""/>${r.player === player.id ? esc(player.name) : short(r.player, 12)}</div></td><td class="num">${r.rating}</td><td class="num">${s.matches ?? 0}</td><td class="num">${s.wins ?? 0}</td><td class="num">${pct(s.wins ?? 0, s.matches ?? 0)}%</td></tr>`; };
+  const names = statNames(rid, cols);
+  const tr = (r) => { const s = st[r.player] ?? {}; return `<tr class="${r.player === player.id ? 'me' : ''}"><td class="rank ${r.rank <= 3 ? 'top' : ''}">#${r.rank}</td><td><div class="pl"><img src="${r.player === player.id ? player.avatar : identicon(r.player, 40)}" alt=""/>${r.player === player.id ? esc(player.name) : short(r.player, 12)}</div></td><td class="num">${r.rating ?? '—'}</td><td class="num">${s.matches ?? 0}</td><td class="num">${s.wins ?? 0}</td><td class="num">${pct(s.wins ?? 0, s.matches ?? 0)}%</td>${names.map((k) => `<td class="num">${statValue(k, s)}</td>`).join('')}</tr>`; };
   if (!S.online) return nodeHint();
   if (!rows.length) return attestedTitle(rid) ? '<div class="empty">No court-reported matches on this title yet. This ladder is attested: the title’s own court signs each result and the node checks it against the rules; nothing on it is replayed by witnesses or official.</div>' : '<div class="empty">No verified ranked matches on this title yet. The official ladder counts placed, player-signed, witness-verified results only; every settled match still shows in your record, labelled.</div>';
-  const extra = me && !list.some((r) => r.player === player.id) ? `<tr><td colspan="6" class="dim" style="text-align:center">…</td></tr>${tr(me)}` : '';
-  return `${attestedNote(rid)}<table><thead><tr><th>Rank</th><th>Player</th><th class="num">Rating</th><th class="num">Matches</th><th class="num">Wins</th><th class="num">Win %</th></tr></thead><tbody>${list.map(tr).join('')}${extra}</tbody></table>`;
+  const extra = me && !list.some((r) => r.player === player.id) ? `<tr><td colspan="${6 + names.length}" class="dim" style="text-align:center">…</td></tr>${tr(me)}` : '';
+  const byStat = rows.byStat ? `<div class="dim" style="margin:0 0 8px">no rating ladder on this title (one seat per run): ranked by ${esc(statLabel(rows.byStat).toLowerCase())}</div>` : '';
+  return `${attestedNote(rid)}${byStat}<div class="tablewrap"><table><thead><tr><th>Rank</th><th>Player</th><th class="num">Rating</th><th class="num">Matches</th><th class="num">Wins</th><th class="num">Win %</th>${names.map((k) => `<th class="num">${esc(statLabel(k))}</th>`).join('')}</tr></thead><tbody>${list.map(tr).join('')}${extra}</tbody></table></div>`;
 }
 /** A title whose results a court attests (defineAttestedTitle): its ladder is labelled so wherever it is drawn. */
 const attestedTitle = (rid) => GAMES.some((g) => g.rulesetId === rid && g.status === 'attested');
@@ -636,8 +677,9 @@ function renderGame(g) {
       <div class="col">
         ${panel('Leaderboard', g.rulesetId ? boardTable(g.rulesetId, 10) : '<div class="empty">This title is not on the mesh yet — its ruleset lands with the node sync.</div>', g.rulesetId ? moreLink('#/leaderboards') : '')}
         <div style="height:16px"></div>
-        ${panel('Your record', me || hist.length || progressLine(g.rulesetId) ? `${recordXp(g.rulesetId)}<div class="stats4" style="margin:0 0 12px"><div class="stat"><div class="k">Rank</div><div class="v">${me ? `#${me.rank}` : '—'}</div></div><div class="stat"><div class="k">Rating</div><div class="v">${me?.rating ?? 1200}</div></div><div class="stat"><div class="k">Matches</div><div class="v">${S.stats[g.rulesetId]?.[player.id]?.matches ?? 0}</div></div><div class="stat"><div class="k">Wins</div><div class="v">${S.stats[g.rulesetId]?.[player.id]?.wins ?? 0}</div></div></div>
-          <table><thead><tr><th>Result</th><th>Opponent</th><th class="num">Length</th><th class="num">Rating</th><th>When</th></tr></thead><tbody>${hist.map((h) => `<tr><td class="res ${h.res[0]}">${h.res.toUpperCase()}</td><td>${h.opp.map((o) => short(o, 10)).join(', ') || '—'}</td><td class="num">${Math.floor(h.ticks / 3600)}:${String(Math.floor((h.ticks / 60) % 60)).padStart(2, '0')}</td><td class="num">${h.rating}</td><td class="dim">${h.when ? new Date(h.when).toLocaleDateString() : '—'} ${proofTag(h.proof)} ${verifyTag(h)} <a class="link rcpt-link" href="#/match/${esc(h.matchId)}" title="the match's transactions on the Liteforge explorer">receipt ›</a></td></tr>`).join('') || '<tr><td colspan="5" class="dim">No matches yet.</td></tr>'}</tbody></table>` : `<div class="empty">${S.online ? 'No settled matches under your key yet. Play one — it shows up here once the mesh settles it.' : 'Start a node to load your record.'}</div>`)}
+        ${panel('Your record', me || hist.length || progressLine(g.rulesetId) ? `${recordXp(g.rulesetId)}<div class="stats4" style="margin:0 0 12px"><div class="stat"><div class="k">Rank</div><div class="v">${me ? `#${me.rank}` : '—'}</div></div><div class="stat"><div class="k">Rating</div><div class="v">${me ? me.rating ?? '—' : 1200}</div></div><div class="stat"><div class="k">Matches</div><div class="v">${S.stats[g.rulesetId]?.[player.id]?.matches ?? 0}</div></div><div class="stat"><div class="k">Wins</div><div class="v">${S.stats[g.rulesetId]?.[player.id]?.wins ?? 0}</div></div></div>
+          ${hasTitleStats(g.rulesetId, S.stats[g.rulesetId]?.[player.id]) ? `<div style="margin:0 0 12px">${statTiles(g.rulesetId, S.stats[g.rulesetId][player.id])}</div>` : ''}
+          <div class="tablewrap"><table><thead><tr><th>Result</th><th>Opponent</th><th class="num">Length</th><th class="num">Rating</th><th>When</th></tr></thead><tbody>${hist.map((h) => `<tr><td class="res ${h.res[0]}">${h.res.toUpperCase()}</td><td>${h.opp.map((o) => short(o, 10)).join(', ') || '—'}</td><td class="num">${Math.floor(h.ticks / 3600)}:${String(Math.floor((h.ticks / 60) % 60)).padStart(2, '0')}</td><td class="num">${h.rating}</td><td class="dim">${h.when ? new Date(h.when).toLocaleDateString() : '—'} ${proofTag(h.proof)} ${verifyTag(h)} <a class="link rcpt-link" href="#/match/${esc(h.matchId)}" title="the match's transactions on the Liteforge explorer">receipt ›</a></td></tr>`).join('') || '<tr><td colspan="5" class="dim">No matches yet.</td></tr>'}</tbody></table></div>` : `<div class="empty">${S.online ? 'No settled matches under your key yet. Play one — it shows up here once the mesh settles it.' : 'Start a node to load your record.'}</div>`)}
       </div>
     </div>`;
   if (g.rulesetId) renderMatchmaking(g);
@@ -733,19 +775,20 @@ let lbQuery = '';
 function renderLeaderboards() {
   const g = GAMES.find((x) => x.rulesetId === lbTab);
   const st = S.stats[lbTab] ?? {};
-  const top = (S.boards[lbTab] ?? []).slice(0, 3);
+  const top = ladderRows(lbTab).slice(0, 3);
   const streakOf = (pid) => { const h = history(lbTab, pid); const last = h.at(-1)?.res; if (!last) return '—'; let n = 0; for (let i = h.length - 1; i >= 0 && h[i].res === last; i--) n++; return `${last === 'win' ? 'W' : last === 'loss' ? 'L' : 'D'}${n}`; };
   const podium = top.length ? `<div class="podium">${top.map((r) => { const s2 = st[r.player] ?? {}; const me = r.player === player.id; const color = r.rank === 1 ? '#f2c46d' : r.rank === 3 ? '#f0946a' : '#8ce8ff'; return `
     <div class="rankcard r${r.rank}">
       <div class="head">${rankBadge(r.rank, color)}<span class="badge-tier">${tierOf(levelOf((s2.wins ?? 0) * 60 + ((s2.matches ?? 0) - (s2.wins ?? 0)) * 20).level)}</span></div>
       <div class="name"><img src="${me ? player.avatar : identicon(r.player, 56)}" alt="" />${me ? esc(player.name) : short(r.player, 10)}</div>
       <div class="sub">${esc(g?.title ?? lbTab)}</div>
-      <div class="row3"><div><div class="v">${r.rating.toLocaleString()}</div><div class="k">Rating</div></div><div><div class="v">${pct(s2.wins ?? 0, s2.matches ?? 0)}%</div><div class="k">Win rate</div></div><div><div class="v">${streakOf(r.player)}</div><div class="k">Streak</div></div></div>
+      <div class="row3"><div><div class="v">${r.rating?.toLocaleString() ?? '—'}</div><div class="k">Rating</div></div><div><div class="v">${pct(s2.wins ?? 0, s2.matches ?? 0)}%</div><div class="k">Win rate</div></div><div><div class="v">${streakOf(r.player)}</div><div class="k">Streak</div></div></div>
+      ${hasTitleStats(lbTab, s2) ? `<div class="row3 st">${statNames(lbTab, 3).map((k) => `<div><div class="v">${statValue(k, s2)}</div><div class="k">${esc(statLabel(k))}</div></div>`).join('')}</div>` : ''}
       <div class="rfoot">ed25519:${esc(r.player)}</div>
     </div>`; }).join('')}</div>` : '';
   view('leaderboards').innerHTML = `<div class="page-h"><h1 class="chrome">Ranks</h1><span class="dim">derived by the mesh from settled matches — reproducible by any node</span><div class="right"><input class="search" id="lb-q" placeholder="find player id…" value="${esc(lbQuery)}" /></div></div>
     ${lbQuery ? '' : podium}
-    ${panel(g?.title ?? 'Leaderboard', `${lbTabs()}<div style="margin-top:8px">${boardTable(lbTab, 100, lbQuery)}</div>`)}`;
+    ${panel(g?.title ?? 'Leaderboard', `${lbTabs()}<div style="margin-top:8px">${boardTable(lbTab, 100, lbQuery, 4)}</div>`)}`;
   const q = $('lb-q'); q.addEventListener('input', () => { lbQuery = q.value.trim(); const pos = q.selectionStart; renderLeaderboards(); const q2 = $('lb-q'); q2.focus(); q2.setSelectionRange(pos, pos); });
 }
 let cardKind = 'all', cardHeld = false;
