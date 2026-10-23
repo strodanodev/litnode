@@ -80,7 +80,7 @@ edit the copies.
 
 | Handoff item | Resolution |
 |---|---|
-| §2.1 Agent Fighter's server must `POST /ledger` per match | Done as a watcher: `tools/af-watch.mjs` polls the studio database and settles each new ledger within seconds; the acceptance test (delta in `/deltas`, cabinet picks it up next poll) is met against the desktop node. Remaining: §3.2. |
+| §2.1 Agent Fighter's server must `POST /ledger` per match | Done. First as a watcher that polled the studio database (the acceptance test, delta in `/deltas` and the cabinet picking it up next poll, was met against the desktop node); that watcher has since been removed. Now the gauntlet's per-match server, run by the host from the bundle fetched by hash (`GAUNTLET_SERVERS=agent-fighter.v1`), posts each ledger to its node. Agent Fighter's always-on relay is casual and its results stay in its own database. Remaining: §3.2. |
 | §2.4 "port the relay into `node/host.js`?" | **No.** Decided 12 Sep, recorded in BUILD-SPEC §17: the title's own server is the `relay` role, advertised as `wsAddr`. P2P is the target. |
 | §3 cabinet SDK `cabinet:score` message | Superseded: `cabinet:init` now carries `match` (SPEC §3.3). A score message is unnecessary — the mesh is the source of truth and the cabinet reads it. |
 | §4 `REWARDS` rate card | Removed (decision 17 Sep). Work counters stay; no token figure until something can pay it. |
@@ -102,7 +102,7 @@ same mechanism the Agent Fighter relay already uses.
 
 ### 3.2 A title that consumes the placement — sprint 1, steps 1–2 done
 
-Agent Fighter, 17 Sep 2026 (AF commit `b362c87`, litnode `tools/lib/af-submission.mjs`):
+Agent Fighter, 17 Sep 2026 (AF commit `b362c87`):
 
 1. ~~Join the placed match under the placed key.~~ The cabinet launches AF
    with `?ws=<wsAddr>&room=LIT-<32 hex of matchId>&player=<key>`
@@ -111,10 +111,13 @@ Agent Fighter, 17 Sep 2026 (AF commit `b362c87`, litnode `tools/lib/af-submissio
    in `hello.playerKey`; the relay pins `room` and `playerKeys` into the
    archived ledger and now archives LIT-room friendlies (it archived only
    wager matches before). No AF protocol bump: every field is optional.
-2. ~~Settle under the mesh id and the keys.~~ `af-watch` / `af-import` map
-   `pin.room` back to the node's live descriptor (`/match`, 15 min) and
-   submit `matchId` = the mesh match, `participants` = `pin.playerKeys`;
-   without a room or keys they fall back to the relay id and `af:<name>`.
+2. ~~Settle under the mesh id and the keys.~~ The relay intake of the time
+   mapped `pin.room` back to the node's live descriptor (`/match`, 15 min)
+   and submitted `matchId` = the mesh match, `participants` =
+   `pin.playerKeys`. That intake has since been removed: Agent Fighter's
+   relay no longer reports to the mesh, and the gauntlet's per-match
+   server settles under the placement directly (the node seats the placed
+   keys).
 3. **Open:** the client signs the chain head at match end so the delta
    settles `attestation: 'players'` rather than `relay`. The key lives in
    the cabinet's origin, not the game's, so the honest path is the SDK:

@@ -17,8 +17,6 @@
     "pack:win": "node tools/pack.mjs --all --runtime",
     "keygen": "node tools/keygen.mjs",
     "bond": "node tools/bond-node.mjs",
-    "import:af": "node tools/af-import-ledger.mjs",
-    "watch:af": "node tools/af-watch.mjs",
     "anchor": "node tools/anchor-epoch.mjs",
     "deploy:testnet": "node tools/deploy-contracts.mjs",
     "bundle": "node tools/bundle-ruleset.mjs",

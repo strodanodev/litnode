@@ -20,7 +20,6 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNode } from '../node/litnode.js';
-import { loadGauntletConfigs } from '../node/gauntlet.js';
 import { generateKeypair } from '../protocol/keys.js';
 import { roomCodeFor } from '../protocol/pairing.js';
 import * as mb from '../protocol/matchbook.js';
@@ -68,8 +67,7 @@ test('M5: with the publisher offline, a ranked Agent Fighter match is placed, pl
   const common = { rpc: 'mock://', offline: false, chainFetch: chain.fetch, nodeStake: stake, matchBook: book, gasRefund: refund, matchBookWindows: { attestWindow: 4, escalationWindow: 6 }, chainId: 4441, heartbeatMs: 200, updates: false, announce: false };
   const spawn = (opts) => createNode({ ...common, ...opts }).then((n) => (nodes.push(n), n));
   const publisher = await spawn({ dataDir: ids[0].dir, operator: 'publisher', roles: ['mesh', 'host', 'settler', 'witness'], rulesets: [RULESET] });
-  const [cfg] = Object.values(loadGauntletConfigs(`${RID}=${join(ROOT, 'gauntlets', 'agent-fighter.json')}`, { root: ROOT }));
-  const host = await spawn({ dataDir: ids[1].dir, operator: 'guild-a', roles: ['mesh', 'host', 'settler'], seeds: [publisher.addr], gauntlets: { [RID]: afGauntlet(cfg) }, gauntletPort: 0, relayPort: null });
+  const host = await spawn({ dataDir: ids[1].dir, operator: 'guild-a', roles: ['mesh', 'host', 'settler'], seeds: [publisher.addr], gauntlets: { [RID]: afGauntlet() }, gauntletPort: 0, relayPort: null });
   const witnesses = [];
   for (let i = 2; i < 5; i++) witnesses.push(await spawn({ dataDir: ids[i].dir, operator: `guild-${'bcd'[i - 2]}`, roles: ['mesh', 'witness'], seeds: [publisher.addr] }));
   const build = publisher.rulesets()[RID];

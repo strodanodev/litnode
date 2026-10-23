@@ -21,8 +21,9 @@ npm run bridge -- assess --input-log yes|no --deterministic yes|no [--engine-ope
 | keeps every player's input per tick, and re-running them from the seed reproduces the result on any machine (integer or seeded math, no wall clock, no float physics), and the sim can be bundled as one import-free ES module | **replayable** | re-runs the log in its sandbox; a witness on another operator's node re-runs it again | `players` (both signed → can be OFFICIAL) or `relay` (your key signed → authenticated, not official) |
 | anything else (float physics, a closed engine, no input log) | **attested** | validates your outcome report against your ruleset (bounds, win condition, seats) and settles it | `attested`: trusted, not verified, never OFFICIAL |
 
-Agent Fighter is the replayable reference (`titles/agent-fighter.adapter.js`,
-`sdk/bridge/adapters/agent-fighter.mjs`); Pickle Brawl the attested one
+Agent Fighter is the replayable reference (`titles/agent-fighter.adapter.js`;
+its matches reach the mesh through a gauntlet server bundle, section 6a,
+not the bridge); Pickle Brawl the attested one
 (`titles/pickle-brawl.adapter.js`). Attested is the honest label for most
 existing games; the path from attested to replayable is a build change on
 your side (seeded randomness, fixed-point or integer math, an input log)
@@ -93,14 +94,13 @@ npm run bridge -- watch --adapter ./my-adapter.mjs                              
 DB trigger). `http`: your backend exposes `GET …?since=<cursor>` returning
 `{ rows: [{ id, room?, submission }], cursor }`. Your own adapter exports
 `kind, rulesetId, poll(cursor, ctx), toSubmission(row, ctx)` — see
-`sdk/bridge/adapters/agent-fighter.mjs` for a Supabase one. The cursor and
+`sdk/bridge/adapters/http.mjs` and `jsonl.mjs` for the shape. The cursor and
 every outcome persist in `~/.litnode/bridge-<adapter>.json`, so restarts
 re-send nothing. `--once` runs one pass; `backfill` runs from the start
 until caught up (history import: everything already on the node comes
 back `already`).
 
-Run `serve` or `watch` as a service beside the node (the operator zip's
-`run-af-watch.cmd` is the Agent Fighter instance of exactly this).
+Run `serve` or `watch` as a service beside the node.
 
 ## 5. Submission shapes
 

@@ -11,8 +11,8 @@ private key anywhere but the shell that runs one command.
   `OPERATOR_KEY` are read from the environment of the one command that needs
   them. The node itself holds only its ed25519 identity (`data/…/identity.json`)
   and, if delegated, an announcer key for NodeDirectory. The release key
-  (`~/.litnode/release-key.json`) and the relay key
-  (`~/.litnode/relay-key.json`) live outside the repo.
+  (`~/.litnode/release-key.json`) and a bridge's relay key
+  (`~/.litnode/bridge-key.json`) live outside the repo.
 - **A key that was ever pasted into a chat, a ticket or a log is exposed.**
   Treat everything it controls as untrusted until rotated (§5). `npm run
   authority` tells you what that is.
@@ -30,7 +30,7 @@ private key anywhere but the shell that runs one command.
 | `TITLE_REGISTRY` | the TitleRegistry address (default: `contracts/deployed.testnet.json`). A title is an ERC-721; its holder registers builds with `npm run publish:title`. `/titles.published` = the holder runs a bonded host for it; unset → `null` |
 | `TRUSTED_PUBLISHERS` | comma list of publisher ed25519 keys (default: the litVM release key) — the operator's override when a build is not on chain. Sign your own builds with `npm run sign:build -- rulesets/<id>.js` |
 | `SANDBOX_TIMEOUT_MS`, `SANDBOX_MEMORY_MB` | the title sandbox's deadline (default 10 s) and heap ceiling (default 256 MB). `/health.sandbox` reports runs, kills and failures |
-| `RELAY_KEYS` | relay keys whose signed submissions this host settles as `relay` provenance. `tools/af-watch.mjs` prints its key at start |
+| `RELAY_KEYS` | relay keys whose signed submissions this host settles as `relay` provenance. `npm run bridge -- key` prints a bridge's key and this line |
 | `COURTS` | `rulesetId:key[,key];rulesetId:key` — courts this operator authorizes for attested titles |
 | `ERC6699` | ERC6699Registry **v2** address; ranked characters are read from it at the placement's block. Unset until v2 is deployed |
 | `RELEASE_CHANNEL` | `stable` (default) or `canary` (§4) |

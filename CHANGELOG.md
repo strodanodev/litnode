@@ -3,6 +3,27 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Removed
+- **litnode's Agent Fighter relay glue.** Agent Fighter's always-on relay is casual play and its results stay in
+  Agent Fighter's own database; they no longer come to the mesh. The only Agent Fighter intake is the gauntlet in
+  bundle mode: `GAUNTLET_SERVERS=agent-fighter.v1`, the per-match server fetched by hash
+  (`gauntlets/agent-fighter.server.json`). Gone: `tools/af-watch.mjs` (the studio-database watcher),
+  `tools/af-import-ledger.mjs`, `tools/lib/af-submission.mjs`, the bridge's `agent-fighter` adapter
+  (`sdk/bridge/adapters/agent-fighter.mjs`; `jsonl` and `http` remain), `portable/run-af-watch.cmd`, the
+  `import:af` / `watch:af` scripts (source and operator zip), and `gauntlets/agent-fighter.json`, the checkout-mode
+  gauntlet config. `install-task.cmd` no longer registers the `litnode-watch` task; `litnode-relay` is still
+  registered when `AF_ROOT` is set. `RELAY_KEYS` is unchanged: it is the generic relay-provenance setting.
+- The tests that run Agent Fighter's server from a checkout (`demo/af-gauntlet.test.mjs`,
+  `demo/publisher-offline.test.mjs`) build the same config inline in `demo/lib/af-bot.mjs`.
+
+### Operators
+- An update no longer touches `run-af-watch.cmd`, and it replaces `tools/`, so a `litnode-watch` task left from an
+  earlier `install-task.cmd` keeps restarting a watcher that is gone. Delete both:
+  `schtasks /Delete /TN litnode-watch /F` (administrator prompt), then `run-af-watch.cmd`. `af-watch.log` is never
+  touched by an update; delete it when you no longer need it.
+
 ## [0.12.0] — 2026-10-22 — settlement v4: proof levels, court logs, stats on chain, sdk/court (protocol 4)
 
 One pipeline for every title — PLAY → REPORT → VERIFY → RESULT HASH → RECORD — with a proof level the node derives

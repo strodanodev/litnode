@@ -15,9 +15,21 @@ const BOT = join(process.cwd(), 'demo', 'fixtures', 'af-gauntlet-bot.mts');
 /** false when there is no checkout to run: the tests skip. */
 export const haveAf = existsSync(TSX) && existsSync(join(AF, 'packages', 'server', 'src', 'gauntlet-server.ts'));
 
-/** The gauntlet config for this checkout, from gauntlets/agent-fighter.json: bots play faster than real time
- *  (a gauntlet has no economy for the pace check to guard). */
-export const afGauntlet = (cfg) => ({ ...cfg, cwd: AF, env: { ...cfg.env, AF_NO_PACE_CHECK: '1' } });
+/** A gauntlet config (node/gauntlet.js) that runs Agent Fighter's per-match server from this checkout. Operators
+ *  run it as the hashed bundle instead (GAUNTLET_SERVERS, gauntlets/agent-fighter.server.json); these tests run the
+ *  source so they follow the checkout. Bots play faster than real time (a gauntlet has no economy for the pace
+ *  check to guard). */
+export const afGauntlet = () => ({
+  command: '${node}',
+  args: ['node_modules/tsx/dist/cli.mjs', 'packages/server/src/gauntlet-server.ts'],
+  cwd: AF,
+  env: { AF_NO_PACE_CHECK: '1' },
+  portRange: [7820, 7859],
+  readyMs: 60_000,
+  ttlMs: 900_000,
+  ticketTtlMs: 900_000,
+  settledGraceMs: 3000,
+});
 
 /** Claim a seat on a gateway room with the player's signature over its challenge. */
 export async function claimSeat(gatewayUrl, room, kp) {

@@ -11,7 +11,7 @@
  *                                        sign one unsigned submission and settle it (--log: an attested
  *                                        title's input log, sent to a protocol-4 node; its sha256 must be
  *                                        report.commitments.inputsHash)
- *    npm run bridge -- watch --adapter jsonl|http|agent-fighter|./my-adapter.mjs --source <file|url>
+ *    npm run bridge -- watch --adapter jsonl|http|./my-adapter.mjs --source <file|url>
  *                     [--kind …] [--ruleset …] [--node …] [--poll 5000] [--once] [--state <file>]
  *                                        follow your backend and settle each finished match
  *    npm run bridge -- backfill --adapter … --source …   the same, from the beginning, until caught up
@@ -60,7 +60,7 @@ const resolveIfAuto = async () => { if ((flags.node ?? process.env.LITNODE_URL) 
 const keyFile = () => resolve(String(flags.file ?? process.env.BRIDGE_KEY_FILE ?? DEFAULT_KEY_FILE));
 const log = (m) => { if (!JSON_OUT) console.log(`[${new Date().toISOString().slice(11, 19)}] ${m}`); };
 const readJson = (p) => { if (!p || !existsSync(p)) fail(1, `file not found: ${p}`); try { return JSON.parse(readFileSync(p, 'utf8')); } catch (e) { fail(1, `${p}: ${e.message}`); } };
-const adapterOptions = () => ({ source: flags.source ?? process.env.BRIDGE_SOURCE, kind: flags.kind, rulesetId: flags.ruleset, sourceToken: process.env.BRIDGE_SOURCE_TOKEN, afRoot: flags['af-root'] ?? process.env.AF_ROOT });
+const adapterOptions = () => ({ source: flags.source ?? process.env.BRIDGE_SOURCE, kind: flags.kind, rulesetId: flags.ruleset, sourceToken: process.env.BRIDGE_SOURCE_TOKEN });
 
 const commands = {
   async resolve() {
@@ -129,7 +129,7 @@ const commands = {
 };
 
 async function runWatch(backfill) {
-  if (!flags.adapter) fail(1, '--adapter jsonl|http|agent-fighter|./path.mjs required');
+  if (!flags.adapter) fail(1, '--adapter jsonl|http|./path.mjs required');
   const adapter = await loadAdapter(String(flags.adapter)).catch((e) => fail(1, e.message));
   const kp = await loadOrCreateKey(keyFile());
   const name = String(flags.adapter).replace(/[^a-z0-9]+/gi, '-');

@@ -108,21 +108,18 @@ then advertises the title in its heartbeat and placement draws it first for
 that title. `status` shows `/health.gauntlet`. The config and the title's side are in
 `docs/BRING-YOUR-BACKEND.md` section 6a and the `migrate-a-title` skill.
 
-**From the mesh, by hash (recommended).** `init --gauntlet-servers
+**From the mesh, by hash.** `init --gauntlet-servers
 agent-fighter.v1 --gauntlet-gateway-port 8478 --tunnel quick` (or
-`GAUNTLET_SERVERS=agent-fighter.v1` in `node.env`): the node fetches the
-title's server bundle a peer advertises, checks its hash against
+`GAUNTLET_SERVERS=agent-fighter.v1` in `node.env`), then `restart`: the node
+fetches the title's server bundle a peer advertises, checks its hash against
 TitleRegistry and runs it per placed match — no checkout, no install.
-`/health.gauntletServers` shows it. The server is a real process with the
-network: it runs only because you opted in, and the service runs unelevated.
-
-**Agent Fighter from a checkout (the older path).** Copy
-`gauntlets/agent-fighter.json` OUTSIDE the install folder (updates replace
-`gauntlets/`), set its `cwd` to an Agent Fighter checkout with `npm ci` done,
-then `init --gauntlets agent-fighter.v1=<that copy> --gauntlet-gateway-port 8478
---tunnel quick` and `restart`. No `--courts`: Agent Fighter is replayable and
-its results are signed by both players. `/health.gauntlet.titles` lists
-`agent-fighter.v1` and `wsAddr` is the gateway's public URL.
+`/health.gauntletServers` shows it, `/health.gauntlet.titles` lists
+`agent-fighter.v1` and `wsAddr` is the gateway's public URL. The server is a
+real process with the network: it runs only because you opted in, and the
+service runs unelevated. No `--courts`: Agent Fighter is replayable and its
+results are signed by both players. This is the only way an Agent Fighter
+match reaches the mesh; its always-on relay is casual and keeps its results
+in its own database, so there is no watcher or importer to run.
 
 ## Upgrading to settlement v4 (protocol 4)
 

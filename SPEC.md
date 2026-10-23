@@ -19,8 +19,8 @@ two sides and what is still open between them.
    |
    |  1. sign a queue entry, POST /queue          (cabinet: Find match)
    |  1b. GET /match, GET /snapshot, recompute placement, accept or refuse the host
-   |  2. play a live match on the drawn host's relay (wsAddr; Agent Fighter's server)
-   |  3. the relay's ledger reaches a node: POST /ledger (tools/af-watch.mjs today)
+   |  2. play a live match on the drawn host's relay (wsAddr; Agent Fighter's gauntlet server)
+   |  3. the match server posts its ledger to its node: POST /ledger
    v
  litnode  (node/litnode.js -- one process, node:http + WebCrypto, zero deps)
    |  gossip gossip gossip (2s heartbeat epochs) --+
@@ -119,14 +119,17 @@ witnessed by at least one independent node and not disputed.
 
 **litnode does not implement netcode, and does not need to.** The `relay`
 role is the title's own match server, advertised by the node that fronts it
-(`WS_ADDR` → `wsAddr` in its heartbeat): Agent Fighter's WebSocket relay with
-its first-write-wins ledger is that role today. Placement draws a host; the
-cabinet launches the title against that host's `wsAddr`; the finished ledger
-comes back to a node with a settling role (`host`, `settler` or `relay`) over
-`POST /ledger` — via `tools/af-watch.mjs` polling the studio database until
-the relay posts directly. The decision not to port the relay into the node
-is recorded in `BUILD-SPEC.md` §17; peer-to-peer WebRTC with nodes as
-signalling is the V1 target (roadmap item 3).
+(`WS_ADDR` → `wsAddr` in its heartbeat). For Agent Fighter that role is the
+gauntlet: for each match placed on it, the host runs the title's own
+per-match server, fetched from the mesh as a bundle by hash
+(`GAUNTLET_SERVERS=agent-fighter.v1`, `node/gauntlet.js`). Placement draws a
+host; the cabinet launches the title against that host's `wsAddr`; the
+match server posts the finished ledger to its node, which holds a settling
+role (`host`, `settler` or `relay`), over `POST /ledger`. Agent Fighter's
+always-on relay is casual play: its results stay in Agent Fighter's own
+database and do not reach the mesh. The decision not to port the relay into
+the node is recorded in `BUILD-SPEC.md` §17; peer-to-peer WebRTC with nodes
+as signalling is the V1 target (roadmap item 3).
 
 ### 2.2 Ruleset title interface (`rulesets/*.v1.js`)
 
@@ -273,19 +276,16 @@ the game's existing hosted build in an iframe.
 
 One list, kept here. BUILD-SPEC §16 has the reasoning behind each.
 
-- **Agent Fighter joins the placed match under the placed key** (room +
-  `?player=`, AF `b362c87`), and its ledgers settle under the mesh match
-  id and the keys — but the client does not yet sign the chain head, so
-  the attestation is `relay`, not `players` (SYNC §3.2 step 3). Not yet
-  exercised live: AF must be redeployed first.
+- **Agent Fighter reaches the mesh only through the gauntlet.** Its
+  always-on relay is casual and keeps its results in its own database; the
+  watcher that carried them from the studio database to a node has been
+  removed. A match the mesh settles is one a node's gauntlet served
+  (`GAUNTLET_SERVERS=agent-fighter.v1`, the per-match server fetched by
+  hash), with each player signing the head of their own log
+  (`demo/af-gauntlet.test.mjs`).
 - **Relay matches settle `relay`, not `players`**, until the client signs
   the chain head. The witness path for player-signed ledgers is exercised
   in tests only.
-- **The relay bridge is a laptop process.** `tools/af-watch.mjs` moves
-  ledgers from the studio database to a node, now signing each with its
-  relay key (`RELAY_KEYS` on the node); it should become the `relay` role's
-  own intake. Its results are `relay`-attested — authenticated, not
-  player-verified, and therefore not official until the AF client signs.
 - **One gameplay relay, one operator.** A second independently operated
   relay, and a demonstration of play continuing with the publisher's relay
   and services down, have not been done. `tools/custody.mjs` and

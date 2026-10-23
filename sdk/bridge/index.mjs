@@ -122,7 +122,7 @@ export async function prepare(sub, kp) {
 
 /** The mesh's frozen placements, by relay room code — so a match your
  *  relay ran for two cabinet-placed players settles under the mesh match id
- *  and the keys the mesh placed (same as tools/lib/af-submission.mjs). */
+ *  and the keys the mesh placed. */
 export async function placements(nodeUrl, fetchImpl = fetch) {
   try {
     const { matches } = await (await fetchImpl(`${trim(nodeUrl)}/match`, { signal: AbortSignal.timeout(8000) })).json();
@@ -245,7 +245,7 @@ export function followNode(nodeUrl, { resolve = null, everyMs = 10 * 60_000, log
  *
  *  `cursor` is whatever the source orders by (a timestamp, a row id); it is
  *  persisted between runs. `ctx` carries { nodeUrl, rooms, log }. See
- *  sdk/bridge/adapters/ for three working ones. */
+ *  sdk/bridge/adapters/ for two working ones (jsonl, http). */
 export async function loadAdapter(spec) {
   const url = /^[a-z0-9-]+$/.test(spec) ? new URL(`./adapters/${spec}.mjs`, import.meta.url) : pathToFileURL(resolve(spec));
   const mod = await import(url.href);

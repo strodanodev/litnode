@@ -148,7 +148,7 @@ node = await createNode({
   // VERIFIERS=<rulesetId>:<verifierHash>[,<hash>];… — verifier bundles this operator accepts as registered (settlement
   // v4 `checkable`) where TitleRegistry is unset or not yet updated; the registry is the normal source.
   verifiers: Object.fromEntries((env.VERIFIERS ?? '').split(';').map((x) => x.trim()).filter(Boolean).map((x) => { const [rid, hashes] = x.split(':'); return [rid, list(hashes)]; })),
-  // RELAY_KEYS=<pubkey>,… — relays whose signed submissions this host settles as 'relay' provenance (tools/af-watch.mjs prints its key).
+  // RELAY_KEYS=<pubkey>,… — relays whose signed submissions this host settles as 'relay' provenance (`npm run bridge -- key` prints the line).
   relayKeys: list(env.RELAY_KEYS),
   // GAUNTLETS=<rulesetId>=<config.json>,… — per-match headless servers this node runs for
   // those titles, behind the relay port (node/gauntlet.js). GAUNTLET_UPSTREAM=ws://127.0.0.1:8477

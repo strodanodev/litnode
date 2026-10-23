@@ -59,14 +59,18 @@ Testnet minimum is 1 tLITVM (contracts/deploy.testnet.json). Health flips to
     http://<ip>:7801/leaderboard?ruleset=agent-fighter.v1
     http://<ip>:7801/epoch           this hour's tree + anchor calldata
 
-## Settle a real Agent Fighter match on the mesh
+## Host Agent Fighter matches
 
-On the laptop (needs the Agent Fighter checkout and its .env):
+An Agent Fighter match reaches the mesh only through a node's gauntlet.
+With these in `node.env` (and `TUNNEL` set), this node fetches the game's
+match server from the mesh by hash and runs it for each match it is drawn
+to host (docs/OPERATORS.md, step 6):
 
-    npm run import:af -- <matchId> --post http://127.0.0.1:7801
+    GAUNTLET_SERVERS=agent-fighter.v1
+    GAUNTLET_GATEWAY_PORT=8478
 
-Any bonded witness on the mesh under a different operator will fetch it,
-replay it and co-sign; `/delta/<matchId>` shows `cosigners`.
+Any bonded witness on the mesh under a different operator will fetch the
+result, replay it and co-sign; `/delta/<matchId>` shows `cosigners`.
 
 ## Pickle Brawl (attested)
 

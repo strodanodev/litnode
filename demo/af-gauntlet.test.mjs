@@ -16,7 +16,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNode } from '../node/litnode.js';
-import { loadGauntletConfigs } from '../node/gauntlet.js';
 import { generateKeypair, seal } from '../protocol/keys.js';
 import { QUEUE_TAG, bucketOf, roomCodeFor } from '../protocol/pairing.js';
 import { AF, haveAf as have, afGauntlet, claimSeat, runBot } from './lib/af-bot.mjs';
@@ -28,8 +27,7 @@ const until = async (pred, ms) => { const end = Date.now() + ms; while (Date.now
 
 test('Agent Fighter gauntlet: placed, served per match, signed by both players, settled, witnessed, official', { skip: !have && `no Agent Fighter checkout with node_modules at ${AF}`, timeout: 300_000 }, async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), 'lit-afg-'));
-  const [cfg] = Object.values(loadGauntletConfigs(`agent-fighter.v1=${join(ROOT, 'gauntlets', 'agent-fighter.json')}`, { root: ROOT }));
-  const afCfg = afGauntlet(cfg); // this checkout; bots faster than real time
+  const afCfg = afGauntlet(); // this checkout; bots faster than real time
   const host = await createNode({ dataDir: join(tmp, 'host'), offline: true, heartbeatMs: 200, operator: 'studio', roles: ['mesh', 'host', 'settler'], rulesets: [RULESET], gauntlets: { 'agent-fighter.v1': afCfg }, gauntletPort: 0, relayPort: null });
   const witness = await createNode({ dataDir: join(tmp, 'witness'), offline: true, heartbeatMs: 200, operator: 'guild', roles: ['mesh', 'witness'], rulesets: [RULESET], seeds: [host.addr] });
   t.after(async () => { await witness.stop(); await host.stop(); rmSync(tmp, { recursive: true, force: true }); });

@@ -199,11 +199,11 @@ and kept under your `data` folder. You install nothing and clone nothing.
 3. When the publisher registers a new bundle, your node picks it up by
    itself on the next tick after it activates. Nothing to pull.
 
-`npm run host -- doctor` reports the opt-in and the gateway port. Until a
-title's publisher has registered a bundle, the older way still works: a
-checkout of the game on this machine and a `GAUNTLETS=` config pointing at
-it (`gauntlets/agent-fighter.json`, `docs/HOST-A-NODE.md` "Gauntlets");
-that is also how a developer runs an unreleased server.
+`npm run host -- doctor` reports the opt-in and the gateway port. This
+bundle is the only way an Agent Fighter match reaches the mesh: the game's
+always-on relay is casual play and keeps its results in its own database.
+A `GAUNTLETS=` config pointing at a local checkout (`docs/HOST-A-NODE.md`
+"Gauntlets") is how a developer runs an unreleased server.
 
 ## 7. Keep it running and current
 

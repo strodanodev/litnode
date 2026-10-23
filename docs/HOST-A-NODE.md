@@ -172,17 +172,7 @@ goes on to the relay. Without it the gateway would try to take the relay's
 port and the node would not start; `npm run host -- doctor` says so.
 `npm run host -- init --gauntlets <id>=<json> --gauntlet-gateway-port 8478
 --courts <id>:<key>` writes all three. `/health.gauntlet` shows titles and
-live processes. The example configs are `gauntlets/pickle-brawl.json` and
-`gauntlets/agent-fighter.json`.
-
-**Agent Fighter.** `GAUNTLETS=agent-fighter.v1=<path>/gauntlets/agent-fighter.json`
-(edit its `cwd` to an Agent Fighter checkout with `npm ci` done) plus a gateway
-port runs Agent Fighter's own match server once per match this node hosts, with
-no database and no publisher key: it never reads the checkout's `.env`. The
-players are the placed keys, seated by the node's tickets after they sign the
-gateway's challenge; the seed is the placement's; the server posts the log with
-both players' signatures to this node and exits. Any bonded node set up this way
-can host Agent Fighter; it does not need the publisher's relay.
+live processes. The example config is `gauntlets/pickle-brawl.json`.
 
 **Server bundles.** `GAUNTLET_SERVERS=<rulesetId>,...` does the same with no
 checkout: the title's server comes from the mesh as a hashed artifact its
@@ -190,6 +180,17 @@ publisher registered under the title (`node/server-bundle.js`,
 docs/OPERATORS.md step 6). `GAUNTLET_SERVERS=<rulesetId>=<bundle.tgz>` is the
 publisher's side: serve this file. `/health.gauntletServers` shows what is
 held, current and refused; `doctor` checks the opt-in.
+
+**Agent Fighter.** `GAUNTLET_SERVERS=agent-fighter.v1` plus a gateway port
+runs Agent Fighter's own match server (the bundle packed from
+`gauntlets/agent-fighter.server.json`) once per match this node hosts, with no
+checkout, no database and no publisher key. The players are the placed keys,
+seated by the node's tickets after they sign the gateway's challenge; the seed
+is the placement's; the server posts the log with both players' signatures to
+this node and exits. Any bonded node set up this way can host Agent Fighter; it
+does not need the publisher's relay. This is the only way an Agent Fighter
+match reaches the mesh: the always-on relay is casual play and keeps its
+results in Agent Fighter's own database.
 
 ## Services: running a studio's backend on this node
 
@@ -268,6 +269,6 @@ repeat:
   operator (README-OPERATOR).
 - Make a title conformant. That is `docs/HOST-YOUR-TITLE.md` and the
   `host-a-title` skill; the harness only hosts what `RULESETS` names.
-- Replace `install-task.cmd` in the operator zip. That path (relay +
-  watcher tasks from `AF_ROOT`) still exists; `install-service` covers the
-  node alone on every OS.
+- Replace `install-task.cmd` in the operator zip. That path (the node task,
+  plus the relay task from `AF_ROOT`) still exists; `install-service` covers
+  the node alone on every OS.

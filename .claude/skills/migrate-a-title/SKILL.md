@@ -97,7 +97,8 @@ what changes is that one message per finished match reaches a node.
    - they would rather not change server code → `bridge watch` with the
      `jsonl` (a file their backend appends to) or `http` (an endpoint they
      already have or can add) adapter, or an adapter you write for their
-     source following `sdk/bridge/adapters/agent-fighter.mjs`.
+     source following `sdk/bridge/adapters/http.mjs` (the contract is in
+     `loadAdapter`, `sdk/bridge/index.mjs`).
    Map their result records to the submission shape (§5 of the doc):
    replayable needs `entries: [{k, inputs:[…]}]` in participant order and
    `buildHash`; attested needs `report` and `teams`. Include `room` when
@@ -153,10 +154,12 @@ what changes is that one message per finished match reaches a node.
 
 ## Reference instances
 
-- Agent Fighter (replayable, Supabase): `sdk/bridge/adapters/agent-fighter.mjs`
-  (`bridge watch --adapter agent-fighter`) and `tools/lib/af-submission.mjs`;
-  the older `tools/af-watch.mjs` signs with a different relay key file, so
-  switching between them changes the relay identity in `RELAY_KEYS`.
+- Agent Fighter (replayable, a gauntlet title): its per-match server ships
+  as a server bundle (`gauntlets/agent-fighter.server.json`, operators opt
+  in with `GAUNTLET_SERVERS=agent-fighter.v1`) and posts each log, signed
+  by both players, to its node; `demo/af-gauntlet.test.mjs`. Its always-on
+  relay is casual and does not report to the mesh, so it has no bridge
+  adapter.
 - FLOOD CONTROL (attested, a replaying court on Vercel): `titles/flood-control.adapter.js`;
   its court client is the template `sdk/court` was extracted from.
 - Pickle Brawl (attested, its own court, migrated 21 Sep 2026):

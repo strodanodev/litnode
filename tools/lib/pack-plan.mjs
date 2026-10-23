@@ -22,8 +22,7 @@ export function scriptsFor(kind) {
   return {
     ...base,
     delegate: 'node tools/delegate.mjs', enroll: 'node tools/enroll.mjs', announcer: 'node tools/set-announcer.mjs',
-    authority: 'node tools/authority.mjs', 'import:af': 'node tools/af-import-ledger.mjs', 'watch:af': 'node tools/af-watch.mjs',
-    fleet: 'node tools/fleet.mjs', rewards: 'node tools/rewards.mjs',
+    authority: 'node tools/authority.mjs', fleet: 'node tools/fleet.mjs', rewards: 'node tools/rewards.mjs',
   };
 }
 
@@ -33,13 +32,10 @@ export function extrasFor(kind) {
     ['portable/start-node.cmd', 'start-node.cmd'], ['portable/allow-firewall.cmd', 'allow-firewall.cmd'], ['portable/update.cmd', 'update.cmd'],
     ['portable/node.env.example', 'node.env.example'], ['contracts/deployed.testnet.json', 'contracts/deployed.testnet.json'],
     ['contracts/deploy.testnet.json', 'contracts/deploy.testnet.json'],
-    // The Agent Fighter gauntlet template, so an operator can host its matches from a zip (docs/OPERATORS.md step 6).
-    // Only this one: the other configs in gauntlets/ describe the publisher's own machine.
-    ['gauntlets/agent-fighter.json', 'gauntlets/agent-fighter.json'],
   ];
   if (kind === 'portable') return [...common, ['portable/README-PORTABLE.md', 'README.md']];
   return [...common, ['portable/README-OPERATOR.md', 'README.md'],
-    ...['install-task.cmd', 'run-node.cmd', 'restart-node.cmd', 'stop-node.cmd', 'run-af-relay.cmd', 'run-af-watch.cmd'].map((f) => [`portable/${f}`, f])];
+    ...['install-task.cmd', 'run-node.cmd', 'restart-node.cmd', 'stop-node.cmd', 'run-af-relay.cmd'].map((f) => [`portable/${f}`, f])];
 }
 
 /** Every bare package a kind's scripts may import, with the version from the source package.json. */

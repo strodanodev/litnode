@@ -2,8 +2,8 @@
 
 The same node as the portable build, plus what an operator needs: a
 no-prompt config, a scheduled task so it survives reboots and closed
-terminals, and the chain tooling (bond other nodes, import studio ledgers,
-anchor the hour's root). Nothing here is a different program: **every node
+terminals, and the chain tooling (bond other nodes, anchor the hour's
+root). Nothing here is a different program: **every node
 runs the same daemon; roles are configuration.**
 
 **Start here:** the operator guide,
@@ -70,16 +70,13 @@ run it in, and nowhere else. Never write a private key into a file here.
     node tools/bond-node.mjs <nodeId>              bond a node (yours or another machine's)
     npm run delegate -- <nodeId> <hotKeyAddr>      set (and fund) the node's delegated hot key
     npm run enroll -- <nodeId>                     join the MatchBook witness pool
-    node tools/af-import-ledger.mjs <matchId> --post http://127.0.0.1:7801
-                                                   settle an Agent Fighter relay match
     node tools/keygen.mjs court-identity.json      an identity for an attesting host (Pickle Brawl court)
 
 The hour's epoch root is proposed by the node itself once the hour freezes;
 there is no anchoring step for an operator to run.
     set DEPLOYER_KEY=
 
-`af-import-ledger` needs the Agent Fighter checkout and its `.env` (set
-`AF_ROOT`). Contracts and addresses are in `contracts/`.
+Contracts and addresses are in `contracts/`.
 
 ## Production shape
 
@@ -93,10 +90,11 @@ there is no anchoring step for an operator to run.
 - **Public reachability** is one line: `TUNNEL=quick` in `node.env` and the
   node runs its own Cloudflare tunnel, advertises the public https URL in
   its heartbeat and falls back to the LAN address if it drops. Add
-  `GAUNTLETS=agent-fighter.v1=<your copy of gauntlets/agent-fighter.json>`
-  and `GAUNTLET_GATEWAY_PORT=8478` and it runs Agent Fighter's match server
-  for each match it hosts and advertises the gateway as `wsAddr` (copy the
-  template outside this folder: updates replace `gauntlets/`).
+  `GAUNTLET_SERVERS=agent-fighter.v1` and `GAUNTLET_GATEWAY_PORT=8478` and
+  it runs Agent Fighter's match server for each match it hosts, fetched
+  from the mesh as a bundle by hash, and advertises the gateway as `wsAddr`.
+  That is the only way an Agent Fighter match reaches the mesh; the game's
+  always-on relay keeps its casual results in its own database.
   A quick tunnel's hostname changes every run — fine for everything that
   learns addresses by gossip, not for the `SEEDS=` a new node types in or
   the hosted cabinet's default. For a stable name, once on this machine:
