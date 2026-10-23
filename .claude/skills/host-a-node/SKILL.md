@@ -139,7 +139,11 @@ use that one. **74**: another process holds the port; `litnode.log` names it
 (another litnode by nodeId and path, or a program by PID) and any `litnode*`
 boot task that starts it. `EACCES` on the port: a Windows reserved range
 (`netsh interface ipv4 show excludedportrange protocol=tcp`). The
-supervisor waits 60 s after 73 or 74 instead of looping.
+supervisor waits 60 s after 73 or 74 instead of looping. When the holder is
+an orphaned litnode (its wrapper ended by `schtasks /End`, the node started
+elevated so `taskkill` is denied), ask it to exit from this machine:
+`POST http://127.0.0.1:<port>/restart` (or `restart-node.cmd`); the waiting
+supervisor takes the port within a minute. No admin is needed.
 
 ## Running a studio's whole backend (publisher services)
 

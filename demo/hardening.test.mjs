@@ -123,3 +123,16 @@ test('hardening: the bond proof is signed for this machine and its own pages onl
   assert.equal((await get({ 'x-forwarded-for': '203.0.113.5' })).status, 403, 'nor anyone through the tunnel');
   assert.equal((await get({}, 'nope')).status, 400);
 });
+
+test('hardening: POST /restart answers this machine only, and no other site in its browser', { timeout: 30_000 }, async () => {
+  let restarts = 0;
+  const a = await createNode({ dataDir: join(tmp, 'rs'), offline: true, heartbeatMs: 200, operator: 'rs', roles: ['mesh'], rulesets: [], updates: false, onRestart: () => { restarts++; } });
+  nodes.push(a);
+  assert.equal((await post(a, '/restart', {}, { origin: 'https://evil.example' })).status, 403, 'a page on another site cannot restart the node');
+  assert.equal((await post(a, '/restart', {}, { 'x-forwarded-for': '203.0.113.5' })).status, 403, 'nor anyone through the tunnel');
+  assert.equal((await post(a, '/restart', {}, { origin: `http://localhost:${new URL(a.addr).port}` })).status, 200, 'the cabinet on localhost can');
+  const r = await post(a, '/restart', {});
+  assert.equal(r.status, 200, 'a script on this machine can');
+  assert.deepEqual(await r.json(), { ok: true, restarting: true });
+  assert.ok(await until(() => restarts === 2, 5000), 'both accepted requests restarted the node');
+});

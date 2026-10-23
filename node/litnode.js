@@ -258,7 +258,7 @@ export async function createNode({
   const FORWARDED = ['cf-connecting-ip', 'cf-ray', 'cdn-loop', 'x-forwarded-for', 'x-forwarded-host', 'x-real-ip', 'forwarded', 'x-litnode-from'];
   const isLoopback = (req) => /^(::1|127\.\d+\.\d+\.\d+|::ffff:127\.\d+\.\d+\.\d+)$/.test(req.socket.remoteAddress ?? '')
     && !FORWARDED.some((h) => h in req.headers);
-  const restart = () => { log('restarting to run the new build'); emit('restart', {}); setTimeout(() => { if (onRestart) onRestart(); else process.exit(RESTART_EXIT); }, 300); };
+  const restart = (why = 'to run the new build') => { log(`restarting ${why}`); emit('restart', {}); setTimeout(() => { if (onRestart) onRestart(); else process.exit(RESTART_EXIT); }, 300); };
   // Unsigned (host-labelled) ledgers per remote address: a sliding minute, a bounded table.
   const UNSIGNED_LEDGERS_PER_MIN = 10;
   let lastPruneAt = 0;
@@ -1687,6 +1687,14 @@ export async function createNode({
             await updater.check(); const r = await updater.apply(); json(res, 200, { ok: true, ...r, restarting: true }); restart(); return;
           } catch (e) { return json(res, 400, { error: e.message }); }
         }
+      }
+      // Restart without admin: a node started elevated outlives `schtasks /End` and an ordinary taskkill, but it can
+      // be asked to exit; its launcher (or the task wrapper waiting on the port) brings it back on the current code.
+      // A page in the operator's browser also connects from loopback, so a foreign Origin is refused.
+      if (req.method === 'POST' && url.pathname === '/restart') {
+        const origin = req.headers.origin;
+        if (!isLoopback(req) || (origin && !/^https?:\/\/(localhost|127\.\d+\.\d+\.\d+|\[::1\])(:\d+)?$/.test(origin))) return json(res, 403, { error: 'the node is restarted from its own machine only' });
+        json(res, 200, { ok: true, restarting: true }); restart('on request (POST /restart)'); return;
       }
       // The bootstrap list as this node last read it from NodeDirectory.
       if (req.method === 'GET' && url.pathname === '/seeds') return json(res, 200, { source: nodeDirectory ? (chainSeeds.length ? 'chain' : 'chain-empty') : 'unset', seeds: chainSeeds });

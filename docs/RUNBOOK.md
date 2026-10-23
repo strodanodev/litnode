@@ -43,11 +43,15 @@ npm run node                     # dashboard; q quit · g gossip · l log · p p
 ```
 
 A task install (`install-task.cmd`) has no dashboard. The node records its
-PID in `data/<operator>/node.pid`; `restart-node.cmd` ends that process and
-the wrapper brings it back in 5 s on the current code and `node.env`;
-`stop-node.cmd` ends the task's wrapper first so it stays down. Both need an
-admin prompt when the task runs elevated. `schtasks /End` alone ends only
-the wrapper — the node keeps running and holds the port.
+PID in `data/<operator>/node.pid`. `restart-node.cmd` asks the node to exit
+(`POST /restart`, accepted from this machine only and from no other site in
+its browser; no admin needed, even for a node started elevated) and the
+wrapper brings it back on the current code and `node.env`; a node too old
+for `/restart` is ended by its PID instead, which needs an admin prompt when
+the task runs elevated. `stop-node.cmd` ends the task's wrapper first so it
+stays down. `schtasks /End` alone ends only the wrapper — the node keeps
+running and holds the port; `POST /restart` (or `restart-node.cmd`) frees it,
+and the next wrapper takes over within a minute.
 
 `GET /health` says: `protocol`, `bonded`, `sandbox`, `trust`, `registry`,
 `incompatible` (peers on another protocol), `refused` (builds refused).
