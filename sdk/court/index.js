@@ -403,7 +403,7 @@ const normalizeContracts = (j) => {
   const pick = (v) => (typeof v === 'string' ? v : v?.address);
   const NodeDirectory = pick(src.NodeDirectory), NodeStake = pick(src.NodeStake);
   if (!NodeDirectory || !NodeStake) return null;
-  return { NodeDirectory, NodeStake, generation: Number(j.generation ?? src.generation ?? 0) || null, rpc: j.rpc ?? src.rpc ?? null };
+  return { NodeDirectory, NodeStake, generation: Number(j.generation ?? src.generation ?? 0) || null, rpc: j.rpc ?? src.rpc ?? null, rpcFallback: Array.isArray(j.rpcFallback) ? j.rpcFallback : [] };
 };
 
 /** The live seed list: every NodeDirectory key whose entry is fresh and whose NodeStake standing is active,
@@ -418,7 +418,7 @@ export async function readDirectory({ contracts = null, contractsUrl = CONTRACTS
     source = c ? contractsUrl : 'default';
     c ??= { ...DEFAULT_CONTRACTS, rpc: null };
   }
-  const urls = rpc ? rpcList(rpc) : rpcList([c.rpc, ...DEFAULT_RPCS]);
+  const urls = rpc ? rpcList(rpc) : rpcList([c.rpc, ...(c.rpcFallback ?? []), ...DEFAULT_RPCS]);
   const chain = rpcClient({ urls, fetchImpl, pace: pacer({ concurrency, maxRps }), backoffMs });
 
   let keys = null, via = 'keys';

@@ -97,6 +97,8 @@ export const CHAIN = {
   name: 'litVM LiteForge',
   chainId: CONTRACTS.chainId,
   rpc: CONTRACTS.rpc ?? 'https://liteforge.rpc.caldera.xyz/http',
+  /** rpc, then the deploy record's rpcFallback: what rpcCall (chain.js) walks when a provider is out of bandwidth. */
+  rpcs: [...new Set([CONTRACTS.rpc ?? 'https://liteforge.rpc.caldera.xyz/http', ...(CONTRACTS.rpcFallback ?? [])])],
   generation: CONTRACTS.generation,
   NodeStake: at('NodeStake'),
   TestLITVM: at('TestLITVM'),

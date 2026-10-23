@@ -5,6 +5,18 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- **`POST /restart`: restart a node without admin.** A node started elevated outlives `schtasks /End` (which ends
+  only the wrapper) and an ordinary `taskkill`, and kept :7801 so the next wrapper never took over. Now it can be
+  asked to exit: accepted from this machine only, and refused when the request carries another site's `Origin`
+  (a page in the operator's browser also connects from loopback). `restart-node.cmd` tries it first and falls back
+  to the PID in `node.pid`; the task wrapper takes over within a minute.
+- **`rpcFallback` in the deploy record and the cabinet's `contracts.json`** (Caldera's `/http` ran out of bandwidth on
+  23 Oct 2026). The cabinet's chain reads now go through one client (`rpcCall`, `cabinet/chain.js`) that falls
+  through to the next provider on a network error, an HTTP error or a rate limit and stays with the one that
+  answered; a JSON-RPC error is the chain's answer and is not retried. `sdk/court` discovery tries an arcade
+  `contracts.json`'s `rpcFallback` after its `rpc`, before its built-in list. Agent Fighter's client already reads it.
+
 ### Removed
 - **litnode's Agent Fighter relay glue.** Agent Fighter's always-on relay is casual play and its results stay in
   Agent Fighter's own database; they no longer come to the mesh. The only Agent Fighter intake is the gauntlet in
@@ -19,10 +31,11 @@ follows [Keep a Changelog](https://keepachangelog.com/).
   `demo/publisher-offline.test.mjs`) build the same config inline in `demo/lib/af-bot.mjs`.
 
 ### Operators
-- An update no longer touches `run-af-watch.cmd`, and it replaces `tools/`, so a `litnode-watch` task left from an
-  earlier `install-task.cmd` keeps restarting a watcher that is gone. Delete both:
-  `schtasks /Delete /TN litnode-watch /F` (administrator prompt), then `run-af-watch.cmd`. `af-watch.log` is never
-  touched by an update; delete it when you no longer need it.
+- **The `litnode-watch` task retires itself.** An update replaces `tools/`, so a `litnode-watch` task left from an
+  earlier `install-task.cmd` would keep restarting a watcher that is gone (a failed start logged every 5 s). The
+  update now ships `run-af-watch.cmd` as a stub: the running loop ends at the new end of file, and the next start
+  tries to delete its own task and otherwise exits 0. Running `install-task.cmd` again (administrator prompt)
+  removes the task. `af-watch.log` is never touched by an update; delete it when you no longer need it.
 
 ## [0.12.0] — 2026-10-22 — settlement v4: proof levels, court logs, stats on chain, sdk/court (protocol 4)
 

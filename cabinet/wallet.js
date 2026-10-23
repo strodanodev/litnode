@@ -7,6 +7,7 @@
  *  have a profile? → register(key, name) mints one and binds this browser's
  *  key, or bindKey(key) adds this browser to an existing profile. */
 import { CHAIN } from './config.js';
+import { rpcCall } from './chain.js';
 import { registerCalldata, bindKeyCalldata, revokeKeyCalldata, profileOfCall, ownerOfKeyCall, nameOfCall, decodeOwner, decodeUint, decodeString } from './protocol/profile.js';
 
 const eth = () => globalThis.ethereum ?? null;
@@ -14,12 +15,8 @@ export const hasWallet = () => !!eth();
 export const configured = () => !!CHAIN.PlayerProfile;
 const hex = (n) => '0x' + BigInt(n).toString(16);
 
-let id = 0;
 async function rpc(method, params) {
-  const r = await fetch(CHAIN.rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }), signal: AbortSignal.timeout(12000) });
-  const j = await r.json();
-  if (j.error) throw new Error(j.error.message);
-  return j.result;
+  return rpcCall(method, params);
 }
 
 /** Ask the wallet for an account and for the litVM chain (added if unknown). */
@@ -32,7 +29,7 @@ export async function connect() {
     try { await w.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: want }] }); }
     catch (e) {
       if (e.code !== 4902) throw e;
-      await w.request({ method: 'wallet_addEthereumChain', params: [{ chainId: want, chainName: CHAIN.name, rpcUrls: [CHAIN.rpc], nativeCurrency: { name: 'zkLTC', symbol: 'zkLTC', decimals: 18 }, blockExplorerUrls: CHAIN.explorer ? [CHAIN.explorer] : [] }] });
+      await w.request({ method: 'wallet_addEthereumChain', params: [{ chainId: want, chainName: CHAIN.name, rpcUrls: CHAIN.rpcs, nativeCurrency: { name: 'zkLTC', symbol: 'zkLTC', decimals: 18 }, blockExplorerUrls: CHAIN.explorer ? [CHAIN.explorer] : [] }] });
     }
   }
   return account.toLowerCase();

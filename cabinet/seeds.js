@@ -4,16 +4,13 @@
  *  could seed without anyone typing a URL. Read-only; the same calldata the
  *  node uses (vendored protocol/directory.js). */
 import { CHAIN } from './config.js';
+import { rpcCall } from './chain.js';
 import { entryOfCall, decodeEntry, liveSeeds, readDirectoryKeys, mapLimit, READ_CONCURRENCY } from './protocol/directory.js';
 import { standingCall, decodeStanding } from './protocol/staking.js';
 import { checkChallenge, newNonce } from './protocol/challenge.js';
 
-let id = 0;
 export async function rpc(method, params) {
-  const r = await fetch(CHAIN.rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }), signal: AbortSignal.timeout(12000) });
-  const j = await r.json();
-  if (j.error) throw new Error(j.error.message);
-  return j.result;
+  return rpcCall(method, params);
 }
 export const configured = () => !!CHAIN.NodeDirectory;
 

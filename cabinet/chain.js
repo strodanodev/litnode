@@ -6,13 +6,27 @@ import { standingCall, decodeStanding } from './protocol/staking.js';
 import { selector } from './protocol/keccak.js';
 import { CHAIN } from './config.js';
 
-let id = 0;
-async function call(method, params) {
-  const r = await fetch(CHAIN.rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }), signal: AbortSignal.timeout(12000) });
-  const j = await r.json();
-  if (j.error) throw new Error(j.error.message);
-  return j.result;
+let id = 0, good = 0;
+/** One JSON-RPC call over CHAIN.rpcs, starting from the last provider that answered: one out of bandwidth or
+ *  rate-limiting (Caldera's /http, 23 Oct 2026) falls through to the next. A JSON-RPC error is the chain's answer,
+ *  not the provider's, so it is thrown, not retried elsewhere. */
+export async function rpcCall(method, params) {
+  let last = null;
+  for (let i = 0; i < CHAIN.rpcs.length; i++) {
+    const k = (good + i) % CHAIN.rpcs.length;
+    let j;
+    try {
+      const r = await fetch(CHAIN.rpcs[k], { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }), signal: AbortSignal.timeout(12000) });
+      if (!r.ok) throw new Error(`rpc ${r.status}`);
+      j = await r.json();
+    } catch (e) { last = e; continue; }
+    good = k;
+    if (j.error) throw new Error(j.error.message);
+    return j.result;
+  }
+  throw last ?? new Error('no rpc configured');
 }
+const call = rpcCall;
 
 const BALANCE_OF = selector('balanceOf(address)');
 const wei = (hex) => BigInt(hex || '0x0');

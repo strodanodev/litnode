@@ -13,6 +13,7 @@
  *  delegate: NodeDirectory.setAnnouncer(nodeKey, announcer) + a little gas to the announcer
  *  top up:   a plain zkLTC transfer to the node's hot key (the gas it spends on commits, attests, announces) */
 import { CHAIN } from './config.js';
+import { rpcCall } from './chain.js';
 import { connect } from './wallet.js';
 import { setDelegateCalldata, delegateOfCall } from './protocol/staking.js';
 import { standingCall, decodeStanding, minStakeCall, stakeCalldata, transferOperatorCalldata, approveCalldata, faucetCalldata, balanceOfCall } from './protocol/staking.js';
@@ -20,12 +21,8 @@ import { versionCall, decodeVersion, bondMessage, bondCalldata } from './protoco
 import { setAnnouncerCalldata, announcerOfCall, decodeAddress } from './protocol/directory.js';
 
 const eth = () => globalThis.ethereum ?? null;
-let id = 0;
 async function rpc(method, params) {
-  const r = await fetch(CHAIN.rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }), signal: AbortSignal.timeout(12000) });
-  const j = await r.json();
-  if (j.error) throw new Error(j.error.message);
-  return j.result;
+  return rpcCall(method, params);
 }
 const hex = (n) => '0x' + BigInt(n).toString(16);
 /** Fees the site suggests, so the wallet's own estimate cannot undercut the
