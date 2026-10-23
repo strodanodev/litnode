@@ -3,7 +3,10 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.12.1] — 2026-10-23 — Pickle Brawl forfeits, POST /restart, RPC fallback, Agent Fighter relay glue removed
+
+Protocol 4, unchanged: 0.12.0 and 0.12.1 nodes are peers. The release carries Pickle Brawl's ruleset `866bb9eb…974d`
+(registered on TitleRegistry 23 Oct 13:37Z), so an updated node settles forfeits.
 
 ### Added
 - **`POST /restart`: restart a node without admin.** A node started elevated outlives `schtasks /End` (which ends
