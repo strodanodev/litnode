@@ -7,7 +7,8 @@
  *  gauntlets/<id>.json pointed at a checkout the operator cloned by hand, so
  *  the title was publisher-less only on nodes whose operator did that
  *  (docs/SETTLEMENT-STANDARD.md §7, audit of 19 Oct 2026). This module makes
- *  the server the second artifact of the same title.
+ *  the server the second artifact of the same title; for Agent Fighter it is
+ *  the only intake (its checkout config and relay watcher were removed, 23 Oct).
  *
  *  THE ARTIFACT. One ustar tar, written deterministically (entries sorted
  *  by path, mtime 0, mode 0644, no owner), gzipped for transport:

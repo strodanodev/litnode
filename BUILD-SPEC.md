@@ -929,15 +929,13 @@ manifest completeness, bounded ranked mapping. A title that passes is listed.
 
 ## 16. Honest zeroes
 
-- **Relay-match identity is the display name.** Imported Agent Fighter
-  ledgers name players `af:<name>`; the first three settled deltas carried a
-  side suffix, so one person appears twice on the ladder until those roll
-  out of season. Player keys bound to AIR accounts replace names.
-- **Relay matches settle with `relay` attestation, not `players`.** Agent
-  Fighter players do not hold litnode keys yet, so an imported ledger is
-  backed by the relay's recorded result matching our replay, and by the
-  bonded settler's signature. Player-signed ledgers are exercised in tests
-  only until the client signs them.
+- **Old relay results keep their `af:<name>` identities.** Until 23 Oct 2026
+  Agent Fighter's relay ledgers were imported (`relay` attestation, players
+  named by display name, the first three with a side suffix, so one person
+  can appear twice). They stay as settled and labelled; nothing relabels
+  them. The relay no longer reports to the mesh: Agent Fighter results
+  reach a node only through its gauntlet, seated by player key and signed by
+  both players (`players` attestation).
 - **Until phase 2 lands, delta gossip is by advertisement, not
   replication, and every node's ladder is a fold over the matches IT
   hosted.** A witness fetches from the host's address; if the host is gone

@@ -23,7 +23,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "  Register-ScheduledTask -TaskName $name -Action $action -Trigger $triggers -Settings $settings -Principal $principal -Force | Out-Null;" ^
   "  Start-ScheduledTask -TaskName $name; Start-Sleep -Seconds 2; Write-Host ('task ' + $name + ': ' + (Get-ScheduledTask -TaskName $name).State) }" ^
   "Reg 'litnode' 'run-node.cmd';" ^
-  "if ('%AF_ROOT%' -ne '') { Reg 'litnode-relay' 'run-af-relay.cmd' } else { Write-Host 'AF_ROOT not set in node.env: relay task skipped' }"
+  "if ('%AF_ROOT%' -ne '') { Reg 'litnode-relay' 'run-af-relay.cmd' } else { Write-Host 'AF_ROOT not set in node.env: relay task skipped' }" ^
+  "if (Get-ScheduledTask -TaskName 'litnode-watch' -ErrorAction SilentlyContinue) { Stop-ScheduledTask -TaskName 'litnode-watch' -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName 'litnode-watch' -Confirm:$false; Write-Host 'task litnode-watch: removed (the ledger watcher is retired)' }"
 if errorlevel 1 (echo. & echo  FAILED - run this from an administrator prompt. & pause & exit /b 1)
 echo.
 echo  The tasks run headless: there is no window. Use the logs and the cabinet.

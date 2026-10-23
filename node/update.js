@@ -29,7 +29,7 @@ export const RELEASE_URL = 'https://github.com/strodanodev/litnode/releases/late
 export const RESTART_EXIT = 75; // start-node.cmd relaunches on this code
 
 /** What gets replaced by an update. Everything else in the folder is the operator's. */
-export const CODE = ['node', 'protocol', 'sdk', 'cabinet', 'rulesets', 'tools', 'contracts', 'titles', 'start-node.cmd', 'run-node.cmd', 'restart-node.cmd', 'stop-node.cmd', 'run-af-relay.cmd', 'install-task.cmd', 'allow-firewall.cmd', 'update.cmd', 'node.env.example', 'README.md', 'package.json'];
+export const CODE = ['node', 'protocol', 'sdk', 'cabinet', 'rulesets', 'tools', 'contracts', 'titles', 'start-node.cmd', 'run-node.cmd', 'restart-node.cmd', 'stop-node.cmd', 'run-af-relay.cmd', 'run-af-watch.cmd', 'install-task.cmd', 'allow-firewall.cmd', 'update.cmd', 'node.env.example', 'README.md', 'package.json'];
 
 /** Never copied from a zip, whatever it ships: an operator's state and the
  *  things the updater manages separately. */

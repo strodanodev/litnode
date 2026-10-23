@@ -35,7 +35,7 @@ export function extrasFor(kind) {
   ];
   if (kind === 'portable') return [...common, ['portable/README-PORTABLE.md', 'README.md']];
   return [...common, ['portable/README-OPERATOR.md', 'README.md'],
-    ...['install-task.cmd', 'run-node.cmd', 'restart-node.cmd', 'stop-node.cmd', 'run-af-relay.cmd'].map((f) => [`portable/${f}`, f])];
+    ...['install-task.cmd', 'run-node.cmd', 'restart-node.cmd', 'stop-node.cmd', 'run-af-relay.cmd', 'run-af-watch.cmd'].map((f) => [`portable/${f}`, f])];
 }
 
 /** Every bare package a kind's scripts may import, with the version from the source package.json. */

@@ -10,7 +10,7 @@
  *    node --test demo/settle.test.mjs */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -162,8 +162,3 @@ test('settle: placed + signed → verified delta → witness co-sign → officia
   assert.equal(cd.attestation, 'host'); assert.equal(cd.placed, false); assert.equal(cd.official, false);
 });
 
-test('settle: a real Agent Fighter relay ledger reproduces the relay\'s own result', { skip: !existsSync(join(process.cwd(), 'data', 'ledgers-import')) }, async (t) => {
-  // Kept as a manual check against imported relay ledgers (data/ledgers-import/*.json);
-  // unplaced relay records now settle as casual/unofficial and need a RELAY_KEYS signature.
-  t.skip('manual');
-});
