@@ -127,8 +127,8 @@ Agent Fighter, 17 Sep 2026 (AF commit `b362c87`):
 
 Acceptance (unchanged): a match started with *Find match* appears in that
 player's record on the cabinet, co-signed by a node under another
-operator. To run it live: push AF `b362c87`, redeploy the relay (tunnel or
-Railway), redeploy the cabinet, and play one match from *Find match*.
+operator. To run it live: push AF `b362c87`, redeploy the relay (the
+`litnode-relay` task on the publisher's node; Railway is retired), redeploy the cabinet, and play one match from *Find match*.
 
 What AF still gates on: online play requires AIR sign-in, which is blocked
 inside the cabinet's iframe by AF's `frame-ancestors`. Until the allowlist
