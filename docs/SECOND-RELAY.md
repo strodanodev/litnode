@@ -1,5 +1,15 @@
 # A second Agent Fighter relay
 
+> **Withdrawn 25 Oct 2026.** Don't follow this page. It restores the AF relay
+> on m16 with the `.env` copied there on 5 Oct, which holds
+> `SUPABASE_SERVICE_KEY`. Under the secrets rule
+> (docs/SETTLEMENT-STANDARD.md §18), a service key never sits on an
+> operator machine. The relay runs on the desktop only until it splits:
+> the account API moves to Vercel, and the rooms relay becomes secret-free
+> and runs on any node (docs/SETTLEMENT-ARCHITECTURE.md §11, §17 row 9).
+> m16's undo steps are in docs/STANDBY-HOST.md. The page is kept for its
+> diagnosis of the 17–18 Oct outage.
+
 On 17–18 Oct 2026 the desktop's relay lost its tunnel name and Agent Fighter
 said SERVER OFFLINE for 18 hours, because the desktop (`5b703f…`) was the
 only node on the mesh announcing a relay. 0.11.27 now restarts a relay

@@ -235,6 +235,12 @@ Values are non-negative safe integers. `defineTitle` /
 - The node keeps only the schema's names (`cleanStats`); a non-integer,
   a negative value or a stat for a non-participant refuses the submission.
   **A title with no schema lifts no stats** (§15).
+- **No stat repeats a report field** (25 Oct 2026). A value the report body
+  already carries (a score, a count, a flag) is derived from the body by
+  `stats(report)`, never sent again in `report.stats`. `report.stats`
+  carries only per-seat values the body lacks. A duplicate is two sources
+  for one number, and they drift (FLOOD CONTROL's `points`/`stars`/…,
+  docs/SETTLEMENT-ARCHITECTURE.md §10).
 
 ### 9.3 Folds
 
@@ -333,6 +339,13 @@ hand-backs (22 Oct 2026):
   active settle `attested` and stay so; results after it are `checkable`. A
   verifier is a `setBuild` like any other, so the title's
   `activationDelay` applies to it.
+- **Register before promote** (25 Oct 2026). A game build that changes the
+  verifier ships only after the new verifier is registered and active.
+  Until then both stay active (`setBuild` allows several) and the court
+  keeps naming the old one; the old one is revoked once no court names it.
+  A court reads the hash it names from its release record or env (e.g.
+  `LITNODE_VERIFIER_HASH`), never from a compile-time define, so a rebuild
+  of the web client can't move it.
 
 Phase 2 (not built): a challenge.
 
@@ -480,3 +493,30 @@ to the proof or provenance rules, to the official rule, or to the anchored
 root is a protocol bump, noted in CHANGELOG under the release that ships it.
 A rename in this file is announced to the title sessions. Titles are
 certified by the conformance suite, not by review.
+
+## 18. Secrets
+
+A litnode install — its code, its data folder, the processes it spawns,
+the zip it ships — holds **one stored secret: the node's own key**
+(`<dataDir>/identity.json`, and the announcer key beside it). Per-run
+secrets the node mints in memory (a gauntlet's ticket secret,
+`LITNODE_GAUNTLET_TOKEN`) are allowed: they never touch disk and die with
+the run. A publisher's or studio's secret (a database URL, a service key, a
+court key, a player's credential) lives in the studio's managed env and is
+never copied to an operator's machine (docs/SETTLEMENT-ARCHITECTURE.md
+§11).
+
+Enforced by `node/secrets.js`:
+
+- A publisher service inherits only the OS basics of the node's
+  environment plus the names its bundle lists in `inheritEnv`, as gauntlets
+  do.
+- A service or gauntlet whose environment carries a secret-shaped name is
+  reported (a log line, `/health.secrets`); with `SECRETS_POLICY=strict` it
+  is not started. **Season 0 runs strict.**
+- `npm run host -- doctor` (`secrets`) lists every secret-shaped name in
+  `node.env`, the services' env files and configs, the gauntlet configs,
+  and every key or credential file in the data folder other than the node's
+  own — by name and path, never by value.
+- `npm run pack` refuses a staged release that carries a key file, an env
+  file or credential content.

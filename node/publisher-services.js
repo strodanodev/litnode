@@ -29,15 +29,25 @@
  *  quick tunnel rotated), so it never hands out a dead hostname.
  *
  *  Env precedence: the node's own environment < envFiles < the service's
- *  `env`. Operator secrets (OPERATOR_KEY, DEPLOYER_KEY) are never passed.
- *  A service may name its own "envFiles" (same path rules); it then reads
- *  ONLY those, not the bundle's - give courts their ticket secret and not
- *  the API's database URL. */
+ *  `env`. Of the node's own environment a service inherits only the OS and
+ *  runtime basics (node/gauntlet.js INHERITED_ENV) plus the names its bundle
+ *  or service lists in "inheritEnv", as gauntlets have since 0.12.0; until
+ *  0.13.0 it inherited all of it. Operator secrets (OPERATOR_KEY,
+ *  DEPLOYER_KEY) are never passed. A service may name its own "envFiles"
+ *  (same path rules); it then reads ONLY those, not the bundle's.
+ *
+ *  Secrets (node/secrets.js, docs/SETTLEMENT-ARCHITECTURE.md §11): a
+ *  service whose environment carries a secret-shaped name is reported
+ *  (`secrets` in status, a log line) and, under SECRETS_POLICY=strict, not
+ *  started. envFiles are how a publisher's secrets reach an operator's
+ *  machine, so they are on their way out: Season 0 runs strict. */
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { connect, createServer as createTcpServer } from 'node:net';
 import { isAbsolute, join } from 'node:path';
+import { inheritedEnv } from './gauntlet.js';
+import { policyOf, secretNames } from './secrets.js';
 
 const parseEnvFile = (text) => {
   const out = {};
@@ -76,7 +86,8 @@ export function loadServiceBundles(spec, { root = process.cwd() } = {}) {
 const portFree = (port) => new Promise((res) => { const s = createTcpServer(); s.once('error', () => res(false)); s.listen(port, '127.0.0.1', () => s.close(() => res(true))); });
 const canConnect = (port) => new Promise((res) => { const s = connect(port, '127.0.0.1'); s.once('connect', () => { s.destroy(); res(true); }); s.once('error', () => res(false)); });
 
-export function createServices({ bundles = [], nodeUrl, publicBase = () => null, log = () => {}, emit = () => {}, spawnImpl = spawn, backoffMs = [5_000, 10_000, 20_000, 40_000, 60_000], watchMs = 5_000 }) {
+export function createServices({ bundles = [], nodeUrl, publicBase = () => null, log = () => {}, emit = () => {}, spawnImpl = spawn, backoffMs = [5_000, 10_000, 20_000, 40_000, 60_000], watchMs = 5_000, secretsPolicy = 'warn', processEnv = process.env }) {
+  const policy = policyOf(secretsPolicy);
   const all = new Map(); // fullName → svc
   const used = new Set();
   let stopped = false, watch = null, lastBase;
@@ -113,7 +124,7 @@ export function createServices({ bundles = [], nodeUrl, publicBase = () => null,
       // A service that names its own envFiles reads only those. A game server facing the tunnel
       // has no business holding the API's database URL just because the two ship in one bundle.
       const files = Array.isArray(s.envFiles) ? readEnvFiles(s.envFiles, b.cwd, full) : shared;
-      all.set(full, { full, name, bundle: b, cfg: { args: [], env: {}, readyMs: 120_000, ...s }, files, port: null, pid: null, child: null, state: 'off', restarts: 0, upSince: null, lastError: null, lastLine: null, usesPublic: false, timer: null });
+      all.set(full, { full, name, bundle: b, cfg: { args: [], env: {}, readyMs: 120_000, ...s }, files, port: null, pid: null, child: null, state: 'off', restarts: 0, upSince: null, lastError: null, lastLine: null, usesPublic: false, timer: null, secrets: [], warned: false });
     }
   }
 
@@ -135,10 +146,21 @@ export function createServices({ bundles = [], nodeUrl, publicBase = () => null,
     svc.usesPublic = false;
     const cwd = c.cwd ? (isAbsolute(c.cwd) || /^[A-Za-z]:/.test(c.cwd) ? c.cwd : join(svc.bundle.cwd, c.cwd)) : svc.bundle.cwd;
     const own = Object.fromEntries(Object.entries(c.env).map(([k, v]) => [k, fill(v, svc, gwPort)]));
-    const env = { ...process.env, ...svc.files, ...own, LITNODE_SERVICE: svc.full, LITNODE_NODE_URL: nodeUrl };
+    const inherited = inheritedEnv(processEnv, [...(svc.bundle.inheritEnv ?? []), ...(c.inheritEnv ?? [])]);
+    const env = { ...inherited, ...svc.files, ...own, LITNODE_SERVICE: svc.full, LITNODE_NODE_URL: nodeUrl };
     delete env.LITNODE_GAUNTLET_TOKEN;
-    if (svc.bundle.gauntletCallers?.includes(svc.name)) env.LITNODE_GAUNTLET_TOKEN = tokenOf.get(svc.bundle.prefix);
     delete env.OPERATOR_KEY; delete env.DEPLOYER_KEY; delete env.PUBLISHER_KEY; delete env.ADMIN_KEY;
+    // Checked before the per-run token goes in: that one is minted in memory and allowed.
+    svc.secrets = secretNames(env);
+    if (svc.secrets.length && policy === 'strict') {
+      svc.state = 'refused';
+      svc.lastError = `not started: its environment carries ${svc.secrets.join(', ')} (SECRETS_POLICY=strict: a node holds no publisher secret; run this service in the studio's managed env)`;
+      log(`service ${svc.full}: ${svc.lastError}`);
+      emit('service', { name: svc.full, state: 'refused', secrets: svc.secrets });
+      return;
+    }
+    if (svc.secrets.length && !svc.warned) { svc.warned = true; log(`service ${svc.full}: WARNING its environment carries secret-shaped names ${svc.secrets.join(', ')}; Season 0 (SECRETS_POLICY=strict) will refuse to start it`); }
+    if (svc.bundle.gauntletCallers?.includes(svc.name)) env.LITNODE_GAUNTLET_TOKEN = tokenOf.get(svc.bundle.prefix);
     svc.state = 'starting'; svc.lastError = null;
     const child = spawnImpl(fill(c.command, svc, gwPort), c.args.map((a) => fill(a, svc, gwPort)), { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     svc.child = child; svc.pid = child.pid ?? null;
@@ -207,6 +229,6 @@ export function createServices({ bundles = [], nodeUrl, publicBase = () => null,
   /** For the gateway: where a /svc/<full> request goes, or null. */
   const route = (full) => { const s = all.get(full); return s && s.state === 'up' ? { port: s.port } : null; };
   const names = () => [...all.keys()].sort();
-  const status = () => [...all.values()].map((s) => ({ name: s.full, state: s.state, port: s.port, pid: s.pid, restarts: s.restarts, since: s.upSince ? new Date(s.upSince).toISOString() : null, lastError: s.lastError }));
+  const status = () => [...all.values()].map((s) => ({ name: s.full, state: s.state, port: s.port, pid: s.pid, restarts: s.restarts, since: s.upSince ? new Date(s.upSince).toISOString() : null, lastError: s.lastError, secrets: s.secrets }));
   return { start, stop, route, names, status, all, gauntletGrant };
 }

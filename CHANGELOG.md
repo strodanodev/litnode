@@ -8,6 +8,18 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 Protocol 4, unchanged. No contract, ruleset or bundle hash changes.
 
 ### Added
+- **The secrets rule** (`node/secrets.js`, docs/SETTLEMENT-STANDARD.md §18, settlement architecture rev 2 §11). A
+  litnode install holds one stored secret, the node's own key, and nothing else.
+  - **Services and gauntlets:** one whose environment carries a secret-shaped name (`*_SECRET`, `*SERVICE_KEY`,
+    `DATABASE_URL`, `SUPABASE_*`, a key-file path such as PB's `COURT_IDENTITY`, …) is reported in the log and
+    `/health.secrets`. With `SECRETS_POLICY=strict` it is not started. Season 0 runs strict; the default stays
+    `warn`.
+  - **`npm run host -- doctor`** gets a `secrets` check. It lists every secret-shaped name in `node.env`, the
+    services' env files and configs, and the gauntlet configs. It also lists every key or credential file in the
+    data folder other than `identity.json` and `announcer.json`, including the AIR proxy wallets under `proxies/`.
+  - **`npm run pack`** refuses a staged release that carries a key file, an env file or credential content.
+  - **Reporting:** findings are reported by name and path, never by value. Per-run secrets (`${secret}`,
+    `LITNODE_GAUNTLET_TOKEN`) are exempt.
 - **`sdk/court` carries the placement descriptor.** `envelope()` and `attest()` take an optional `descriptor`, the
   placing node's signed envelope (`GET /match` `envelope`, or the arcade's `cabinet:init.match.descriptor`). It rides
   outside the attested body, so the court's signature does not change, and `checkEnvelope` refuses one that names
@@ -20,6 +32,17 @@ Protocol 4, unchanged. No contract, ruleset or bundle hash changes.
   (`GAUNTLET_LOG_MAX_MB`), the newest 100 per title (`GAUNTLET_LOG_KEEP`); `GAUNTLET_LOGS=0` keeps none. The gateway's
   `/gateway` status names each running match's `log`. The child's environment, which holds the seat secret, is never
   written.
+
+### Changed
+- **Publisher services inherit only the OS basics of the node's environment** (`node/publisher-services.js`), the
+  same allowlist gauntlet servers have had since 0.12.0 (`INHERITED_ENV`). Before, a service got every variable the
+  node had (`AIR_*`, RPC URLs, tunnel settings). **Operators:** if a service read a `node.env` value, list its name in
+  the bundle's or the service's `inheritEnv`.
+- **docs/STANDBY-HOST.md is rewritten:** nothing secret is copied to a second machine. The old page copied AF's
+  `.env` (with `SUPABASE_SERVICE_KEY`), PB's `.env` files and PB's court key to m16. m16 now runs only its node and
+  the AF ranked bundle, and the page lists the undo steps. docs/SECOND-RELAY.md is withdrawn for the same reason.
+- **The settlement standard** adds three rules: no stat repeats a report field (§9.2), register the verifier before
+  promoting a build (§11), and §18 Secrets.
 
 ### Fixed
 - **The Agent Fighter relay task no longer inherits the node's settings** (`portable/run-af-relay.cmd`). It loaded
