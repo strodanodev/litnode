@@ -110,7 +110,8 @@ availability. Here is what a malicious host can and can't do:
 | Forge the winner or the score | **No** | the result is whatever the verifier computes from the players' signed inputs; three nodes under other operators replay it |
 | Inject or drop a seat's inputs | **No, detectably** | each seat signs a hash-chain head over `(tick, input)` at least every 30 s and at the end; a log that doesn't match every head is refused |
 | Delay a seat's inputs (a lag switch on the player's behalf) | **Bounded** | the log records the client tick and the applied tick; the verifier refuses a delay over the title's `maxInputDelayMs` (e.g. 250 ms). Inside that bound it's indistinguishable from network lag |
-| Abort the match, refuse to post it | **Yes** | it's a void, not a forgery. The seats hold their own heads; a seat may post the partial envelope to any node, which settles a forfeit by the title's rules. Repeated voids show in `/fleet` and lower the node's placement weight |
+| Abort the match, refuse to post it | **Yes** | it's a void, not a forgery. The seats hold their own heads; a seat may post the partial envelope to any node, which settles a forfeit by the title's rules. Every expired commit goes into the host's on-chain record (MatchBook gen-5), which demotes it in the draw (§14.1) |
+| Host its own operator's match | **No** (protocol 5) | placement excludes every node whose operator owns a participant's key (§14.1). A second wallet costs a second Rapture card |
 | See the players' IP addresses | **Yes** | as any host does today. Contained by the Rapture gate and the bond: operators are known, bonded wallets |
 | Collude with custodians | **Hard** | the custody set and the witness panel are drawn by hash, exclude the host's operator, and (protocol 5) count only bonded Rapture holders. Owning three of them for one match means owning a large share of the mesh |
 | Sybil many nodes | **Costly** | one Rapture NFT per bonded node (§6) plus the stake |
@@ -469,7 +470,8 @@ asks a fresh peer, then reports `statsMissing`. An empty hour is logged as
 | A match is hosted | 1 |
 | Every result replayed three times by others | 4 |
 | Ranked commits on chain | 4 |
-| A dissent escalates instead of voiding | 13 |
+| A dissent is adjudicated instead of voiding | 4 (the reduced panel, no slash; §14.1) |
+| A dissenter can be slashed | 13 (the nine-seat panel) |
 | An epoch root means something | ≥ 3 independent stakers |
 | Publisher-offline play | 1 non-publisher operator per title |
 
@@ -489,9 +491,204 @@ asks a fresh peer, then reports `statsMissing`. An empty hour is logged as
    hosting, against **NodeStake generation 5** (gated `bond`, `sync`) and
    its redeployed dependents (§6).
 7. **AIR off the node** (§6) and the secrets guard (§11) in Season 0 mode.
+8. **Fair hosting** (§14.1, mesh gap 2): participant exclusion and the
+   host and seat record in placement; forfeit from the last co-signed
+   head; and the reduced panel, against **MatchBook generation 5**.
+9. **Co-signatures readable by anyone** (§14.2, mesh gap 6):
+   `GET /delta/<id>` carries the signed custody co-signatures, so a studio
+   can check finality without trusting the node that serves it.
 
 Node-only, no bump: the guardian `protocol` field, doctor checks,
-`title:release`, the services env allowlist, the release scan.
+`title:release`, the services env allowlist, the release scan, and
+`sdk/chain` (§14.2).
+
+**One contract generation, not two.** NodeStake gen-5 (the Rapture gate,
+§6) and MatchBook gen-5 (the records and the reduced panel, §14.1) deploy
+together. Both redeploy the same dependents and need the same re-bond, so
+operators go through one migration window.
+
+### 14.1 Fair hosting (mesh gap 2)
+
+`handoff/mesh-gaps/REPORT.md` gap 2 holds the evidence and repros
+(`demo/gap-2-free-abort.test.mjs`). In short, every exit from a ranked
+match short of Final is free:
+- **A participant's own node can host.** Placement takes no participant
+  input. On a 4-operator mesh, a player's own node hosts 25% of their
+  matches and is in 100% of them, as host or panel.
+- **A host that kills its match** leaves the commit to `expire()` void,
+  with no slash.
+- **One dissenting seat** voids any match while there are fewer than 13
+  operators.
+- **A losing player** who never signs the ledger voids it too.
+
+Rev 2 already changes two of these. Seats sign heads (§8), so a host can't
+invent or drop inputs, and a replay settles what happened. What's left is
+**who is allowed in the draw**, and **what an abort costs**.
+
+**1. Participant exclusion (hygiene).**
+- **How:** placement gains `owners`, the `PlayerProfile.ownerOfKey` of
+  each participant at the descriptor's `beaconBlock`, read the same way by
+  node and browser (`acceptsHost`). `eligible()` and `drawPanel()` drop
+  every node whose staking operator is in it. Nodes and the cabinet
+  already read PlayerProfile and pinned standings.
+- **What it buys:** it stops the zero-effort case, where a player plays
+  and hosts from one wallet. With rev 2's AIR move (§6) that covers more
+  than it used to. A player who signs in at the arcade and bonds through
+  the arcade gets the same arcade-derived proxy address for both their
+  player key's owner and their node's operator, so exclusion catches
+  them.
+- **What it doesn't buy:** a second wallet. Before rev 2 that cost one
+  more minimum bond (1 tLITVM from the open faucet) and 120 s of
+  eligibility age. **Under the Rapture rule it costs a second Rapture card
+  and a gen-5 bond.** That's a real price, not a free one, and it's why
+  the record below matters less than it did. Unbound keys (`pb:`, guests)
+  exclude nothing, and they are never ranked anyway (§8).
+- **Contract support:** none. **Cost:** a mesh with one participant's
+  operator among 4 may not seat a panel, so that match plays casual.
+
+**2. A host and seat record, on chain (MatchBook gen-5).**
+- **Counters:** MatchBook keeps one packed slot per node key:
+  - `committed`, `settled`, `expired` (Committed → Void with no Settled);
+  - `withheld` (Settled → escalated, then expired unfed);
+  - `dissentsVoided` (this seat dissented, and the match ended void).
+
+  It keeps the same slot per **operator** address, so a node key
+  rotated to a fresh bond doesn't start clean. Each event is one SSTORE,
+  about 10k gas per match on a ~445k-gas match (the report's estimate).
+- **Placement demotes and never excludes.** Inside the existing
+  partitions, a host with `expired + withheld ≥ k` over its last `n`
+  commits sorts after the others, taking the worse of its key and
+  operator records. `drawPanel()` divides a seat's weight by
+  `1 + dissentsVoided`. Honest crashes (the desktop's BSODs) cost hosting
+  share, never stake. Demotion only bites once a title has two or more
+  bundle runners.
+- **Why on chain:** the browser computes placement too. Folding MatchBook
+  logs in a page is 10–16 s per range on Liteforge and 429-prone, while
+  the counters are one batched `eth_call` at `beaconBlock`, the same
+  pattern as standings.
+- **Griefing:** making an honest host look unreliable means sitting on
+  its panel and forcing a void, and that worsens the griefer's own seat
+  record.
+
+**3. The losing player who won't sign: forfeit from the last co-signed
+head.** This is the report's option D, and rev 2 already has the
+mechanism:
+- Every real-time title's seats sign heads every 30 s (§8). Protocol 5
+  extends that to replayable titles too: AF's clients sign rolling heads
+  beside the final ledger.
+- An envelope whose seats' signatures stop early settles from the last
+  head **every** seat signed. The inputs after it count as empty for the
+  seat that stopped, and the title's own rules (a forfeit or a timeout)
+  decide the result.
+- Witnesses replay it like any other result, so it can be official.
+- It changes the all-signers rule at intake (`verifyLedger`), so it's
+  protocol 5. It also needs AF client and server work: the gauntlet
+  posts on a forfeit instead of refusing (`server.ts:980-985`).
+
+**4. The lone dissenter below 13 operators: a reduced panel (MatchBook
+gen-5).**
+- Today, when `escalate()` can't seat nine, it voids with nobody
+  slashed.
+- **Gen-5:** when nine can't be seated but at least three eligible,
+  uninvolved Rapture operators can, it seats all of them. They replay;
+  with rev 2 a replay is a full re-run, not a vote.
+- **The majority finalizes.** The minority's `dissentsVoided` (renamed
+  `dissentsLost`) goes up. **Nobody is slashed below a nine-seat panel**,
+  because a panel that small can be packed.
+- **Fewer than three:** it voids, as today.
+- So a lone dissenter on a 4–12 operator mesh no longer gets a free void.
+
+**Rapture and gen-5.** Exclusion, the records and the reduced panel all
+draw from the same pool: bonded, Rapture-holding, `sync`-current nodes
+(§6). No part needs anything from NodeStake beyond gen-5's gate. The
+records and the reduced panel need MatchBook gen-5, and exclusion needs
+no contract.
+
+**Release impact.**
+- **Exclusion, the records in placement, and the forfeit:** protocol 5,
+  because placement's output and intake change. They ship in 0.13.0 with
+  the rest of §14. The arcade redeploys with the vendored
+  `cabinet/protocol/`.
+- **The counters and the reduced panel:** MatchBook gen-5, in the same
+  deploy as NodeStake gen-5.
+- **Nothing is relabelled.** Placement sits in no result hash beyond the
+  `descriptorHash` binding, so finalized matches stay final.
+
+### 14.2 Studios credit only final results (mesh gap 6)
+
+The evidence is in gap 6 of the report:
+- **AF** credits every payout, XP, Elo and ticket on the relay's own word,
+  never on a final result.
+- **PB** pays on the court's signature before finality (`courtResult.ts`),
+  on client POSTs (`/api/match`, Open Play), and pairs reports by score
+  rather than by match id.
+- Neither reads MatchBook. The economy predates the mesh, and the two
+  never meet.
+
+**The rule (stack separation, enforced).** A studio database credits a
+match result only once the mesh calls it final. The crediting runs in the
+studio's managed env, with its secrets there (`DATABASE_URL` or the
+Supabase service role, `CRON_SECRET`). No chain key is needed: it only
+reads.
+
+**One crediting function per studio, on Vercel.**
+- **Queue, not log scan.** Every studio server that serves a match (a
+  relay, a court, an order) inserts a `mesh_credits` row in `pending`, keyed
+  by the MatchBook match id. A cron (`/api/mesh-credit`, every minute, at
+  most 25 rows a run) works the queue.
+- **"Final" depends on the result:**
+
+  | Result | Final when | Read with |
+  |---|---|---|
+  | ranked, placed (on chain) | `MatchBook.statusOf` = Final, **and** a delta fetched from any node recomputes to the chain's `resultHash` | one `eth_call` per match through `contracts.json`'s `rpc` → `rpcFallback` |
+  | off chain, replayed (rev 2: PB, AFC, FC casual) | the delta recomputes, **and** it carries ≥ 2 custody co-signatures from distinct gen-5 Rapture operators other than the host's, each verified against NodeStake at the delta's block, with no dispute, older than a dispute window (default 1 h) | `GET /delta/<id>` (§14 item 9), checked, not trusted |
+  | studio court only (L1/L2, a title without a verifier) | the court's signature, **labelled as the studio's word**, never as mesh-final | — |
+
+- **Idempotent:** one transaction flips `pending → credited` with
+  `returning *`, and credits only when a row comes back. The existing
+  ledger's unique key is the second fence. Re-runs, two crons and a
+  mid-loop crash all credit once.
+- **Void:** release any escrow to both players; no Elo. **Expired** (past
+  `committedAt + totalWindow()` while not final) refunds.
+- **Accounts:** a participant key maps to an account by
+  `PlayerProfile.ownerOfKey`. Under rev 2 that is the arcade-derived proxy
+  for the player's AIR sub, which the arcade API resolves to the sub.
+- **`/proof/stats` and EpochAnchor** stay for season displays. Hourly roots
+  don't finalize yet (gap 1), so they are not a credit signal.
+
+**AF: the home is ADR 0015's account API** (AF `e036829`). The relay split
+already moves credits to a Vercel account API that re-sims every result.
+The crediting cron lives there:
+- a `mesh_credits` table, and `player_keys` (key → profile, bound by a
+  signed challenge or through PlayerProfile);
+- XP, Elo and tickets for mesh matches move from `finishMatch` to the cron;
+  escrow and refunds stay where they are.
+- Relay-only modes (wager, solo, arcade) never reach the mesh. Whether they
+  move onto gauntlets and finality or keep relay-trusted rewards,
+  **labelled**, is a product decision (§19).
+
+**PB's API needs:**
+- migration **013** `mesh_credits` (012 is already `player_keys`, which
+  gives the key → account map);
+- `/api/court/result` verifies the signature as today but **records
+  pending and never pays**;
+- an `/api/mesh-credit` cron following the table above;
+- `postgresStore` keyed by match id, with score pairing dropped;
+- no pickle credit from client reports for human matches (`/api/match`,
+  Open Play). Bot-only Open Play stays client-reported by product choice,
+  capped and labelled.
+
+**litnode's part:**
+- **Co-signatures in the delta (protocol 5).** `GET /delta/<id>` already
+  carries `cosigners`, which are node ids. It now also carries each signed
+  co-signature body (`cosignBody`, `protocol/result.js`).
+- **`sdk/chain`** (node-only): `resultHash`, `matchIdBytes32`,
+  `statusOfCall` and `verifyCosigns`, so studios stop vendoring
+  `protocol/*` piecemeal.
+
+**Release impact:** the delta's co-signatures ride protocol 5. `sdk/chain`
+is a node release. Everything else is each studio's own deploy and
+migration.
 
 ## 15. Rapture and rewards detail
 
@@ -525,6 +722,9 @@ Node-only, no bump: the guardian `protocol` field, doctor checks,
 | A8 | new | secrets: one stored secret per node; the guard, doctor and release checks | 1 (rule), 2 |
 | A9 | new | the Rapture rule | 2 |
 | A10 | §17 Change control | protocol 5 | 2 |
+| A11 | §6 Placement | `owners` exclusion; host and seat records demote in the draw (MatchBook gen-5 counters) | 2 |
+| A12 | §7 Chain lifecycle | forfeit from the last co-signed head; the reduced panel (≥ 3 uninvolved, majority finalizes, no slash below nine) | 2 |
+| A13 | §8 Custody, new §19 | the delta carries signed co-signatures; a studio credits only final results (the table in §14.2 here) | 2 |
 
 ## 17. Per-title migration table
 
@@ -544,6 +744,10 @@ match. The old build or key is revoked only after that.
 | 9 | 2 | **AF** | relay split: account API → Vercel; rooms relay secret-free | deploy; remove the AF `.env` from the desktop | AF casual plays with the desktop off |
 | 10 | 2 | **AFC, FC** | heads (AFC); courts become optional; custodians replay | one signer batch each | a result verified by replay |
 | 11 | 3 | **AFC** | ranked on: release a ruleset with `ranked` once doctor is green | one signer batch | `ranked.*` green |
+| 12 | 2 | **litnode + contracts** | §14.1: exclusion, records in placement, forfeit from heads, the reduced panel; **MatchBook gen-5** deployed with NodeStake gen-5; co-signatures in `/delta`; `sdk/chain` | in the same generation-5 deploy and 0.13.0 window as row 6 | `demo/gap-2-free-abort.test.mjs` flips: 2.1 excludes, 2.2 records, 2.3 finalizes by the reduced panel |
+| 13 | 2 | **AF** | §14.2 in ADR 0015's account API: `mesh_credits`, `player_keys`, the cron; mesh XP/Elo/tickets from Final only; AF clients sign rolling heads | Vercel env (`CRON_SECRET`, the DB secret), migration, deploy | a ranked match credits once, after Final, and never before |
+| 14 | 2 | **PB** | §14.2: migration 013, court results recorded pending, the cron, match-id pairing, no client-report pickles for human matches | Vercel env, migration, deploy | a court report pays nothing until the delta is final |
+| 15 | 2 | **arcade** | placement in `cabinet/protocol/` reads `owners` and the records (vendored with 0.13.0) | redeploy after the desktop runs 0.13.0 | the browser draws the same host as the node |
 
 ## 18. Phased plan
 
@@ -568,7 +772,7 @@ and web; one signer batch each for FC and AFC, then their env and deploy.
 
 ### Phase 2: protocol 5 and the Season 0 gate (litnode 0.13.0)
 
-**Scope:** rows 6–10. Season 0 launches at the end of phase 2.
+**Scope:** rows 6–10 and 12–15. Season 0 launches at the end of phase 2.
 
 **Tests.**
 
@@ -587,6 +791,14 @@ and web; one signer batch each for FC and AFC, then their env and deploy.
   - `demo/deploy.test.mjs` dry-runs the generation-5 deploy order.
 - `demo/secrets.test.mjs`: the guard refuses a secret-shaped env in
   Season 0 mode.
+- `demo/gap-2-free-abort.test.mjs` turned around: a participant's
+  operator is never drawn; an expired commit lands in the host's record
+  and demotes it; a lone dissenter on a 4-operator mesh is outvoted by
+  the reduced panel; a match whose loser stops signing settles as a
+  forfeit from the last co-signed head.
+- `demo/mesh-credit.test.mjs` (litnode side): `sdk/chain` recomputes a
+  delta to the chain's hash, verifies co-signatures against a gen-5 stake
+  table, and rejects a co-sign from the host's own operator.
 - A five-node in-process mesh with PB, AF and FC, and the §12 target
   matrix drilled once and written down.
 
@@ -624,12 +836,24 @@ Decisions that are the user's:
 2. **Rapture: decided 25 Oct.** The collection is Rapture Cards,
    `0x138F…2721` (§15). Only holders may bond at all, one card per node.
    NodeStake generation 5 enforces it, in phase 2 (§6).
+3. **The reduced panel (§14.1 item 4).** Finalizing by the majority of
+   three or more uninvolved operators, with no slash, when nine can't be
+   seated. The alternative is to keep voiding until there are 13
+   operators. Recommended: the reduced panel, because with rev 2's replay
+   a small panel re-runs the match rather than voting on it.
+4. **AF relay-only modes (§14.2).** Should wager, solo and arcade move
+   onto gauntlets and mesh finality, or keep relay-trusted rewards,
+   labelled as the studio's word? Recommended: wager moves, because it
+   pays between players; solo and arcade stay labelled.
+5. **The dispute window for off-chain credits (§14.2).** Recommended:
+   1 h. A shorter window pays sooner, and a longer one gives custodians
+   more time to dispute.
 
 Facts to check during the build (not decisions):
 
-3. Whether PlayerProfile supports an owner handover for the existing proxy
+6. Whether PlayerProfile supports an owner handover for the existing proxy
    wallets (§6).
-4. How far server bundles can be isolated on Windows operators without a
+7. How far server bundles can be isolated on Windows operators without a
    container (§3).
-5. PB's verifier runtime under the sandbox permission flags (it unpacks its
+8. PB's verifier runtime under the sandbox permission flags (it unpacks its
    own engine), and AFC's Rapier WASM under them.
