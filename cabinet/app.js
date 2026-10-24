@@ -23,6 +23,7 @@ import { identicon, fileToAvatar } from './avatar.js';
 import { paintBackdrop } from './bg.js';
 import { sample, slots, uptimePct, fmtDuration, ring, strip, heatmap } from './uptime.js';
 import { readStake } from './chain.js';
+import { rankedCapacity } from './quorum.js';
 import * as wallet from './wallet.js';
 import * as air from './air.js';
 import * as nodeops from './nodeops.js';
@@ -717,9 +718,10 @@ function renderMatchmaking(g) {
  *  operators among fresh bonded nodes that carry the title — the draw's exact rule (build hash, eligibility age,
  *  staking addresses) can only seat fewer, so a warning here is never a false alarm. */
 function rankedShortfall(g) {
-  const operators = new Set(S.peers.filter((p) => p.fresh && p.bonded && (p.rulesets ?? []).includes(g.rulesetId)).map((p) => p.operator));
-  const need = 4;
-  return operators.size < need ? `Ranked plays casual-only right now: going on chain needs a host and three witnesses under ${need} different operators, and ${operators.size} ${operators.size === 1 ? 'is' : 'are'} online with this title. You can still play; the result stays off the official ladder.` : null;
+  const c = rankedCapacity(S.peers, g.rulesetId, { protocol: S.health?.protocol ?? null });
+  if (c.ok) return null;
+  const why = !c.hosts ? 'no host with this title is online' : `${c.operators} ${c.operators === 1 ? 'is' : 'are'} online with this title, and a host finds ${c.seats} witness${c.seats === 1 ? '' : 'es'} under other wallets`;
+  return `Ranked plays casual-only right now: going on chain needs a host and three witnesses under four different staking wallets${c.by === 'label' ? ' (this node names operators by label only: update it to count wallets)' : ''}; ${why}. You can still play; the result stays off the official ladder.`;
 }
 /** Matchmaking is a function of everyone's clock (2 s buckets). A node whose
  *  clock disagrees with its bonded peers computes buckets nobody else has

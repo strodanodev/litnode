@@ -19,6 +19,7 @@ import { agent, hydrationManifest } from '../protocol/erc6699.js';
 import { h } from '../protocol/canonical.js';
 import { applyDelta, sortDeltas } from '../cabinet/protocol/derive.js';
 import { checkVendored } from '../tools/vendor-cabinet.mjs';
+import { rankedCapacity } from '../cabinet/quorum.js';
 
 const RULESET = join(process.cwd(), 'rulesets', 'agent-fighter.v1.js');
 const manifest = JSON.parse(readFileSync(join(process.cwd(), 'rulesets', 'agent-fighter.v1.json'), 'utf8'));
@@ -127,7 +128,7 @@ test('cabinet contract: fields by name, cabinet served at /, vendored protocol i
   // /peers
   const peers = await json('/peers');
   hasFields(peers, { peers: 'array' }, '/peers');
-  hasFields(peers.peers[0], { nodeId: 'string', operator: 'string', addr: 'string', region: 'string', roles: 'array', fresh: 'boolean', bonded: 'any', clockSkewS: 'number', rulesets: 'array' }, '/peers[0]');
+  hasFields(peers.peers[0], { nodeId: 'string', operator: 'string', addr: 'string', region: 'string', roles: 'array', fresh: 'boolean', bonded: 'any', clockSkewS: 'number', rulesets: 'array', protocol: 'number', wallet: 'any', witnessEligible: 'any' }, '/peers[0]');
 
   // /snapshot — the cabinet folds with the manifest's services and verifies placement against peers
   const snap = await json('/snapshot');
@@ -166,4 +167,24 @@ test('cabinet contract: fields by name, cabinet served at /, vendored protocol i
   const tables = { rating: {}, credits: {}, stats: {} };
   for (const d of sortDeltas(ds.deltas)) applyDelta(tables, d, snap.manifests['agent-fighter.v1'].services);
   for (const row of lb.leaderboard) assert.equal(tables.rating[row.player], row.rating, `trajectory for ${row.player.slice(0, 8)} ≠ ladder`);
+});
+
+test('the ranked-capacity notice counts staking wallets, not the labels nodes choose (cabinet/quorum.js, 0.12.2)', () => {
+  const RID = 'tug.v1';
+  const peer = (id, extra) => ({ nodeId: id.padEnd(64, '0'), fresh: true, bonded: true, protocol: 4, rulesets: [RID], roles: ['mesh', 'witness'], witnessEligible: true, ...extra });
+  const host = peer('a', { roles: ['mesh', 'host', 'settler', 'witness'], operator: 'desktop', wallet: '0xAAA' });
+  // four labels under two wallets: the old count said four operators; MatchBook would revert BadPanel
+  const twoWallets = [host, peer('b', { operator: 'laptop', wallet: '0xaaa' }), peer('c', { operator: 'termux-1', wallet: '0xbbb' }), peer('d', { operator: 'termux-2', wallet: '0xbbb' })];
+  assert.deepEqual(rankedCapacity(twoWallets, RID, { protocol: 4 }), { ok: false, operators: 2, seats: 1, hosts: 1, by: 'wallet' });
+  const four = [host, peer('b', { operator: 'x', wallet: '0xbbb' }), peer('c', { operator: 'x', wallet: '0xccc' }), peer('d', { operator: 'x', wallet: '0xddd' })];
+  assert.equal(rankedCapacity(four, RID, { protocol: 4 }).ok, true, 'one label, four wallets: rankable');
+  // what placement and MatchBook leave out does not count
+  assert.equal(rankedCapacity(four.map((p, i) => (i === 3 ? { ...p, protocol: 3 } : p)), RID, { protocol: 4 }).ok, false, 'a protocol-3 peer is excluded');
+  assert.equal(rankedCapacity(four.map((p, i) => (i === 3 ? { ...p, witnessEligible: false } : p)), RID, { protocol: 4 }).ok, false, 'a bond younger than the eligibility age seats nobody');
+  assert.equal(rankedCapacity(four.map((p, i) => (i === 3 ? { ...p, fresh: false } : p)), RID, { protocol: 4 }).ok, false, 'offline');
+  assert.equal(rankedCapacity(four.map((p, i) => (i === 3 ? { ...p, rulesets: [] } : p)), RID, { protocol: 4 }).ok, false, 'without the title');
+  assert.equal(rankedCapacity(four.map((p) => ({ ...p, roles: ['mesh', 'witness'] })), RID, { protocol: 4 }).ok, false, 'nobody hosts');
+  // a node that predates `wallet` names labels only: counted as before, and said so
+  const old = four.map(({ wallet, witnessEligible, ...p }, i) => ({ ...p, operator: `op${i}` }));
+  assert.deepEqual(rankedCapacity(old, RID, { protocol: 4 }), { ok: true, operators: 4, seats: 3, hosts: 1, by: 'label' });
 });

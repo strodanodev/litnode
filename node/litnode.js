@@ -1467,6 +1467,9 @@ export async function createNode({
         return json(res, 200, { peers: [...heartbeats.values()].map((b) => ({
           nodeId: b.nodeId, operator: b.operator, addr: b.addr, region: b.region, roles: b.roles,
           fresh: b.epoch >= epochOf(now) - 2, bonded: stakes ? !!stakes[b.nodeId]?.active : null,
+          // The staking wallet and witness eligibility the chain gives this key (0.12.2): what MatchBook counts as an
+          // operator. `operator` above is the label the node chose for itself. null = not read (or no NodeStake).
+          wallet: stakes?.[b.nodeId]?.operator?.toLowerCase() ?? null, witnessEligible: typeof stakes?.[b.nodeId]?.eligible === 'boolean' ? stakes[b.nodeId].eligible : null,
           // Their clock minus ours, in seconds, at their last heartbeat. A peer
           // more than ~4 s behind never reads as fresh: that is clock skew,
           // not a dead node (BUILD-SPEC §16).
