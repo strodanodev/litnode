@@ -136,3 +136,28 @@ test('hardening: POST /restart answers this machine only, and no other site in i
   assert.deepEqual(await r.json(), { ok: true, restarting: true });
   assert.ok(await until(() => restarts === 2, 5000), 'both accepted requests restarted the node');
 });
+
+test('hardening: the relay task takes AF_ROOT and RELAY_PORT from node.env, nothing else; its own values from AF_ROOT\.env', { skip: process.platform !== 'win32' && 'cmd.exe only', timeout: 30_000 }, async () => {
+  const { spawnSync } = await import('node:child_process');
+  const dir = mkdtempSync(join(tmpdir(), 'litnode-relay-env-'));
+  try {
+    const af = join(dir, 'af');
+    mkdirSync(af);
+    // the node's own settings, which the relay must not see; the arcade's AIR partner is the one that broke it
+    writeFileSync(join(dir, 'node.env'), ['# node settings', `AF_ROOT=${af}`, 'RELAY_PORT=9477', 'AIR_PARTNER_ID=arcade-partner', 'OPERATOR=publisher', 'COURTS=pickle-brawl.v1:ab', ''].join('\r\n'));
+    writeFileSync(join(af, '.env'), ['SUPABASE_URL=https://db.test', 'AIR_PARTNER_IDS=site,arcade', ''].join('\r\n'));
+    // run the launcher up to its loop, then dump the environment the relay would start with
+    const src = readFileSync(join(process.cwd(), 'portable', 'run-af-relay.cmd'), 'utf8');
+    const head = src.slice(0, src.indexOf(':again'));
+    assert.ok(head.length > 0, 'the launcher has its :again loop');
+    writeFileSync(join(dir, 'probe.cmd'), `${head}\r\nset > "%~dp0env.out"\r\n`);
+    const r = spawnSync('cmd.exe', ['/d', '/c', join(dir, 'probe.cmd')], { env: { SystemRoot: process.env.SystemRoot, PATH: process.env.PATH }, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const env = Object.fromEntries(readFileSync(join(dir, 'env.out'), 'utf8').split(/\r?\n/).filter(Boolean).map((l) => [l.slice(0, l.indexOf('=')).toUpperCase(), l.slice(l.indexOf('=') + 1)]));
+    assert.equal(env.AF_ROOT, af);
+    assert.equal(env.PORT, '9477');
+    assert.equal(env.SUPABASE_URL, 'https://db.test');
+    assert.equal(env.AIR_PARTNER_IDS, 'site,arcade');
+    for (const k of ['AIR_PARTNER_ID', 'OPERATOR', 'COURTS']) assert.equal(env[k], undefined, `${k} from node.env must not reach the relay`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

@@ -3,6 +3,24 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+Protocol 4, unchanged. No contract, ruleset or bundle hash changes.
+
+### Added
+- **`sdk/court` carries the placement descriptor.** `envelope()` and `attest()` take an optional `descriptor`, the
+  placing node's signed envelope (`GET /match` `envelope`, or the arcade's `cabinet:init.match.descriptor`). It rides
+  outside the attested body, so the court's signature does not change, and `checkEnvelope` refuses one that names
+  another match or ruleset. Before, `envelope()` kept a fixed field list and dropped it silently; Pickle Brawl's court
+  added it back after `attest()`. **Courts: re-vendor `sdk/court` and pass `descriptor` to `attest()`.**
+
+### Fixed
+- **The Agent Fighter relay task no longer inherits the node's settings** (`portable/run-af-relay.cmd`). It loaded
+  every `node.env` variable before `AF_ROOT\.env`, so the node's `AIR_PARTNER_ID` (the arcade's partner, for the
+  node's own login) pinned the relay's AIR guard to the arcade and every agentfighter.wtf sign-in got a 401 (23 Oct
+  2026). It now takes only `AF_ROOT` and `RELAY_PORT` from `node.env`, the same rule as `INHERITED_ENV` for gauntlet
+  servers; the relay's own values live in `AF_ROOT\.env`. Ships with the next update (the script is in CODE).
+
 ## [0.12.1] — 2026-10-23 — Pickle Brawl forfeits, POST /restart, RPC fallback, Agent Fighter relay glue removed
 
 Protocol 4, unchanged: 0.12.0 and 0.12.1 nodes are peers. The release carries Pickle Brawl's ruleset `866bb9eb…974d`
