@@ -174,6 +174,9 @@ export async function createNode({
   // so a node that already fronts a relay (Agent Fighter's, whose wrapper
   // listens on RELAY_PORT) adds gauntlets with GAUNTLET_GATEWAY_PORT alone.
   gauntlets = {}, gauntletUpstream = null, gauntletPort = null,
+  // Each match's process output, kept per title under <dataDir>/gauntlet-logs (node/gauntlet.js openProcessLog):
+  // { maxBytes, keep } override the size cap per file and the files kept per title; { dir: null } keeps none.
+  gauntletLogs = {},
   // Server bundles (node/server-bundle.js): a gauntlet title's match server as a hashed artifact.
   // { rulesetId: null } opts in to fetching the title's bundle from peers (admitted by TitleRegistry or a
   // TRUSTED_PUBLISHERS signature) and running it; { rulesetId: '<path>.tgz' } is this operator's own file (the
@@ -1826,7 +1829,8 @@ export async function createNode({
   if (runsGateway) {
     if (serviceBundles.length) publisherServices = createPublisherServices({ bundles: serviceBundles, nodeUrl: `http://127.0.0.1:${actualPort}`, publicBase: () => wsAddr, log, emit });
     const upstream = gauntletUpstream ?? (gauntletPort != null && relayPort && gauntletPort !== relayPort ? `ws://127.0.0.1:${relayPort}` : null);
-    gauntlet = createGauntlets({ configs: gauntlets, port: gauntletPort ?? relayPort ?? 0, upstream, nodeUrl: `http://127.0.0.1:${actualPort}`, wsAddr: () => wsAddr, nodeId, log, emit, services: publisherServices });
+    gauntlet = createGauntlets({ configs: gauntlets, port: gauntletPort ?? relayPort ?? 0, upstream, nodeUrl: `http://127.0.0.1:${actualPort}`, wsAddr: () => wsAddr, nodeId, log, emit, services: publisherServices,
+      logs: gauntletLogs.dir === null ? null : { dir: gauntletLogs.dir ?? join(dataDir, 'gauntlet-logs'), maxBytes: gauntletLogs.maxBytes, keep: gauntletLogs.keep } });
     await gauntlet.listen();
     if (publisherServices) await publisherServices.start({ gatewayPort: gauntlet.port });
     if (!relayPort && gauntletPort == null) log('gauntlet gateway has no RELAY_PORT or GAUNTLET_GATEWAY_PORT: reachable on this machine only');

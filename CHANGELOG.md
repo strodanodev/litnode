@@ -13,6 +13,13 @@ Protocol 4, unchanged. No contract, ruleset or bundle hash changes.
   outside the attested body, so the court's signature does not change, and `checkEnvelope` refuses one that names
   another match or ruleset. Before, `envelope()` kept a fixed field list and dropped it silently; Pickle Brawl's court
   added it back after `attest()`. **Courts: re-vendor `sdk/court` and pass `descriptor` to `attest()`.**
+- **Each hosted match's process output is kept** (`node/gauntlet.js` `openProcessLog`). A gauntlet server's stdout
+  and stderr go to `<DATA_DIR>/gauntlet-logs/<rulesetId>/<matchId>.log`, each line stamped and tagged `out|` or
+  `err|`, with a header and the exit code. The node kept only the last line, so a court's tick-health and settlement
+  lines from a live match were lost (Pickle Brawl follow-up, 23 Oct 2026). Bounded: 4 MB per file
+  (`GAUNTLET_LOG_MAX_MB`), the newest 100 per title (`GAUNTLET_LOG_KEEP`); `GAUNTLET_LOGS=0` keeps none. The gateway's
+  `/gateway` status names each running match's `log`. The child's environment, which holds the seat secret, is never
+  written.
 
 ### Fixed
 - **The Agent Fighter relay task no longer inherits the node's settings** (`portable/run-af-relay.cmd`). It loaded

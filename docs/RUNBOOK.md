@@ -169,10 +169,14 @@ pilot team's side:
    other.
 3. For a seed: `TUNNEL=quick` or a real address, and a delegated, funded
    announcer. Readers challenge `/whoami` before using it.
-4. To host gameplay without the publisher: `GAUNTLETS=agent-fighter.v1=…`
+4. To host gameplay without the publisher: `GAUNTLET_SERVERS=agent-fighter.v1`
    and `GAUNTLET_GATEWAY_PORT=8478` (OPERATORS.md step 6). The node runs
    Agent Fighter's match server per hosted match, with no database and no
-   publisher key.
+   publisher key. Each match's process output is kept in
+   `<DATA_DIR>/gauntlet-logs/<rulesetId>/<matchId>.log` (4 MB per file, the
+   newest 100 per title; `GAUNTLET_LOG_MAX_MB`, `GAUNTLET_LOG_KEEP`,
+   `GAUNTLET_LOGS=0` for none), and `/gateway` on the gateway port names each
+   running match's file. Read it first when a hosted match misbehaves.
 5. Check from your node: `/peers` shows it fresh, bonded and
    protocol-compatible; `npm run fleet` shows its telemetry; a placed
    match draws it; its attestations land on MatchBook.

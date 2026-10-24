@@ -157,6 +157,9 @@ node = await createNode({
   // GAUNTLET_SERVERS=<rulesetId>[=<bundle.tgz>],… — a title's match server fetched from the mesh by hash and run
   // here (docs/OPERATORS.md step 6; node/server-bundle.js). With a path: this operator's own bundle, served to peers.
   gauntletServers: parseServerOptIns(env.GAUNTLET_SERVERS, { root }),
+  // GAUNTLET_LOG_MAX_MB (4) caps each match's process log, GAUNTLET_LOG_KEEP (100) the logs kept per title, under
+  // <DATA_DIR>/gauntlet-logs/<rulesetId>/<matchId>.log; GAUNTLET_LOGS=0 keeps none.
+  gauntletLogs: env.GAUNTLET_LOGS === '0' ? { dir: null } : { maxBytes: Number(env.GAUNTLET_LOG_MAX_MB) > 0 ? Math.ceil(Number(env.GAUNTLET_LOG_MAX_MB) * 1024 * 1024) : undefined, keep: Number(env.GAUNTLET_LOG_KEEP) >= 1 ? Math.floor(Number(env.GAUNTLET_LOG_KEEP)) : undefined },
   // SERVICES=<bundle.json>,… — a publisher's long-lived backend run on this node (node/publisher-services.js).
   services: loadServiceBundles(env.SERVICES, { root }),
   // Universal login (docs/UNIVERSAL-LOGIN.md): on whenever PlayerProfile is set; AIR=0 turns it off.

@@ -7,13 +7,13 @@
  *    node --test demo/gauntlet.test.mjs */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { createNode } from '../node/litnode.js';
-import { mintTicket, verifyTicket, seatsFor, loadGauntletConfigs, createGauntlets, inheritedEnv } from '../node/gauntlet.js';
+import { mintTicket, verifyTicket, seatsFor, loadGauntletConfigs, createGauntlets, inheritedEnv, openProcessLog } from '../node/gauntlet.js';
 import { generateKeypair, seal } from '../protocol/keys.js';
 import { QUEUE_TAG, bucketOf, roomCodeFor } from '../protocol/pairing.js';
 import { signSeat } from '../protocol/challenge.js';
@@ -273,4 +273,52 @@ test('gauntlet: a title process inherits an allowlist of the node env, plus inhe
   assert.deepEqual(JSON.parse(seen[0].LITNODE_SEATS).map((s) => s.key ?? null), [key, null], 'a proven key passes; anything else is dropped');
   const [claims] = r.run.tickets['air-a'].ticket.split('.');
   assert.equal(JSON.parse(Buffer.from(claims, 'base64url')).key, key, 'and is signed into the seat ticket');
+});
+
+test('gauntlet logs: every line of a match process, stamped out|err, capped per file, the newest kept per title', async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'litg-log-'));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const l = openProcessLog(tmp, 'pickle-brawl.v1', 'ab'.repeat(32), { header: 'pickle-brawl.v1 test' });
+  l.write('out', 'tick 1\ntick 2\npart'); l.write('err', 'warn: slow tick\n'); l.write('out', 'ial\n');
+  l.close('exited 0');
+  await sleep(100);
+  const lines = readFileSync(l.path, 'utf8').trim().split('\n').map((s) => s.replace(/^\S+ /, ''));
+  assert.deepEqual(lines, ['log| pickle-brawl.v1 test', 'out| tick 1', 'out| tick 2', 'err| warn: slow tick', 'out| partial', 'log| exited 0'], 'a partial line waits for the rest of it');
+  assert.equal(l.path, join(tmp, 'pickle-brawl.v1', `${'ab'.repeat(32)}.log`));
+
+  const capped = openProcessLog(tmp, 'x.v1', 'big', { maxBytes: 300 });
+  for (let i = 0; i < 50; i++) capped.write('out', `line ${i} ${'.'.repeat(20)}\n`);
+  capped.close('exited 0');
+  await sleep(100);
+  const text = readFileSync(capped.path, 'utf8');
+  assert.ok(capped.truncated && text.length < 600, `stops near its cap (${text.length} bytes)`);
+  assert.match(text, /log\| truncated at 300 bytes/);
+  assert.doesNotMatch(text, /exited 0/, 'nothing after the cap');
+
+  const dir = join(tmp, 'rot.v1');
+  for (let i = 0; i < 5; i++) { const r = openProcessLog(tmp, 'rot.v1', `m${i}`, { keep: 3 }); r.close(); await sleep(50); const s = (Date.now() - (10 - i) * 60_000) / 1000; utimesSync(r.path, s, s); }
+  assert.deepEqual(readdirSync(dir).sort(), ['m2.log', 'm3.log', 'm4.log'], 'a title keeps its newest `keep` logs');
+  assert.equal(openProcessLog(tmp, '../evil', '../../x').path.startsWith(tmp), true, 'names cannot leave the log folder');
+});
+
+test('gauntlet logs: a court that crashes and one that runs both leave their output in <logs>/<rulesetId>/<matchId>.log', { timeout: 60_000 }, async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'litg-logs-'));
+  const base = { command: process.execPath, args: [FAKE], cwd: ROOT, env: { PORT: '${port}', COURT_TICKET_SECRET: '${secret}', LITNODE_SEATS: '${seats}' }, portRange: [7890, 7899], readyMs: 5000, ttlMs: 60_000, ticketTtlMs: 60_000 };
+  const g = createGauntlets({ configs: { 'crash.v1': { ...base, env: { ...base.env, FAKE_COURT_CRASH: '1' } }, 'ok.v1': base }, port: 0, nodeUrl: 'http://127.0.0.1:1', log: () => {}, logs: { dir: join(tmp, 'gauntlet-logs') } });
+  await g.listen();
+  t.after(async () => { await g.stopAll(); rmSync(tmp, { recursive: true, force: true }); });
+  const crashed = await g.start({ matchId: 'c'.repeat(64), rulesetId: 'crash.v1', participants: ['a', 'b'] });
+  assert.equal(crashed.state, 'failed');
+  await sleep(200);
+  const crashLog = readFileSync(join(tmp, 'gauntlet-logs', 'crash.v1', `${'c'.repeat(64)}.log`), 'utf8');
+  assert.match(crashLog, /err\| fake court: crashing on purpose/);
+  assert.match(crashLog, /log\| exited 3/);
+  const ok = await g.start({ matchId: 'd'.repeat(64), rulesetId: 'ok.v1', participants: ['a', 'b'] });
+  assert.equal(ok.state, 'up');
+  const row = g.status().active.find((a) => a.matchId === 'd'.repeat(64));
+  assert.equal(row.log, join(tmp, 'gauntlet-logs', 'ok.v1', `${'d'.repeat(64)}.log`));
+  assert.ok(await until(() => existsSync(row.log) && /out\| fake court on :\d+/.test(readFileSync(row.log, 'utf8')), 5000), 'the running court\'s stdout is in its log');
+  assert.doesNotMatch(readFileSync(row.log, 'utf8'), new RegExp(ok.secret), 'the seat secret is never written');
+  g.stop('d'.repeat(64), 'test');
+  assert.ok(await until(() => /exited .* \(stopped by the node\)/.test(readFileSync(row.log, 'utf8')), 5000));
 });

@@ -38,7 +38,8 @@ import { spawn } from 'node:child_process';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { createServer, request as httpRequest } from 'node:http';
 import { connect, createServer as createTcpServer } from 'node:net';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import { roomCodeFor } from '../protocol/pairing.js';
 import { newNonce, verifySeat, NONCE_RE } from '../protocol/challenge.js';
 import { seedFor } from '../protocol/placement.js';
@@ -59,6 +60,55 @@ export const inheritedEnv = (source, extra = []) => {
 };
 
 const ROOM_RE = /^\/(LIT-[0-9A-F]{32})(\/ticket)?\/?$/;
+
+/** Per-match process logs: <dir>/<rulesetId>/<matchId>.log, every stdout and stderr line of a title's process,
+ *  stamped and tagged out|err. The node used to keep only the last line (for its own error messages), so a court's
+ *  tick-health and settlement lines from a live match were gone (Pickle Brawl follow-up, 23 Oct 2026).
+ *  Bounded twice: a file stops at `maxBytes` with a note, and a title keeps its `keep` newest files. The child's
+ *  environment (which holds the seat secret) is never written; only what the process itself prints. */
+export const LOG_DEFAULTS = Object.freeze({ maxBytes: 4 * 1024 * 1024, keep: 100 });
+const safeName = (s) => String(s).replace(/[^\w.-]/g, '_').slice(0, 128) || '_';
+export function openProcessLog(dir, rulesetId, matchId, { maxBytes = LOG_DEFAULTS.maxBytes, keep = LOG_DEFAULTS.keep, header = '' } = {}) {
+  const folder = join(dir, safeName(rulesetId));
+  mkdirSync(folder, { recursive: true });
+  const path = join(folder, `${safeName(matchId)}.log`);
+  // rotation: this title keeps its `keep` newest logs, counting the one about to be written
+  try {
+    const old = readdirSync(folder).filter((f) => f.endsWith('.log') && join(folder, f) !== path)
+      .map((f) => { try { return { f, t: statSync(join(folder, f)).mtimeMs }; } catch { return null; } }).filter(Boolean)
+      .sort((a, b) => b.t - a.t);
+    for (const { f } of old.slice(Math.max(0, keep - 1))) { try { unlinkSync(join(folder, f)); } catch { /* in use or gone */ } }
+  } catch { /* unreadable folder: write anyway */ }
+  let out = null, bytes = 0, full = false, closed = false;
+  try { out = createWriteStream(path, { flags: 'a' }); out.on('error', () => { out = null; }); } catch { out = null; }
+  const put = (s) => {
+    if (!out || closed || full) return;
+    const n = Buffer.byteLength(s);
+    if (bytes + n > maxBytes) { full = true; out.write(`${new Date().toISOString()} log| truncated at ${maxBytes} bytes; the rest of this match's output is not kept\n`); return; }
+    bytes += n; out.write(s);
+  };
+  const carry = { out: '', err: '' };
+  const line = (tag, text) => put(`${new Date().toISOString()} ${tag}| ${text}\n`);
+  if (header) line('log', header);
+  return {
+    path,
+    /** A chunk from the child's `tag` stream (out | err); a partial last line waits for the next chunk. */
+    write(tag, chunk) {
+      const parts = (carry[tag] + String(chunk)).split(/\r?\n/);
+      carry[tag] = parts.pop();
+      for (const p of parts) line(tag, p);
+      if (carry[tag].length > 16_384) { line(tag, carry[tag]); carry[tag] = ''; } // a stream with no newlines still gets written
+    },
+    close(note = '') {
+      if (closed) return;
+      for (const tag of ['out', 'err']) if (carry[tag]) { line(tag, carry[tag]); carry[tag] = ''; }
+      if (note) line('log', note);
+      closed = true; try { out?.end(); } catch { /* gone */ }
+    },
+    get bytes() { return bytes; },
+    get truncated() { return full; },
+  };
+}
 
 /** PB-compatible join ticket: base64url(claims JSON) '.' base64url(HMAC-SHA256(payload, secret)). */
 export const mintTicket = (claims, secret) => { const payload = Buffer.from(JSON.stringify(claims)).toString('base64url'); return `${payload}.${createHmac('sha256', secret).update(payload).digest('base64url')}`; };
@@ -115,7 +165,8 @@ export function loadGauntletConfigs(spec, { root = process.cwd() } = {}) {
 const portFree = (port) => new Promise((res) => { const s = createTcpServer(); s.once('error', () => res(false)); s.listen(port, '127.0.0.1', () => s.close(() => res(true))); });
 const canConnect = (port) => new Promise((res) => { const s = connect(port, '127.0.0.1'); s.once('connect', () => { s.destroy(); res(true); }); s.once('error', () => res(false)); });
 
-export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', upstream = null, nodeUrl, wsAddr = () => null, nodeId = null, log = () => {}, emit = () => {}, spawnImpl = spawn, services = null }) {
+export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', upstream = null, nodeUrl, wsAddr = () => null, nodeId = null, log = () => {}, emit = () => {}, spawnImpl = spawn, services = null, logs = null }) {
+  // logs: { dir, maxBytes?, keep? } — where each match's process output is kept (openProcessLog); null keeps none
   const active = new Map();   // matchId → run
   const rooms = new Map();    // room → run
   const used = new Set();
@@ -152,10 +203,14 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
       const env = { ...inherited, ...Object.fromEntries(Object.entries(cfg.env).map(([k, v]) => [k, fill(v, vars)])), GAUNTLET_MATCH_ID: matchId, GAUNTLET_ROOM: room, GAUNTLET_PORT: String(run.port), GAUNTLET_SECRET: secret, GAUNTLET_SEATS: vars.seats, GAUNTLET_PUBLIC_URL: vars.publicUrl, GAUNTLET_NODE_URL: nodeUrl, GAUNTLET_MODE: mode, GAUNTLET_PLACED_MODE: vars.placedMode, GAUNTLET_SEED: seed, GAUNTLET_BUILD: vars.buildHash, GAUNTLET_RULESET: rulesetId, ...(cfg.stateDir ? { GAUNTLET_STATE_DIR: cfg.stateDir } : {}), ...(cfg.bundle ? { GAUNTLET_SERVER: cfg.bundle } : {}) };
       const child = spawnImpl(fill(cfg.command, vars), cfg.args.map((a) => fill(a, vars)), { cwd: cfg.cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
       run.child = child; run.pid = child.pid ?? null;
-      const tail = (d) => { const line = String(d).trim().split('\n').pop(); if (line) run.lastLine = line.slice(0, 200); };
-      child.stdout?.on('data', tail); child.stderr?.on('data', tail);
-      child.on('error', (e) => { run.lastError = e.message; run.state = 'failed'; log(`gauntlet ${rulesetId} ${matchId.slice(0, 12)}: ${e.message}`); });
-      child.on('exit', (code) => { run.exitCode = code; if (run.state !== 'stopped') { run.state = code === 0 ? 'exited' : 'failed'; emit('gauntlet', { matchId, rulesetId, state: run.state, code }); } used.delete(run.port); rooms.delete(room); clearTimeout(run.timer); });
+      if (logs?.dir) {
+        try { run.log = openProcessLog(logs.dir, rulesetId, matchId, { maxBytes: logs.maxBytes, keep: logs.keep, header: `${rulesetId} ${matchId} · ${direct ? 'direct' : 'placed'} ${mode} · ${seats.length} seats · port ${run.port} · pid ${run.pid ?? '?'}${cfg.bundle ? ` · server ${String(cfg.bundle).split(/[\\/]/).pop()}` : ''}` }); }
+        catch (e) { log(`gauntlet ${rulesetId} ${matchId.slice(0, 12)}: no process log (${e.message})`); }
+      }
+      const tail = (tag) => (d) => { const line = String(d).trim().split('\n').pop(); if (line) run.lastLine = line.slice(0, 200); run.log?.write(tag, d); };
+      child.stdout?.on('data', tail('out')); child.stderr?.on('data', tail('err'));
+      child.on('error', (e) => { run.lastError = e.message; run.state = 'failed'; run.log?.close(`spawn error: ${e.message}`); log(`gauntlet ${rulesetId} ${matchId.slice(0, 12)}: ${e.message}`); });
+      child.on('exit', (code, signal) => { run.exitCode = code; run.log?.close(`exited ${code ?? signal ?? '?'}${run.state === 'stopped' ? ' (stopped by the node)' : ''}`); if (run.state !== 'stopped') { run.state = code === 0 ? 'exited' : 'failed'; emit('gauntlet', { matchId, rulesetId, state: run.state, code }); } used.delete(run.port); rooms.delete(room); clearTimeout(run.timer); });
       const exp = Date.now() + cfg.ticketTtlMs;
       for (const s of seats) run.tickets[s.sub] = { ticket: mintTicket({ sub: s.sub, matchId, team: s.team, slot: s.slot, mode, exp, ...(s.key ? { key: s.key } : {}) }, secret), team: s.team, slot: s.slot, exp };
       const t0 = Date.now();
@@ -330,7 +385,7 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
     server.listen(port, host, () => { actualPort = server.address().port; log(`gauntlet gateway on :${actualPort}${upstream ? ` (unknown rooms → ${upstream})` : ''}: ${Object.keys(configs).join(', ') || 'no titles configured'}`); res(actualPort); });
   });
 
-  const status = () => ({ port: actualPort, upstream, titles: Object.keys(configs), bundles: Object.fromEntries(Object.entries(configs).filter(([, c]) => c.bundle).map(([rid, c]) => [rid, c.bundle])), services: services?.status() ?? [], active: [...active.values()].map((r) => ({ matchId: r.matchId, rulesetId: r.rulesetId, room: r.room, state: r.state, mode: r.mode, seats: r.seats.length, direct: !!r.direct, port: r.port, pid: r.pid, since: new Date(r.startedAt).toISOString(), lastError: r.lastError, exitCode: r.exitCode })) });
+  const status = () => ({ port: actualPort, upstream, titles: Object.keys(configs), bundles: Object.fromEntries(Object.entries(configs).filter(([, c]) => c.bundle).map(([rid, c]) => [rid, c.bundle])), services: services?.status() ?? [], active: [...active.values()].map((r) => ({ matchId: r.matchId, rulesetId: r.rulesetId, room: r.room, state: r.state, mode: r.mode, seats: r.seats.length, direct: !!r.direct, port: r.port, pid: r.pid, since: new Date(r.startedAt).toISOString(), lastError: r.lastError, exitCode: r.exitCode, log: r.log?.path ?? null })), logs: logs?.dir ?? null });
 
   /** Hooks the node calls. A placement is ours when it names this node as host. */
   const onPlaced = (d) => { if (configs[d.rulesetId] && (!nodeId || d.host === nodeId)) start({ matchId: d.matchId, rulesetId: d.rulesetId, participants: d.participants, mode: d.mode ?? null, beacon: d.beacon ?? null, buildHash: d.buildHash ?? null }).catch(() => {}); };
