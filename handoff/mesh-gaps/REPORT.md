@@ -31,6 +31,8 @@ Repro tests on this branch (they assert TODAY's behaviour, so the suite stays gr
 | `demo/gap-2-free-abort.test.mjs` | a participant's node is drawn as host/seat; an abandoned commit voids unslashed; one dissent voids below 13 operators | pass ×3, 5 s |
 | `demo/gap-3-ledger-host-only.test.mjs` | the host stops after settle → no attest → extended → escalating → unfed and never expired → Void, host unslashed | pass, 111 s |
 
+Full suite with the three files added to `npm test`: **271/271 pass, 0 skipped** (764 s; `publisher-offline` ran against the AF checkout).
+
 ---
 
 ## Gap 1: operator quorum is the real single point of failure
@@ -360,7 +362,8 @@ AF and PB releases (their sessions). At least one non-publisher operator opts in
 
 **Live consequence.**
 - FLOOD CONTROL's run at 24 Oct 06:44Z settled **`checkable`** (verifier `56cfff04`).
-- PB's last live match (`7ebcf551`, 23 Oct 15:46Z) is `attested`, settled before `11203288` was active. Every PB and FLOOD CONTROL result is casual and unplaced, with 0 co-signers.
+- PB's last live match (`7ebcf551`, 23 Oct 15:46Z) is `attested`. I did not read the block `11203288` was registered in, so whether it was active at 15:46Z is unknown. A PB match settled now should come out `checkable` wherever the settling node holds the log.
+- Every PB and FLOOD CONTROL result is casual and unplaced, with 0 co-signers.
 - **Risk:** PB master `35c14c3` changed movement code ("court keeping inside each movement step") without a new verifier pack. Promoting it to `pb-runtime` would make live courts name `11203288` while running a different game. Under a challenge (§11) that is an honest court that looks wrong. Rule: **pack and register the verifier before promoting a game build.**
 
 **What is unbuilt.**
@@ -401,6 +404,7 @@ function commitHostRoot(uint64 epoch, bytes32 root, uint32 count, bytes32 nodeKe
 | Failure | Answer |
 | --- | --- |
 | A host is offline at the hour's end | It may post late within `GRACE_EPOCHS`; after that its results stay local |
+| A late root changes an hour already anchored | EpochAnchor accepts proposals for hour *h* only after *h* + `GRACE_EPOCHS` (it already refuses unended hours, `freezeAt`), so every proposer folds the same root set |
 | A host omits a result (censorship) | Custodians co-signed it (§8). A custodian can post a complaint naming the delta, a later record |
 | A host includes fabrications | The host root is the host's word over results whose level is inside the leaf. An L1 leaf still needs a court signature to mean anything, so nothing is upgraded |
 | Equivocation | First write wins |
