@@ -24,7 +24,7 @@ export const AIR = { partnerId: '62e01755-138f-4e58-9cdc-fab71e037afd', buildEnv
  *  The token goes only to the origin of `url` (plus `origins`, if listed). `cover` is a capture of the game's own title screen
  *  (covers/, 960×540); `logo` is an optional overlay for covers whose logo is
  *  an HTML layer rather than part of the canvas. `rulesetId` links the title
- *  to the mesh (leaderboard, record); AFC has no ruleset on the node yet. */
+ *  to the mesh (leaderboard, record). */
 export const GAMES = [
   {
     id: 'agent-fighter',
@@ -72,15 +72,17 @@ export const GAMES = [
     title: 'ROBOT FIGHTING CHAMPIONSHIP',
     accent: '#8ce8ff',
     tagline: 'Humanoid mech combat. Bring a better loadout.',
-    description: 'AFC — deterministic, verifiable robot fighting. Every match re-simulates to the same hash, which is exactly what a witness node needs. Not on the mesh yet: the ruleset lands with the node sync.',
+    description: 'AFC — humanoid robot fighting. Every bout is re-simulated by the AFC host, which signs it; the node checks the rules and holds the match file, and anyone can re-run the registered verifier.',
     controls: ['Move: W A S D', 'Strike: J / K', 'Guard: L', 'Loadout in the garage'],
     modes: ['casual', 'garage', 'shop'],
     players: '1P',
     url: 'https://afc-pi-seven.vercel.app/',
     cover: './covers/afc.jpg',
-    // No ruleset yet: hosted by its studio, never labelled as settled on litVM (audit 2026-10-21 §4.3). The adapter
-    // (afc.v1, attested, L2 with its verifier) lands with the AFC hand-back; then this gets rulesetId and login.
-    status: 'external',
+    rulesetId: 'afc.v1',
+    buildHash: '6371d0f636f96abea14a7eafca8822448866396ddb7fa63d3cf3da916fb842fc',
+    kind: 'attested', // L1 until its verifier is registered; then the node derives `checkable` (L2) per bout
+    status: 'attested',
+    login: 'arcade', // AFC asks cabinet:air; the session is lent to this title's own origin only
     tags: ['THREE.JS', 'PWA', 'SCRAP / SILVER'],
     badge: 'afc-pi-seven.vercel.app',
     playable: true,

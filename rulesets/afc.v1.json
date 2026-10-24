@@ -1,0 +1,12 @@
+{
+  "rulesetId": "afc.v1",
+  "buildHash": "6371d0f636f96abea14a7eafca8822448866396ddb7fa63d3cf3da916fb842fc",
+  "bytes": 10645,
+  "kind": "attested",
+  "display": {
+    "title": "AFC",
+    "url": "https://afc-pi-seven.vercel.app",
+    "description": "Robot Fighting Championship: humanoid mechs, three 45-second rounds. Every bout is re-simulated by the AFC host before it settles."
+  },
+  "builtAt": "2026-10-24T07:35:39.988Z"
+}

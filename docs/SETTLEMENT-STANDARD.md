@@ -379,19 +379,23 @@ new build hash. Old results are never relabelled.
 
 ## 14. Conformance of the titles (0.12.0, after the 22 Oct hand-backs)
 
-| | Agent Fighter | Pickle Brawl | FLOOD CONTROL |
-| --- | --- | --- | --- |
-| Kind / level | replayable, L3 | attested; L2 once its verifier is registered | attested; L2 once its verifier is registered |
-| Build | `7414ddf3…4423` (af-core-9, from the deployed agent-fighter `29d4400`; replaces signed af-core-8 `859e7215…`) | `98d23e4e…90d1` | `b16bc0a2…1977` |
-| Identity | keys. The relay is casual-only and records a key only after its ledger signature verifies | keys for arcade-placed matches, and for matchmaker matches whose AIR profile holds the key; `pb:` otherwise | the arcade key when the shell signs the run (`cabinet:sign-run`); `fc:` otherwise |
-| `attestors` | — | court `09b2b849…7e23` | court `f82a5ef3…da87` |
-| Stats schema | kos, roundsWon, perfectRounds, damageDealt, supersLanded, throwTechs (sum); maxCombo (max); fastestKo (min, absent without a KO) | pointsWon, aces, winners, unforcedErrors, smashes, dinks, matchesMvp (sum); longestRally (max) | points, bestChain (max); stars, rescued, casualties, keptDry (whole percent), stormsSurvived (sum) |
-| Commitments / log | n/a (the ledger is the log) | `pb-court-inputs@1`, `pbstate1:` finalHash, verifier `e4cb7337…13b3` | `arc-runlog@1`, `arc-final@1` finalHash, verifier `56cfff04…0a57` |
-| Server bundle | gauntlet, `npm run bundle:server -- gauntlets/agent-fighter.server.json` | court (`gauntlets/pickle-brawl.json`, checkout) | none (Vercel board) |
-| Chain lifecycle | ranked through the gauntlet only | not yet | casual only |
+| | Agent Fighter | Pickle Brawl | FLOOD CONTROL | AFC |
+| --- | --- | --- | --- | --- |
+| Kind / level | replayable, L3 | attested; L2 once its verifier is registered | attested; L2 once its verifier is registered | attested; L2 once its verifier is registered |
+| Build | `7414ddf3…4423` (af-core-9, from the deployed agent-fighter `29d4400`; replaces signed af-core-8 `859e7215…`) | `98d23e4e…90d1` | `b16bc0a2…1977` | `6371d0f6…42fc` |
+| Identity | keys. The relay is casual-only and records a key only after its ledger signature verifies | keys for arcade-placed matches, and for matchmaker matches whose AIR profile holds the key; `pb:` otherwise | the arcade key when the shell signs the run (`cabinet:sign-run`); `fc:` otherwise | the arcade key when PlayerProfile binds it to the token's AIR account; `afc:<AIR sub>` otherwise; the house bot's corner has no participant |
+| `attestors` | — | court `09b2b849…7e23` | court `f82a5ef3…da87` | court `040bc3d9…c5b5` (a dedicated key in the AFC Vercel project's env) |
+| Stats schema | kos, roundsWon, perfectRounds, damageDealt, supersLanded, throwTechs (sum); maxCombo (max); fastestKo (min, absent without a KO) | pointsWon, aces, winners, unforcedErrors, smashes, dinks, matchesMvp (sum); longestRally (max) | points, bestChain (max); stars, rescued, casualties, keptDry (whole percent), stormsSurvived (sum) | kos, roundsWon, damageDealt, hits, parries (sum); maxCombo (max); fastestKoTicks (min, a KO win only) |
+| Commitments / log | n/a (the ledger is the log) | `pb-court-inputs@1`, `pbstate1:` finalHash, verifier `e4cb7337…13b3` | `arc-runlog@1`, `arc-final@1` finalHash, verifier `56cfff04…0a57` | `hmc-match@2` (the canonical match file), StreamHash finalHash (16 hex), verifier `14336181…e8e9` |
+| Server bundle | gauntlet, `npm run bundle:server -- gauntlets/agent-fighter.server.json` | court (`gauntlets/pickle-brawl.json`, checkout) | none (Vercel board) | none (a Vercel function re-simulates, pays and signs) |
+| Chain lifecycle | ranked through the gauntlet only | not yet | casual only | casual only |
 
-AFC joins later: attested, `hmc-match@2` log, L2 planned (§13 applies
-unchanged).
+AFC (`afc.v1`, 24 Oct 2026) is casual-only: a bout against the house bot has one
+participant (`teams [[p], []]`), and ranked attested AFC waits for keys on both
+seats plus a gear-sterility rule. Each seat's `loadoutHash` (the resolved robot
+after gear) is in the signed report, so the committed result names the gear that
+produced it. Its ruleset `6371d0f6…42fc` and verifier `14336181…e8e9` are not
+registered yet; §13 applies unchanged.
 
 **Hashes registered with this release.** Agent Fighter ruleset `7414ddf3…4423`
 and server bundle `e8d8f22b…02fd` (built here from agent-fighter `29d4400`;
