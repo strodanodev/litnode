@@ -1612,10 +1612,11 @@ export async function createNode({
       }
       if (req.method === 'GET' && url.pathname.startsWith('/delta/')) {
         const id = decodeURIComponent(url.pathname.slice(7));
-        const d = settlement.delta(id);
+        // this node's own result, else a seat's custody copy — which a results screen reads with ?chain=1 too
+        const d = settlement.delta(id) ?? mbook?.held(id)?.delta ?? null;
         // ?chain=1: the same chain view /deltas gives, so a results screen can tell "final on MatchBook" from one
         // route. Opt-in: witnesses and custodians fetch the delta itself here, and must get it unannotated.
-        if (!d) { const c = mbook?.held(id)?.delta ?? null; return c ? json(res, 200, c) : json(res, 404, { error: 'unknown match' }); }
+        if (!d) return json(res, 404, { error: 'unknown match' });
         return json(res, 200, url.searchParams.get('chain') === '1' ? withChain([d])[0] : d);
       }
       // Settlement v4: the exact log bytes a court committed (report.commitments.inputsHash), content-addressed.

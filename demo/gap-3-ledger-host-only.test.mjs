@@ -98,6 +98,13 @@ test('gap 3 (fixed): a host that stops right after settle — its seats already 
   const fin = await until(() => m.ev('Finalized')[0] ?? null, 90_000);
   assert.ok(fin, 'a seat finalized in the dead host\'s place'); assert.equal(fin.status, 'final'); assert.equal(fin.finalHash, st.resultHash);
   assert.equal(m.ev('Escalating').length, 0, 'nothing to escalate');
+  // a results screen asking a seat (AF proof.ts: GET /delta/<id>?chain=1) gets the custody copy with the chain's verdict
+  const view = await until(async () => {
+    for (const s of m.seats) { const r = await fetch(`${s.addr}/delta/${m.key}?chain=1`); if (r.ok) { const v = await r.json(); if (v.chain === 'final') return v; } }
+    return null;
+  }, 20_000);
+  assert.ok(view, 'a seat serves its custody copy annotated: chain final');
+  assert.equal(view.resultHash, st.resultHash);
 });
 
 test('gap 3 (fixed): with no holder at all, the seats expire the unfed escalation themselves — Void, nobody slashed', { timeout: 300_000 }, async (t) => {

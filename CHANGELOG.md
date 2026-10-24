@@ -27,7 +27,9 @@ secrets rule.
 - **Any-holder fetch.** A seat witnessing a settled match takes the delta and the ledger from its own custody copy,
   then the host, the custodians on the Settled event and the other seats, each with a 15 s timeout. The ledger must
   hash to the chain's `ledgerHash`, so any source is as good as the host. A seat keeps what it verified and serves it
-  at `GET /ledger/<id>` and `/delta/<id>`. Its custody copy also feeds `escalate()` and the anchored stats of a final
+  at `GET /ledger/<id>` and `/delta/<id>`; `/delta/<id>?chain=1` annotates a custody copy with the chain's status as it
+  does the node's own results, so a results screen (Agent Fighter's `proof.ts`) asking a seat sees "final", not a bare
+  delta. Its custody copy also feeds `escalate()` and the anchored stats of a final
   match. Copies go when a match ends void, 48 h after it goes final, and after a week in any case.
 - **`GET /peers` names each key's staking wallet and witness eligibility** (`wallet`, `witnessEligible`): the
   chain's word, beside the `operator` label the node chose for itself.
