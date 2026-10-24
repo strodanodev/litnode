@@ -18,7 +18,7 @@ Live reads were made on 24 Oct 2026, 10:00–11:30Z. Sources: the desktop node's
 **Order of work.**
 
 1. **Operators (gap 1, user/ops):** a protocol-4 Control Plane, unbonding the dormant Termux stake, and three NAT'd witness operators. Without these nothing ranked happens, every dispute voids and no hourly root finalizes.
-2. **litnode 0.12.2, node release, no protocol change:** gap 3 (a) custody before settle, (b) any-holder fetch, (e) seats expire unfed escalations; and gap 1's `rankedShortfall()` counting staking wallets.
+2. **litnode 0.12.2, node release, no protocol change:** gap 3 (a) custody before settle, (b) any-holder fetch, (e) seats expire unfed escalations; and gap 1's `rankedShortfall()` counting staking wallets. **Built 25 Oct on this branch** (9e2b7a5, cc013c3, 5873939, 3600b39): not released. See "Status: built in 0.12.2" under gap 3.
 3. **Protocol 5 + contract generation 5, one migration:** gap 2 (reliability counters + participant exclusion) together with gap 5 §12 host roots. Bundle it with the pending gen-4 deploy, so operators re-bond and re-enrol once.
 
 **Before the economy carries real value:** gap 6's crediting cron (studio repos, no litnode change). After that: gap 4 (title releases) and gap 5 §11 (L).
@@ -227,6 +227,18 @@ The on-chain `ledgerHash` makes any source safe, so every option is a liveness c
 ### What the user must do
 
 Release and register litnode 0.12.2; update the desktop and m16.
+
+### Status: built in 0.12.2 (25 Oct, this branch, unreleased)
+
+- **(a) Custody before settle:** `node/matchbook.js` `settle`, `settleHeld`, `acceptReceipt`, `absorbCustody`, `takeCustody`, plus `POST /custody` and the gossip `custody` field in `node/litnode.js`.
+  - The host waits for receipts from at most 2 seats, and counts only seats whose heartbeat carries `custody: 1`.
+  - It settles at the second receipt, or after `custodyHold` (120 s), never later than the settle window less 30 s.
+  - With 0.12.0 or 0.12.1 seats it settles at once, as before.
+- **(b) Any-holder fetch:** `fetchSettled`. The seat tries its own copy, then the host, the Settled custodians and the panel. The ledger must hash to the chain's.
+- **(e) Expiry:** `drive()` calls `expire()` on an escalating duty past `feedBy`, or once the seed block is out of reach.
+- **Tests:**
+  - `demo/gap-3-ledger-host-only.test.mjs` now asserts the fix. A host that dies after settle still goes Final. With no holder at all, the seats expire the match and it ends Void.
+  - `demo/custody-before-settle.test.mjs` covers the mixed fleet and the hold bound.
 
 ---
 
