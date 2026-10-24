@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createNode } from '../node/litnode.js';
-import { generateKeypair, sign, verify, signingBytes as protoSigningBytes } from '../protocol/keys.js';
+import { generateKeypair, sign, verify, seal, signingBytes as protoSigningBytes } from '../protocol/keys.js';
 import { canonical as protoCanonical } from '../protocol/canonical.js';
 import { selector } from '../protocol/keccak.js';
 import { KEYS, ENTRY_OF } from '../protocol/directory.js';
@@ -234,6 +234,24 @@ test('settle against mocked nodes: log only for protocol >= 4, 429 retried, alre
   assert.equal(lost.status, 'unreachable'); assert.match(lost.error, /RPC unavailable/);
 });
 
+test('envelope / attest carry the placement descriptor outside the signed body, and refuse one for another match', async () => {
+  const kp = await generateKeypair(), placer = await generateKeypair();
+  const report = pbReport('court-desc-1');
+  const fields = { matchId: 'court-desc-1', rulesetId: 'pickle-brawl.v1', ...seats(report), report };
+  const descriptor = await seal('match', { matchId: 'court-desc-1', rulesetId: 'pickle-brawl.v1', host: 'ab'.repeat(32), computedBy: placer.publicKey }, placer);
+  const plain = await attest(fields, kp), carried = await attest({ ...fields, descriptor }, kp);
+  assert.equal('descriptor' in plain, false, 'absent unless given');
+  assert.deepEqual(carried.descriptor, descriptor);
+  assert.equal(carried.attestor.sig, plain.attestor.sig, 'the court signs the same body either way');
+  assert.equal(await court.verifyEnvelope(carried), true);
+  assert.deepEqual(envelope({ ...fields, attestor: plain.attestor, descriptor: null }), plain, 'null is no descriptor');
+  const other = await seal('match', { ...descriptor.body, matchId: 'court-desc-2' }, placer);
+  await assert.rejects(attest({ ...fields, descriptor: other }, kp), /descriptor names match court-desc-2/);
+  await assert.rejects(attest({ ...fields, descriptor: { ...descriptor, body: { ...descriptor.body, rulesetId: 'flood-control.v1' } } }, kp), /descriptor names ruleset flood-control\.v1/);
+  assert.match(court.checkEnvelope({ ...plain, descriptor: { body: descriptor.body } }).join(';'), /signer 64 hex and sig 128 hex/);
+  assert.match(court.checkEnvelope({ ...plain, descriptor: 'x' }).join(';'), /placement envelope/);
+});
+
 test('end to end on a real node: v3-shaped report and one with commitments + stats settle `attested`; resend is already; refusals', { timeout: 60_000 }, async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), 'litnode-court-'));
   const kp = await generateKeypair();
@@ -263,6 +281,22 @@ test('end to end on a real node: v3-shaped report and one with commitments + sta
   assert.equal(r2.delta.scores['pb:air:bo'], 11);
   const ledger = await (await fetch(`${node.addr}/ledger/court-e2e-2`)).json();
   assert.deepEqual(ledger.report.commitments, report.commitments); assert.deepEqual(ledger.report.stats, report.stats);
+
+  // a placement descriptor rides beside the signed report and reaches the node's binding (node/settle.js bind).
+  // This offline mesh has no stake table, so any signed casual placement naming this host binds; on a chain the
+  // placer must also be bonded at the pinned block, and a ranked id must be what its beacon derives.
+  const placement = (id, host) => seal('match', { matchId: id, rulesetId: 'pickle-brawl.v1', host, computedBy: stranger.publicKey, participants: seats(pbReport(id)).participants, mode: 'casual', protocol: node.protocol }, stranger);
+  const e7 = await attest({ matchId: 'court-e2e-7', rulesetId: 'pickle-brawl.v1', ...seats(pbReport('court-e2e-7')), report: pbReport('court-e2e-7'), descriptor: await placement('court-e2e-7', node.nodeId) }, kp);
+  assert.equal(await court.verifyEnvelope(e7), true, 'the descriptor is outside the attested body');
+  const s7 = await settle(e7, { node: node.addr });
+  assert.equal(s7.status, 'settled', JSON.stringify(s7));
+  assert.equal(s7.delta.placed, true, 'the node bound the report to the placement it carried');
+  const ledger7 = await (await fetch(`${node.addr}/ledger/court-e2e-7`)).json();
+  assert.deepEqual(ledger7.descriptor, e7.descriptor, 'the ledger keeps the envelope it bound to');
+  // one naming another host is the node's to refuse: the descriptor is read, not dropped on the way
+  const e8 = await attest({ matchId: 'court-e2e-8', rulesetId: 'pickle-brawl.v1', ...seats(pbReport('court-e2e-8')), report: pbReport('court-e2e-8'), descriptor: await placement('court-e2e-8', witness.nodeId) }, kp);
+  const s8 = await settle(e8, { node: node.addr });
+  assert.equal(s8.status, 'refused'); assert.match(s8.error, /placement names host/);
 
   const bad = await settle(await make(pbReport('court-e2e-3', 11, 10)), { node: node.addr });
   assert.equal(bad.status, 'refused'); assert.match(bad.error, /win by two/);

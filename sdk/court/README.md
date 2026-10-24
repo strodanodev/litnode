@@ -40,8 +40,8 @@ const r = await settle(env, { log: logBytes }); // node: 'auto' finds a live set
 **Signing**
 - `canonical(value) → string`
 - `signReport({ matchId, rulesetId, report }, identity) → Promise<{ id, sig }>` — `identity` is `{ publicKey, privateKey }` (64-hex each, the raw ed25519 seed) or `{ publicKey, sign(bytes) }` for a key in a KMS/HSM. A key file whose two halves do not belong together is refused here, not by every node later.
-- `envelope({ matchId, rulesetId, mode = 'casual', participants, teams?, report, attestor, meta? }) → object` — throws a `TypeError` listing every problem (`checkEnvelope` returns them instead).
-- `attest(fields, identity) → Promise<envelope>` — `signReport` + `envelope`.
+- `envelope({ matchId, rulesetId, mode = 'casual', participants, teams?, report, attestor, meta?, descriptor? }) → object` — throws a `TypeError` listing every problem (`checkEnvelope` returns them instead). `descriptor` is the placement's signed envelope (`GET /match` `envelope`, or the arcade's `cabinet:init.match.descriptor`); it rides outside the signed body, must name this match and ruleset, and lets a placed report bind after the host's match book let the placement go. The node verifies it itself.
+- `attest(fields, identity) → Promise<envelope>` — `signReport` + `envelope`; `descriptor` passes through.
 - `checkReport(report, participants?) → string[]` — the v4 `commitments` / `stats` shape; the rest of the report is your ruleset's business.
 - `verifyEnvelope(env)`, `verifySignature(tag, body, sig, publicKey)` — the node's check, for your tests.
 

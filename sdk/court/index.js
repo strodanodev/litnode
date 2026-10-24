@@ -221,13 +221,29 @@ export function checkEnvelope(env) {
   }
   e.push(...checkReport(env.report, Array.isArray(ps) ? ps : null));
   if (!HEX64.test(env.attestor?.id ?? '') || !HEX128.test(env.attestor?.sig ?? '')) e.push('attestor: { id: 64 hex, sig: 128 hex } (signReport)');
+  if (env.descriptor != null) e.push(...descriptorProblems(env.descriptor, env));
+  return e;
+}
+
+/** A placement descriptor the envelope carries: the placing node's signed envelope `{ body, signer, sig }`, as
+ *  GET /match serves it (`envelope`) and the arcade forwards it (`cabinet:init.match.descriptor`). Checked for shape
+ *  and for naming THIS match only; the node verifies the signature, the placer's bond and the beacon itself. */
+function descriptorProblems(d, env) {
+  if (!isObj(d) || !isObj(d.body)) return ['descriptor: the placement envelope { body, signer, sig } GET /match served'];
+  const e = [];
+  if (!HEX64.test(d.signer ?? '') || !HEX128.test(d.sig ?? '')) e.push('descriptor: signer 64 hex and sig 128 hex');
+  if (d.body.matchId !== env.matchId) e.push(`descriptor names match ${String(d.body.matchId).slice(0, 16)}, not ${String(env.matchId).slice(0, 16)}`);
+  if (d.body.rulesetId !== env.rulesetId) e.push(`descriptor names ruleset ${d.body.rulesetId}, not ${env.rulesetId}`);
   return e;
 }
 
 /** The attested envelope POST /ledger takes. Throws a TypeError listing every problem. `log` is never part
- *  of it: settle() attaches the log only for a node that takes one. `meta` rides beside the match unsigned. */
-export function envelope({ matchId, rulesetId, mode = 'casual', participants, teams, report, attestor, meta }) {
-  const env = { kind: 'attested', matchId, rulesetId, mode, participants, ...(teams !== undefined ? { teams } : {}), report, attestor, ...(meta !== undefined ? { meta } : {}) };
+ *  of it: settle() attaches the log only for a node that takes one. `meta` rides beside the match unsigned.
+ *  `descriptor` (the placement's signed envelope) rides beside it too: it is the placing node's signature, not the
+ *  court's, so it is outside the attested body, and with it a ranked report binds even after the host's match book
+ *  replaced, pruned or (a restart) lost the placement. */
+export function envelope({ matchId, rulesetId, mode = 'casual', participants, teams, report, attestor, meta, descriptor }) {
+  const env = { kind: 'attested', matchId, rulesetId, mode, participants, ...(teams !== undefined ? { teams } : {}), report, attestor, ...(meta !== undefined ? { meta } : {}), ...(descriptor != null ? { descriptor } : {}) };
   const errs = checkEnvelope(env);
   if (errs.length) throw new TypeError(`envelope: ${errs.join('; ')}`);
   return env;

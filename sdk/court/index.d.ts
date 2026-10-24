@@ -48,6 +48,14 @@ export interface Envelope {
   report: Report;
   attestor: Attestor;
   meta?: Record<string, unknown>;
+  descriptor?: PlacementEnvelope;
+}
+/** The placing node's signed placement, as GET /match serves it (`envelope`) and the arcade forwards it
+ *  (`cabinet:init.match.descriptor`). Outside the attested body: the node verifies it on its own. */
+export interface PlacementEnvelope {
+  body: { matchId: string; rulesetId: string; [field: string]: unknown };
+  signer: string;
+  sig: string;
 }
 export interface EnvelopeFields {
   matchId: string;
@@ -57,6 +65,8 @@ export interface EnvelopeFields {
   teams?: [string[], string[]];
   report: Report;
   meta?: Record<string, unknown>;
+  /** Carry it for a placed match: a ranked report then binds even after the host's book lost the placement. */
+  descriptor?: PlacementEnvelope | null;
 }
 
 export function canonical(value: unknown): string;
