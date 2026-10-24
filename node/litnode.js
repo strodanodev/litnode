@@ -29,6 +29,7 @@ import { createTunnel } from './tunnel.js';
 import { createGauntlets } from './gauntlet.js';
 import { openBundle, writeFiles, configFromBundle, runtimeOk, permanent, MANIFEST_NAME, MAX_BUNDLE_BYTES } from './server-bundle.js';
 import { createServices as createPublisherServices } from './publisher-services.js';
+import { policyOf, scanDataDir } from './secrets.js';
 import { keepMapped } from './upnp.js';
 import { createAnnouncer } from './announce.js';
 import { createAirVerifier } from './air.js';
@@ -179,6 +180,9 @@ export async function createNode({
   // Each match's process output, kept per title under <dataDir>/gauntlet-logs (node/gauntlet.js openProcessLog):
   // { maxBytes, keep } override the size cap per file and the files kept per title; { dir: null } keeps none.
   gauntletLogs = {},
+  // Secrets rule (node/secrets.js, docs/SETTLEMENT-ARCHITECTURE.md §11): 'warn' reports a publisher secret in a
+  // service's or gauntlet's environment; 'strict' (Season 0) refuses to start that process.
+  secretsPolicy = 'warn',
   // Server bundles (node/server-bundle.js): a gauntlet title's match server as a hashed artifact.
   // { rulesetId: null } opts in to fetching the title's bundle from peers (admitted by TitleRegistry or a
   // TRUSTED_PUBLISHERS signature) and running it; { rulesetId: '<path>.tgz' } is this operator's own file (the
@@ -940,6 +944,15 @@ export async function createNode({
     return s;
   };
 
+  // ---------------------------------------------------------------- secrets (node/secrets.js)
+  // Names and paths only, never values. The data folder is rescanned at most every 10 minutes.
+  let dataScan = { at: 0, findings: [] };
+  const secretsStatus = () => {
+    if (Date.now() - dataScan.at > 600_000) dataScan = { at: Date.now(), findings: scanDataDir(dataDir) };
+    const services = (publisherServices?.status() ?? []).filter((x) => x.secrets?.length).map((x) => ({ name: x.name, secrets: x.secrets }));
+    return { policy: policyOf(secretsPolicy), clean: !dataScan.findings.length && !services.length, dataDir: dataScan.findings.map(({ path, kind }) => ({ path, kind })), services };
+  };
+
   // ---------------------------------------------------------------- hydration by hash
   const hydrateMissing = async (s) => {
     for (const [rid, m] of Object.entries(s.manifests)) {
@@ -1430,7 +1443,7 @@ export async function createNode({
           // v3 bond: witnessEligible, delegate, bondedSince; `admin` says whether NodeStake's admin is a multisig/timelock ('contract') or a wallet ('eoa'). null = v2 contract or unread.
           bond: myBond ? { eligible: myBond.eligible, delegate: myBond.delegate, bondedSince: myBond.bondedSince ? new Date(myBond.bondedSince * 1000).toISOString() : null, unbondAt: myBond.unbondAt ? new Date(myBond.unbondAt * 1000).toISOString() : null, amount: myBond.amount.toString() } : null,
           admin: stakeAdmin === null ? null : stakeAdmin ? 'contract' : 'eoa', matchBook: mbook ? mbook.status() : matchBookAddr ? { contract: matchBookAddr, offline: true } : null, chain: chain.status(), profiles: profileState(), version, repair: sdkMissing, update: updater.status(),
-          sandbox: sandbox.status(), trust: { policy: titleTrust, publishers: trustedPublishers, titleRegistry: titleRegistry ?? null, relayKeys, courts: Object.keys(courts) }, registry: registry ? 'chain' : erc6699 ? 'offline' : 'unset',
+          sandbox: sandbox.status(), secrets: secretsStatus(), trust: { policy: titleTrust, publishers: trustedPublishers, titleRegistry: titleRegistry ?? null, relayKeys, courts: Object.keys(courts) }, registry: registry ? 'chain' : erc6699 ? 'offline' : 'unset',
           cabinet: { version: CABINET_VERSION }, // the copy this node serves at /; a cabinet loaded from elsewhere compares its own
           relay: relayFront ? relayStatus() : null, // the relay tunnel as a WebSocket client sees it: verified before it is advertised
           wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, upnp: upnpCtl?.status() ?? null, gauntlet: gauntlet?.status() ?? null, gauntletServers: Object.keys(gauntletServers).length || servers.size ? serverStatus() : null, guardian: (({ matches, reports, flagged }) => ({ matches, reports, flagged: flagged.length }))(guardianSummary()),
@@ -1854,9 +1867,9 @@ export async function createNode({
   addr ??= `http://${host}:${actualPort}`;
   lanAddr = addr;
   if (runsGateway) {
-    if (serviceBundles.length) publisherServices = createPublisherServices({ bundles: serviceBundles, nodeUrl: `http://127.0.0.1:${actualPort}`, publicBase: () => wsAddr, log, emit });
+    if (serviceBundles.length) publisherServices = createPublisherServices({ bundles: serviceBundles, nodeUrl: `http://127.0.0.1:${actualPort}`, publicBase: () => wsAddr, log, emit, secretsPolicy });
     const upstream = gauntletUpstream ?? (gauntletPort != null && relayPort && gauntletPort !== relayPort ? `ws://127.0.0.1:${relayPort}` : null);
-    gauntlet = createGauntlets({ configs: gauntlets, port: gauntletPort ?? relayPort ?? 0, upstream, nodeUrl: `http://127.0.0.1:${actualPort}`, wsAddr: () => wsAddr, nodeId, log, emit, services: publisherServices,
+    gauntlet = createGauntlets({ configs: gauntlets, port: gauntletPort ?? relayPort ?? 0, upstream, nodeUrl: `http://127.0.0.1:${actualPort}`, wsAddr: () => wsAddr, nodeId, log, emit, services: publisherServices, secretsPolicy,
       logs: gauntletLogs.dir === null ? null : { dir: gauntletLogs.dir ?? join(dataDir, 'gauntlet-logs'), maxBytes: gauntletLogs.maxBytes, keep: gauntletLogs.keep } });
     await gauntlet.listen();
     if (publisherServices) await publisherServices.start({ gatewayPort: gauntlet.port });

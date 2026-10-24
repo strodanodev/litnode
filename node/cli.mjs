@@ -160,6 +160,9 @@ node = await createNode({
   // GAUNTLET_LOG_MAX_MB (4) caps each match's process log, GAUNTLET_LOG_KEEP (100) the logs kept per title, under
   // <DATA_DIR>/gauntlet-logs/<rulesetId>/<matchId>.log; GAUNTLET_LOGS=0 keeps none.
   gauntletLogs: env.GAUNTLET_LOGS === '0' ? { dir: null } : { maxBytes: Number(env.GAUNTLET_LOG_MAX_MB) > 0 ? Math.ceil(Number(env.GAUNTLET_LOG_MAX_MB) * 1024 * 1024) : undefined, keep: Number(env.GAUNTLET_LOG_KEEP) >= 1 ? Math.floor(Number(env.GAUNTLET_LOG_KEEP)) : undefined },
+  // SECRETS_POLICY=warn|strict (node/secrets.js): strict refuses to start a service or gauntlet whose environment
+  // carries a publisher secret. warn (the default until Season 0) logs it and reports it on /health.secrets.
+  secretsPolicy: env.SECRETS_POLICY ?? 'warn',
   // SERVICES=<bundle.json>,… — a publisher's long-lived backend run on this node (node/publisher-services.js).
   services: loadServiceBundles(env.SERVICES, { root }),
   // Universal login (docs/UNIVERSAL-LOGIN.md): on whenever PlayerProfile is set; AIR=0 turns it off.

@@ -313,8 +313,15 @@ hosts nothing but static files. `node/publisher-services.js`; tested by
   `GAUNTLET_GATEWAY_PORT=8478` when the node also fronts a title relay on
   `RELAY_PORT` (every path the gateway does not own, HTTP included, still
   reaches that relay). A bundle names a `prefix`, a `cwd`, `envFiles` (the
-  studio's own `.env` files on that machine; secrets never leave it,
-  operator keys are never passed) and `services`: `command`, `args`, `env`.
+  studio's own `.env` files on that machine; operator keys are never
+  passed), `inheritEnv` (names of the node's own variables a service may
+  see; otherwise it gets only the OS basics, from 0.13.0) and `services`:
+  `command`, `args`, `env`. **Secrets are on their way out of this path**
+  (docs/SETTLEMENT-STANDARD.md §18): a service whose env carries a
+  secret-shaped name is reported now, and Season 0 nodes
+  (`SECRETS_POLICY=strict`) refuse to start it. A backend that needs a
+  database key or a signing key runs in the studio's managed env (Vercel),
+  not on a node.
   Variables: `${port}`, `${node}`, `${nodeUrl}`, `${local:<name>}` (another
   service on loopback), `${public:<name>}` / `${publicHttp:<name>}` (its
   public address).
