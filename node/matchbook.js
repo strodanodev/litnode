@@ -81,6 +81,7 @@ const CUSTODY_MAX_BYTES = 8 << 20;    // a delta or ledger a seat will take into
 const CUSTODY_RETRY_MS = 5_000;       // a seat that failed to take custody asks again after this
 const CUSTODY_KEEP_MS = 48 * 3600_000; // a custody copy outlives its FINAL match this long (stats are resolved from it)
 const FETCH_TIMEOUT_MS = 15_000;
+const CUSTODIANS_ASKED = 8;           // custodians from a Settled event a seat tries, after the host and before the panel
 
 export function createMatchBook({
   dataDir, nodeId, contract, stakeContract = null, epochAnchor = null, chainId, rpc, fromBlock = 0, log = () => {}, emit = () => {},
@@ -396,7 +397,7 @@ export function createMatchBook({
       if (e.event === 'Finalized') { if (!replaying) noteFinal(e, d); duties.delete(e.matchId); ledgers.delete(e.matchId); }
       if (!replaying) saveDuties();
     }
-    if (e.event === 'Finalized' && e.status !== 'final') dropHeld(e.matchId); // a void match's custody copy serves nobody
+    if (e.event === 'Finalized') { receipted.delete(e.matchId); custodyTaking.delete(e.matchId); if (e.status !== 'final') dropHeld(e.matchId); } // a void match's custody copy serves nobody
     if (e.event === 'Escalated') escalation.set(e.matchId, { panel: e.panel, at: Date.now() });
     if (e.event === 'Finalized' && !replaying) emit('chain-final', { matchId: e.matchId, status: e.status, finalHash: e.finalHash });
   };
@@ -624,7 +625,8 @@ export function createMatchBook({
     const mine = held(s.matchId);
     if (mine && mb.ledgerHash(mine.ledger) === s.ledgerHash) { ledger = mine.ledger; take(mine.delta); }
     const why = [];
-    const holders = [...new Set([p?.hostKey ?? s.hostKey, ...(s.custodians ?? []), ...(p?.panel ?? [])])].filter((k) => k && k !== nodeId);
+    // the host writes the custodians: a few are worth asking, a list of every peer is not
+    const holders = [...new Set([p?.hostKey ?? s.hostKey, ...(s.custodians ?? []).slice(0, CUSTODIANS_ASKED), ...(p?.panel ?? [])])].filter((k) => k && k !== nodeId);
     for (const k of holders) {
       if (ledger && delta) break;
       const a = hostAddr(k);
