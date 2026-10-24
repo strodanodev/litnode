@@ -21,6 +21,8 @@ change. Gap 3 of `handoff/mesh-gaps/REPORT.md` (options a, b and e) and the arca
     host never asks, and 0.12.2 seats witness it from the Settled event as before.
   - While the host holds a settle for custody, the player's `POST /ledger` answers at once. It does not wait for
     the receipts or the settle transaction.
+  - `/health` `matchBook.custody` reports `{ hold, waiting, held }`: the hold in seconds, the settles held now, and
+    the custody copies this node keeps as a seat. `matchBook.windows` still lists only the contract's windows.
 - **Any-holder fetch.** A seat witnessing a settled match takes the delta and the ledger from its own custody copy,
   then the host, the custodians on the Settled event and the other seats, each with a 15 s timeout. The ledger must
   hash to the chain's `ledgerHash`, so any source is as good as the host. A seat keeps what it verified and serves it

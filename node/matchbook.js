@@ -71,7 +71,7 @@ const PARAMS_TTL_MS = 3600_000;      // the windows are read from the contract, 
 const REFUND_HOST_DELAY_MS = 5_000;   // the host claims a FINAL match's gas refund this long after the event
 const REFUND_STAGGER_MS = 120_000;    // seat i claims in its place, if still unclaimed, (i + 1) × this later
 // Custody before settle (0.12.2, handoff/mesh-gaps/REPORT.md gap 3): the host holds its settle until CUSTODY_NEED seats
-// say they hold the ledger, or windows.custodyHold seconds pass, whichever comes first — and never past the settle
+// say they hold the ledger, or custodyHold seconds pass, whichever comes first — and never past the settle
 // window less CUSTODY_SETTLE_MARGIN_S. Only seats whose heartbeat says they take custody count: a fleet of 0.12.0 and
 // 0.12.1 seats needs none, and the host settles at once, as before.
 const CUSTODY_NEED = 2;
@@ -97,7 +97,9 @@ export function createMatchBook({
   // node's signed receipt envelope }. null = a node that neither waits for custody nor takes it (as 0.12.1).
   custody = null,
 }) {
-  const windows = { settleWindow: 1800, custodyHold: 120, ...windowsIn };
+  // custodyHold is this node's own setting (matchBookWindows.custodyHold, seconds), not one of the contract's windows
+  const { custodyHold = 120, ...contractWindows } = windowsIn;
+  const windows = { settleWindow: 1800, ...contractWindows };
   const keyPath = join(dataDir, 'announcer.json');
   const key = existsSync(keyPath) ? JSON.parse(readFileSync(keyPath, 'utf8')) : { privateKey: randomPrivateKey() };
   if (!existsSync(keyPath)) writeFileSync(keyPath, JSON.stringify(key, null, 2) + '\n');
@@ -253,10 +255,10 @@ export function createMatchBook({
     }
     const panel = panels.get(key)?.panel ?? ledger.descriptor?.body?.panel ?? [];
     const need = custody ? Math.min(CUSTODY_NEED, panel.filter((k) => custody.capable(k)).length) : 0;
-    if (need > 0 && windows.custodyHold > 0) {
+    if (need > 0 && custodyHold > 0) {
       const d = duty(key, delta.matchId, 'host', null);
       const committedAt = d.status !== 'none' ? clockOf(d, d.committedAt) : commitAt.get(key) ?? Date.now();
-      const until = Math.min(Date.now() + windows.custodyHold * 1000, committedAt + (windows.settleWindow - CUSTODY_SETTLE_MARGIN_S) * 1000);
+      const until = Math.min(Date.now() + custodyHold * 1000, committedAt + (windows.settleWindow - CUSTODY_SETTLE_MARGIN_S) * 1000);
       if (until > Date.now()) {
         d.custody = { ledgerHash: mb.ledgerHash(ledger), panel, need, until, holders: [], tries: 0 };
         pendingSettle.set(key, { delta, ledger });
@@ -767,7 +769,7 @@ export function createMatchBook({
     statsProof,
     proof: (matchId) => { const key = mb.matchIdBytes32(matchId); const fin = decoded.find((e) => e.event === 'Finalized' && e.matchId === key); if (!fin) return null; const ts = blockTs.get(fin.block); if (ts == null) return null; const ep = epoch(hourOf(ts * 1000)); const p = mb.chainProof(ep, key); return p && { ...p, resultsRoot: ep.resultsRoot, statsRoot: ep.statsRoot, root: ep.root, path: withStatsStep(p.path, ep.statsRoot) }; },
     chainStatus: (matchId) => ({ matchId, key: mb.matchIdBytes32(matchId), status: statusOf(mb.matchIdBytes32(matchId)), panel: panels.get(mb.matchIdBytes32(matchId))?.panel ?? null, events: decoded.filter((e) => e.matchId === mb.matchIdBytes32(matchId)) }),
-    status: () => ({ contract, epochAnchor, delegate: address, delegated, funded, enrolled, purse: purse(), cursor, scanRange, scanMs, scanError, receipts: ingested.size, pendingReceipts: pendingReceipts.size, events: decoded.length, sends, lastTx, lastError, hosting: [...duties.values()].filter((d) => d.role === 'host').length, seated: [...duties.values()].filter((d) => d.role === 'seat').length, windows: { ...windows }, attested: attested.size, proposed: [...proposedHours], refunds: gasRefund ? { contract: gasRefund, claimed: refundsClaimed, due: [...refunds.values()].filter((r) => r.state === 'due').length, last: refundLast } : null }),
+    status: () => ({ contract, epochAnchor, delegate: address, delegated, funded, enrolled, purse: purse(), cursor, scanRange, scanMs, scanError, receipts: ingested.size, pendingReceipts: pendingReceipts.size, events: decoded.length, sends, lastTx, lastError, hosting: [...duties.values()].filter((d) => d.role === 'host').length, custody: custody ? { hold: custodyHold, waiting: [...duties.values()].filter((d) => d.custody).length, held: (() => { try { return readdirSync(custodyDir).filter((n) => n.endsWith('.json')).length; } catch { return custodyMem.size; } })() } : null, seated: [...duties.values()].filter((d) => d.role === 'seat').length, windows: { ...windows }, attested: attested.size, proposed: [...proposedHours], refunds: gasRefund ? { contract: gasRefund, claimed: refundsClaimed, due: [...refunds.values()].filter((r) => r.state === 'due').length, last: refundLast } : null }),
   };
 }
 
