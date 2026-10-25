@@ -111,3 +111,20 @@ test('secrets: doctor lists every secret this install holds, by name and path', 
     assert.equal(ok.ok, true);
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
+
+test('key proof (cabinet:sign-key): binds the player key to one title and one service', async () => {
+  const { generateKeypair } = await import('../protocol/keys.js');
+  const { signKeyProof, verifyKeyProof, signSeat, verifySeat, AUD_RE } = await import('../protocol/challenge.js');
+  const kp = await generateKeypair();
+  const claim = { aud: 'pb-matchmaker', nonce: 'ab'.repeat(16), player: kp.publicKey, rulesetId: 'pickle-brawl.v1' };
+  const sig = await signKeyProof(claim, kp.privateKey);
+  assert.ok(await verifyKeyProof(claim, sig));
+  assert.ok(!(await verifyKeyProof({ ...claim, rulesetId: 'flood-control.v1' }, sig)), 'another title');
+  assert.ok(!(await verifyKeyProof({ ...claim, aud: 'pb-api' }, sig)), 'another service');
+  assert.ok(!(await verifyKeyProof({ ...claim, nonce: 'cd'.repeat(16) }, sig)), 'another nonce');
+  // The tag keeps it from passing as a seat claim, and a seat signature from passing as a key proof.
+  assert.ok(!(await verifySeat({ matchId: claim.aud, room: claim.rulesetId, player: claim.player, nonce: claim.nonce }, sig)));
+  const seatSig = await signSeat({ matchId: 'm', room: 'r', player: kp.publicKey, nonce: claim.nonce }, kp.privateKey);
+  assert.ok(!(await verifyKeyProof(claim, seatSig)));
+  assert.ok(AUD_RE.test('pb-matchmaker') && !AUD_RE.test('PB Matchmaker') && !AUD_RE.test('x'.repeat(65)));
+});

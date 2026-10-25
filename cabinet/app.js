@@ -12,7 +12,7 @@
 import { loadPlayer as loadKeypair, createClient, IDENTITY_KEY } from './client.js';
 import { roomCodeFor } from './protocol/pairing.js';
 import { chainHead, ledgerBody, signLedger } from './protocol/log.js';
-import { signSeat, NONCE_RE } from './protocol/challenge.js';
+import { signSeat, signKeyProof, NONCE_RE, AUD_RE } from './protocol/challenge.js';
 import { sign as signTagged } from './protocol/keys.js';
 const RUN_TAG = 'run'; // sdk/court RUN_TAG: a player's signature over a single-player run
 import { applyDelta, sortDeltas } from './protocol/derive.js';
@@ -1294,6 +1294,17 @@ window.addEventListener('message', async (e) => {
     if (!ok) { frame.contentWindow.postMessage({ type: 'cabinet:seat-signed', matchId: c.matchId ?? null, error: 'not a seat in the match this shell launched' }, '*'); return; }
     const sig = await signSeat(c, player.kp.privateKey);
     frame.contentWindow.postMessage({ type: 'cabinet:seat-signed', matchId: c.matchId, nonce: c.nonce, player: player.id, sig }, '*');
+  }
+  // The title's own service asks the player to prove its arcade key outside a match (protocol/challenge.js KEY_TAG):
+  // Pickle Brawl's API mints a matchmaker ticket that seats the key, not the AIR id. Signed only under the ruleset
+  // of the title this shell launched, as this player, over the service's one-time nonce.
+  if (e.data.type === 'cabinet:sign-key') {
+    const c = e.data.claim ?? {};
+    const ok = current?.rulesetId && player?.kp && typeof c.aud === 'string' && AUD_RE.test(c.aud) && typeof c.nonce === 'string' && NONCE_RE.test(c.nonce);
+    if (!ok) { frame.contentWindow.postMessage({ type: 'cabinet:key-signed', nonce: c.nonce ?? null, error: current?.rulesetId ? (player?.kp ? 'aud or nonce malformed' : 'no player key yet') : 'this title names no ruleset' }, '*'); return; }
+    const claim = { aud: c.aud, nonce: c.nonce, player: player.id, rulesetId: current.rulesetId };
+    const sig = await signKeyProof(claim, player.kp.privateKey);
+    frame.contentWindow.postMessage({ type: 'cabinet:key-signed', ...claim, sig }, '*');
   }
   // A single-player title asks this shell to sign the run log its court will commit (settlement v4, FLOOD CONTROL's
   // daily): sign('run', { rulesetId, inputsHash }) — sdk/court verifyRun is the court's check before it seats this

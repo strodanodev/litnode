@@ -3,6 +3,25 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+Protocol 4, unchanged. No contract, ruleset or bundle hash changes. The cabinet changes; redeploy it with the next
+release.
+
+### Added
+- **`cabinet:sign-key`: a player proves its arcade key to the title's own service, outside a match.**
+  - **What the shell signs:** `{ aud, nonce, player, rulesetId }`, under the `key` tag. Only the launched title's
+    `rulesetId` goes in, so a proof made for one title never verifies for another, and `aud` names the service that
+    issued the nonce.
+  - **Checking it:** `verifyKeyProof` in `protocol/challenge.js`.
+  - **Why:** Pickle Brawl's API can now mint a matchmaker ticket that seats the key rather than the AIR id (PB
+    hand-back 11). Before this, `cabinet:sign-seat` refused anything outside a launched match, so tickets carried no
+    key.
+
+### Changed
+- **Pickle Brawl's matchmaker config drops `AIR_*`** (`gauntlets/pickle-brawl.services.json`). The matchmaker no
+  longer sees a player's AIR token. It verifies the API's 10-minute ticket instead.
+
 ## [0.12.2] — 2026-10-25 — a ranked ledger outlives its host; seats expire unfed escalations; the arcade counts wallets; a node holds one stored secret
 
 Protocol 4, unchanged: 0.12.0, 0.12.1 and 0.12.2 nodes are peers. No contract, ruleset, placement or result-hash
