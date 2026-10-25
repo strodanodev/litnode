@@ -836,18 +836,14 @@ Decisions that are the user's:
 2. **Rapture: decided 25 Oct.** The collection is Rapture Cards,
    `0x138F…2721` (§15). Only holders may bond at all, one card per node.
    NodeStake generation 5 enforces it, in phase 2 (§6).
-3. **The reduced panel (§14.1 item 4).** Finalizing by the majority of
-   three or more uninvolved operators, with no slash, when nine can't be
-   seated. The alternative is to keep voiding until there are 13
-   operators. Recommended: the reduced panel, because with rev 2's replay
-   a small panel re-runs the match rather than voting on it.
-4. **AF relay-only modes (§14.2).** Should wager, solo and arcade move
-   onto gauntlets and mesh finality, or keep relay-trusted rewards,
-   labelled as the studio's word? Recommended: wager moves, because it
-   pays between players; solo and arcade stay labelled.
-5. **The dispute window for off-chain credits (§14.2).** Recommended:
-   1 h. A shorter window pays sooner, and a longer one gives custodians
-   more time to dispute.
+3. **The reduced panel (§14.1 item 4): decided 25 Oct, adopted.** When
+   nine can't be seated, three or more uninvolved operators replay and the
+   majority finalizes, with no slash below nine.
+4. **AF relay-only modes (§14.2): decided 25 Oct.** Wager moves onto
+   gauntlets and mesh finality, because it pays between players. Solo and
+   arcade keep relay-trusted rewards, labelled as the studio's word.
+5. **The dispute window for off-chain credits (§14.2): decided 25 Oct,
+   1 h.**
 
 Facts to check during the build (not decisions):
 
