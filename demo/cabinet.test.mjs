@@ -188,3 +188,16 @@ test('the ranked-capacity notice counts staking wallets, not the labels nodes ch
   const old = four.map(({ wallet, witnessEligible, ...p }, i) => ({ ...p, operator: `op${i}` }));
   assert.deepEqual(rankedCapacity(old, RID, { protocol: 4 }), { ok: true, operators: 4, seats: 3, hosts: 1, by: 'label' });
 });
+
+test('cabinet: every script the arcade ships parses (a syntax error in one module blanks the whole page)', async () => {
+  // 25 Oct 2026: an unescaped quote in cabinet/build.js (e3be6df) passed the suite, which never loads it, and the
+  // arcade deploy showed a blank page until it was rolled back. node --check parses without running, and ES module
+  // syntax is the same in the browser.
+  const { readdirSync } = await import('node:fs');
+  const files = [...readdirSync('cabinet').filter((f) => /\.(m?js)$/.test(f)).map((f) => join('cabinet', f)),
+    ...readdirSync(join('cabinet', 'protocol')).filter((f) => f.endsWith('.js')).map((f) => join('cabinet', 'protocol', f))];
+  assert.ok(files.length > 20, `found ${files.length} cabinet scripts`);
+  const bad = [];
+  for (const f of files) { try { execFileSync(process.execPath, ['--check', f], { stdio: 'pipe' }); } catch (e) { bad.push(`${f}: ${String(e.stderr).split('\n').find((l) => /Error/.test(l)) ?? 'does not parse'}`); } }
+  assert.deepEqual(bad, []);
+});

@@ -172,7 +172,7 @@ ${t([
   ['shell → game', '<span class="mono">cabinet:signed { matchId, player, sig }</span>', 'or { error }'],
   ['game → shell', '<span class="mono">cabinet:sign-seat { challenge }</span>', 'the player\'s signature over a gauntlet seat challenge { matchId, room, player, nonce }, only for the match launched'],
   ['shell → game', '<span class="mono">cabinet:seat-signed { matchId, nonce, player, sig }</span>', 'or { error }'],
-  ['game → shell', '<span class="mono">cabinet:sign-key { claim: { aud, nonce } }</span>', 'the player's signature over { aud, nonce, player, rulesetId } (tag key) for the title's own service, outside a match; only for the title launched'],
+  ['game → shell', '<span class="mono">cabinet:sign-key { claim: { aud, nonce } }</span>', 'the player\'s signature over { aud, nonce, player, rulesetId } (tag key) for the title\'s own service, outside a match; only for the title launched'],
   ['shell → game', '<span class="mono">cabinet:key-signed { aud, nonce, player, rulesetId, sig }</span>', 'or { error }; verify with protocol/challenge.js verifyKeyProof'],
   ['game → shell', '<span class="mono">cabinet:played { matchId }</span>', 'the placed match was played; the arcade closes the title'],
   ['game → shell', '<span class="mono">cabinet:exit</span>', 'back to the launcher'],
