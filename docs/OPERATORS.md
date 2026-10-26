@@ -205,6 +205,33 @@ always-on relay is casual play and keeps its results in its own database.
 A `GAUNTLETS=` config pointing at a local checkout (`docs/HOST-A-NODE.md`
 "Gauntlets") is how a developer runs an unreleased server.
 
+### Optional: host an RO3Emu server for your friends
+
+A node can also put a Ragnarok Online 3 server you run with RO3Emu on the
+mesh, through a free Cloudflare quick tunnel of its own (no domain, no
+account, nothing to pay). RO3Emu serves the tunnel from a separate
+loopback port that answers only what a player needs: login, the server
+list, the gate key and the two game gates (as WebSockets). The admin
+tools never answer there, and a player who comes in through it gets GM
+commands only when their account is listed in `Ro3Emu:GmAccounts`.
+
+1. Start RO3Emu with its tunnel port: `RO3Emu.exe start --tunnel-port 5390`
+   (or add `--Ro3Emu:Tunnel:Port=5390` to the server's arguments).
+2. Add to `node.env` (Control Plane: as user environment variables):
+   ```ini
+   RO3_PORT=5390
+   RO3_NAME=Prontera
+   ```
+3. Restart the node. Within a minute `/health` shows `tunnel.ro3.state`
+   `up` and `/ro3/hosts` lists your server. The URL is advertised only
+   after RO3Emu answered through it; when it stops answering it is
+   withdrawn, and cloudflared is restarted for a new hostname.
+
+Players run a node too and type `RO3Emu.exe join litnode` (or
+`join litnode:Prontera`). Their RO3Emu asks their own node for your
+current link at start and again whenever it stops answering, so a
+restarted tunnel is followed without anyone copying a link.
+
 ## 7. Keep it running and current
 
 - **Survive reboots.** Control Plane: it starts at sign-in. Windows zip:
