@@ -830,20 +830,30 @@ checkout once the plan is approved.
 
 Decisions that are the user's:
 
-1. **Season 0 date.** Phase 2 is the largest piece: protocol 5, the arcade
-   AIR move, PB's bundle, and AF's relay split. The date decides whether
-   any of it is cut or Season 0 moves.
+1. **Season 0 date: decided 27 Oct. Keep the date, cut scope.**
+   - **Must ship for Season 0:** protocol 5 and PB's court bundle. Together
+     they remove the copied key and let any operator host.
+   - **May slip:** AF's relay split (§17 row 9). Until it ships, AF casual
+     runs on the desktop's relay, which keeps `SUPABASE_SERVICE_KEY`. That
+     relay runs as its own task (`run-af-relay.cmd`), not as a service
+     litnode spawns, so `SECRETS_POLICY=strict` still holds for every node.
+     It stays a **named, desktop-only exception**: never copied, and listed
+     here until the split lands.
 2. **Rapture: decided 25 Oct.** The collection is Rapture Cards,
    `0x138F…2721` (§15). Only holders may bond at all, one card per node.
    NodeStake generation 5 enforces it, in phase 2 (§6).
 3. **The reduced panel (§14.1 item 4): decided 25 Oct, adopted.** When
    nine can't be seated, three or more uninvolved operators replay and the
    majority finalizes, with no slash below nine.
-4. **AF relay-only modes (§14.2): decided 25 Oct.** Wager moves onto
-   gauntlets and mesh finality, because it pays between players. Solo and
-   arcade keep relay-trusted rewards, labelled as the studio's word.
+4. **AF relay-only modes (§14.2): decided 25 Oct.**
+   - **Wager** moves onto gauntlets and mesh finality, because it pays
+     between players. **When no host is available, the escrow is
+     refunded** (27 Oct).
+   - **Solo and arcade** keep relay-trusted rewards, labelled as the
+     studio's word.
 5. **The dispute window for off-chain credits (§14.2): decided 25 Oct,
-   1 h.**
+   1 h.** The game shows the result as **"pending"** straight away (27 Oct),
+   and credits it once the window passes.
 
 Facts to check during the build (not decisions):
 
