@@ -664,7 +664,7 @@ function renderGame(g) {
     <div class="page-h"><a class="dim" href="#/games">‹ all games</a></div>
     <section class="hero ${g.cover ? 'has-cover' : ''}" style="${g.cover ? `--cover:url('${esc(g.cover)}')` : ''}">
       <div><h1 class="chrome">${esc(g.title)}</h1><div class="tagline">${esc(g.tagline)}</div><div class="chips">${gameTag(g)}<span class="tag">${esc(g.players)}</span>${(g.tags ?? []).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}${statusTag(g)}</div></div>
-      <div class="hero-actions">${g.rulesetId ? `<button class="btn primary" data-queue="${g.id}" ${S.online && player.kp ? '' : 'disabled'}>Find match</button>` : ''}${g.playable ? `<button class="btn ${g.rulesetId ? '' : 'primary'}" data-play="${g.id}">Play now</button>` : '<button class="btn" disabled>Played off-cabinet</button>'}${g.url ? `<a class="btn" href="${esc(g.url)}" target="_blank" rel="noopener">↗ open in tab</a>` : ''}</div>
+      <div class="hero-actions">${g.rulesetId && g.queue !== false ? `<button class="btn primary" data-queue="${g.id}" ${S.online && player.kp ? '' : 'disabled'}>Find match</button>` : ''}${g.playable ? `<button class="btn ${g.rulesetId && g.queue !== false ? '' : 'primary'}" data-play="${g.id}">Play now</button>` : '<button class="btn" disabled>Played off-cabinet</button>'}${g.url ? `<a class="btn" href="${esc(g.url)}" target="_blank" rel="noopener">↗ open in tab</a>` : ''}</div>
     </section>
     ${g.rulesetId ? '<div id="mm"></div>' : ''}
     <div class="cols">

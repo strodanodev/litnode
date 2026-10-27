@@ -5,10 +5,20 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-Protocol 4, unchanged. No contract, ruleset or bundle hash changes. The cabinet changes; redeploy it with the next
-release.
+Protocol 4, unchanged. No contract or bundle hash changes; one new ruleset, `afc.v1` (`e3725bd2…b6a4`). The
+cabinet changes; redeploy it with the next release.
 
 ### Added
+- **AFC (Robot Fighting Championship) joins the mesh as `afc.v1`, an attested title** (`titles/afc.adapter.js`,
+  the AFC session's hand-back, unchanged apart from its court key). Ruleset build `e3725bd2…b6a4` (display URL
+  `https://rfc.litvm.games`; the earlier `6371d0f6…42fc` was never registered). Casual only: a bout against the house bot has one participant (`teams [[p], []]`). The court is a dedicated key,
+  `040bc3d9…c5b5`, pinned in `attestors`; its private half lives only in the AFC Vercel project's env, where the
+  court's function re-simulates, pays and signs. `validate()` checks rounds, ticks, hp, the KO/decision rules, each
+  seat's `loadoutHash`, the `hmc-match@2` commitments, and stats against the result. Stats: `kos`, `roundsWon`,
+  `damageDealt`, `hits`, `parries` (sum), `maxCombo` (max), `fastestKoTicks` (min). Its verifier,
+  `14336181…e8e9`, reproduces a bout's StreamHash from the match file the node holds; once it is registered, AFC
+  results settle `checkable`. The arcade lists AFC as attested with arcade sign-in at `rfc.litvm.games`, with no Find match (`queue: false`, new) until its PvP bundle and ranked ship. `demo/afc.test.mjs` settles a
+  real AFC bout on test nodes. **Not registered yet:** the ruleset and the verifier are user steps.
 - **`cabinet:sign-key`: a player proves its arcade key to the title's own service, outside a match.**
   - **What the shell signs:** `{ aud, nonce, player, rulesetId }`, under the `key` tag. Only the launched title's
     `rulesetId` goes in, so a proof made for one title never verifies for another, and `aud` names the service that
@@ -86,16 +96,6 @@ secrets rule.
   outside the attested body, so the court's signature does not change, and `checkEnvelope` refuses one that names
   another match or ruleset. Before, `envelope()` kept a fixed field list and dropped it silently; Pickle Brawl's court
   added it back after `attest()`. **Courts: re-vendor `sdk/court` and pass `descriptor` to `attest()`.**
-- **AFC (Robot Fighting Championship) joins the mesh as `afc.v1`, an attested title** (`titles/afc.adapter.js`,
-  the AFC session's hand-back, unchanged apart from its court key). Ruleset build `6371d0f6…42fc`. Casual only: a
-  bout against the house bot has one participant (`teams [[p], []]`). The court is a dedicated key,
-  `040bc3d9…c5b5`, pinned in `attestors`; its private half lives only in the AFC Vercel project's env, where the
-  court's function re-simulates, pays and signs. `validate()` checks rounds, ticks, hp, the KO/decision rules, each
-  seat's `loadoutHash`, the `hmc-match@2` commitments, and stats against the result. Stats: `kos`, `roundsWon`,
-  `damageDealt`, `hits`, `parries` (sum), `maxCombo` (max), `fastestKoTicks` (min). Its verifier,
-  `14336181…e8e9`, reproduces a bout's StreamHash from the match file the node holds; once it is registered, AFC
-  results settle `checkable`. The arcade lists AFC as attested with arcade sign-in. `demo/afc.test.mjs` settles a
-  real AFC bout on test nodes. **Not registered yet:** the ruleset and the verifier are user steps.
 - **Each hosted match's process output is kept** (`node/gauntlet.js` `openProcessLog`). A gauntlet server's stdout
   and stderr go to `<DATA_DIR>/gauntlet-logs/<rulesetId>/<matchId>.log`, each line stamped and tagged `out|` or
   `err|`, with a header and the exit code. The node kept only the last line, so a court's tick-health and settlement

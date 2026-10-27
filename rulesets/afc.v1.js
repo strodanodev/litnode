@@ -228,7 +228,7 @@ var afc_adapter_default = defineAttestedTitle({
   equipment: "studio",
   display: {
     title: "AFC",
-    url: "https://afc-pi-seven.vercel.app",
+    url: "https://rfc.litvm.games",
     description: "Robot Fighting Championship: humanoid mechs, three 45-second rounds. Every bout is re-simulated by the AFC host before it settles."
   },
   // AFC court: a dedicated ed25519 key, not the host's hmc-attestation key. Pinned by this ruleset's hash, so every

@@ -87,7 +87,7 @@ footer's node URL at a public https seed for players who don't run a node.
 
     01  Agent Fighter                 https://www.agentfighter.wtf/       ruleset agent-fighter.v1
     02  Pickle Brawl                  https://www.picklebrawl.live/       ruleset pickle-brawl.v1
-    03  Robot Fighting Championship   https://afc-pi-seven.vercel.app/    not on the mesh yet
+    03  Robot Fighting Championship   https://rfc.litvm.games/            ruleset afc.v1 (casual)
 
 PLAY opens the game in the cabinet's iframe (all three allow framing; the
 iframe delegates fullscreen/gamepad/autoplay/pointer-lock to any origin —

@@ -38,7 +38,7 @@ two sides and what is still open between them.
    FIND MATCH signs a queue entry, verifies the placement, launches the
    title against the drawn host's relay with the descriptor in cabinet:init
    PLAY opens each title in an iframe (agentfighter.wtf, picklebrawl.live,
-   afc-pi-seven.vercel.app); a title that ignores cabinet:init plays
+   rfc.litvm.games); a title that ignores cabinet:init plays
    off-mesh and its matches never reach a node
 ```
 
@@ -267,7 +267,7 @@ relay is also passed as `?ws=` on the iframe URL. **No title consumes
 |---|---|---|---|
 | Agent Fighter | `agentfighter.wtf` | `agent-fighter.v1` | Yes (iframe) |
 | Pickle Brawl | `picklebrawl.live` | `pickle-brawl.v1` | Yes (iframe) |
-| Robot Fighting Championship (AFC) | `afc-pi-seven.vercel.app` | not yet | Yes (iframe) |
+| Robot Fighting Championship (AFC) | `rfc.litvm.games` | `afc.v1` (casual, attested) | Yes (iframe) |
 
 None of the three games read or write litnode state today; PLAY only opens
 the game's existing hosted build in an iframe.

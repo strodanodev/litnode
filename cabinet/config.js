@@ -24,7 +24,8 @@ export const AIR = { partnerId: '62e01755-138f-4e58-9cdc-fab71e037afd', buildEnv
  *  The token goes only to the origin of `url` (plus `origins`, if listed). `cover` is a capture of the game's own title screen
  *  (covers/, 960×540); `logo` is an optional overlay for covers whose logo is
  *  an HTML layer rather than part of the canvas. `rulesetId` links the title
- *  to the mesh (leaderboard, record). */
+ *  to the mesh (leaderboard, record); `queue: false` keeps it there without a
+ *  Find match button. */
 export const GAMES = [
   {
     id: 'agent-fighter',
@@ -76,16 +77,17 @@ export const GAMES = [
     controls: ['Move: W A S D', 'Strike: J / K', 'Guard: L', 'Loadout in the garage'],
     modes: ['casual', 'garage', 'shop'],
     players: '1P',
-    url: 'https://afc-pi-seven.vercel.app/',
+    url: 'https://rfc.litvm.games/', // the only AFC host AIR's partner allows; the old hosts redirect here
     cover: './covers/afc.jpg',
     rulesetId: 'afc.v1',
-    buildHash: '6371d0f636f96abea14a7eafca8822448866396ddb7fa63d3cf3da916fb842fc',
+    buildHash: 'e3725bd2a25692274916c02f177902e908559efee4ba01fa7fa09509d65cb6a4',
     kind: 'attested', // L1 until its verifier is registered; then the node derives `checkable` (L2) per bout
     status: 'attested',
     login: 'arcade', // AFC asks cabinet:air; the session is lent to this title's own origin only
     tags: ['THREE.JS', 'PWA', 'SCRAP / SILVER'],
-    badge: 'afc-pi-seven.vercel.app',
+    badge: 'rfc.litvm.games',
     playable: true,
+    queue: false, // casual single-player only: no Find match until AFC's PvP bundle and ranked ship
   },
 ];
 
