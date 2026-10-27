@@ -134,7 +134,8 @@ NODE PLANE · one daemon per operator, bonded on chain (locked term)
 litVM LITEFORGE · chain 4441 · zkLTC gas · Arbitrum Orbit
   MatchBook event log = THE delta set. Ladders fold over it; anyone can.
 
-STUDIO PLANE · the title's own database, unchanged (Supabase for Agent Fighter)
+STUDIO PLANE · the title's own database, unchanged (Supabase for Agent Fighter,
+  Neon for FLOOD CONTROL; Neon via Vercel is the default for new titles)
 ```
 
 The studio plane is never on the path from a cold browser to a settled match.
@@ -152,7 +153,7 @@ test. A contributor replacing the reference runs the same test.
 | Standing | NodeStake v3 locked bond (§2.2) | Attestation record + bond |
 | Ruleset runtime | Single-file ES module, hash-pinned, `--permission` sandbox | Wasm with pinned runtime |
 | Artifact transfer | Fetch by hash from any peer | Obligatory custody by the drawn witnesses, custody challenges on chain (§11.5) |
-| Studio store | memory / Supabase / Firebase drivers | anything with get/set/list |
+| Studio store | the title's own Postgres: Neon via Vercel preferred, Supabase supported | anything the studio picks; the node never reads it |
 | Delta set | **`MatchBook` events on litVM, in block order** (§6, §11) | same interface; blobs / calldata for ledgers on dispute |
 | Settlement | Per-match `commit` / `settle` / `attest` txs; hourly root over the finalized set | verifiable-VM replay for dispute resolution |
 | Dispute resolution | Stake-weighted majority of drawn witnesses, escalation panel (§11.3) | on-chain replay |
@@ -643,10 +644,13 @@ version, the cursor they were folded to and `scope` (`official` | `pending`
 
 ## 10. Studio plane
 
-Unchanged from v0.1: `node/store.js` is `get/set/list` behind memory,
-Supabase and Firebase drivers. Nothing the studio plane holds may sit on the
-match critical path. Convention today; the SDK build step makes it an error
-(§17).
+Each title owns its database; litnode ships no store driver (the
+`node/store.js` of v0.1 is gone). The preferred stack for a new title is
+Neon Postgres provisioned through the Vercel Marketplace (`DATABASE_URL` in
+managed env, a Neon branch per preview); Supabase titles stay as they are.
+Nothing the studio plane holds may sit on the match critical path.
+Convention today; the SDK build step makes it an error (§17). Who holds
+what, title by title: `docs/DATA-OWNERSHIP.md`.
 
 ---
 
