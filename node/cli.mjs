@@ -106,7 +106,7 @@ node = await createNode({
   tunnel: env.TUNNEL === 'quick' || env.TUNNEL === 'named' ? env.TUNNEL : null,
   tunnelName: env.TUNNEL_NAME ?? null, tunnelHost: env.TUNNEL_HOST ?? null,
   relayPort: env.RELAY_PORT ? Number(env.RELAY_PORT) : null,
-  // RO3_PORT=5390: RO3Emu's tunnel front (RO3Emu.exe start --tunnel-port 5390), fronted by its own quick tunnel and
+  // RO3_PORT=5480: RO3Emu's tunnel front (RO3Emu.exe start --tunnel-port 5480), fronted by its own quick tunnel and
   // advertised to the mesh (node/ro3.js); RO3_NAME is how players see the server (default OPERATOR).
   ro3Port: env.RO3_PORT ? Number(env.RO3_PORT) : null, ro3Name: env.RO3_NAME ?? null,
   relayTunnelName: env.RELAY_TUNNEL_NAME ?? null, relayTunnelHost: env.RELAY_TUNNEL_HOST ?? null,

@@ -1,7 +1,7 @@
 /** RO3Emu (Ragnarok Online 3) servers hosted through the node's own free tunnel.
  *
- *  An operator who runs RO3Emu with `--tunnel-port 5390` (its loopback "tunnel front": login, server list, gate key
- *  and the two game gates as WebSockets, never the loopback admin tools) sets RO3_PORT=5390. The node then:
+ *  An operator who runs RO3Emu with `--tunnel-port 5480` (its loopback "tunnel front": login, server list, gate key
+ *  and the two game gates as WebSockets, never the loopback admin tools) sets RO3_PORT=5480. The node then:
  *    - runs a quick tunnel to that port (node/tunnel.js): no account, no server cost;
  *    - advertises the URL in its heartbeat as `ro3: { url, name }` only once it answered GET /ro3emu/status
  *      through it, the way the node and relay tunnels are verified before they are advertised;

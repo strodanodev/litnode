@@ -215,11 +215,11 @@ list, the gate key and the two game gates (as WebSockets). The admin
 tools never answer there, and a player who comes in through it gets GM
 commands only when their account is listed in `Ro3Emu:GmAccounts`.
 
-1. Start RO3Emu with its tunnel port: `RO3Emu.exe start --tunnel-port 5390`
-   (or add `--Ro3Emu:Tunnel:Port=5390` to the server's arguments).
+1. Start RO3Emu with its tunnel port: `RO3Emu.exe start --tunnel-port 5480`
+   (or add `--Ro3Emu:Tunnel:Port=5480` to the server's arguments).
 2. Add to `node.env` (Control Plane: as user environment variables):
    ```ini
-   RO3_PORT=5390
+   RO3_PORT=5480
    RO3_NAME=Prontera
    ```
 3. Restart the node. Within a minute `/health` shows `tunnel.ro3.state`

@@ -40,11 +40,11 @@ test('ro3: the host advertises its RO3 tunnel once RO3Emu answers; peers list it
   const dead = new Set(); // hostnames Cloudflare dropped: a quick tunnel's name never answers again
   const probed = [];
   const ro3Probe = async (u) => { probed.push(u); if (dead.has(u)) throw new Error('530'); return true; };
-  const a = await createNode({ dataDir: join(tmp, 'a'), offline: true, heartbeatMs: 200, operator: 'host', roles: ['mesh'], ro3Port: 5390, ro3Name: 'Prontera', tunnelBin: bin, ro3Probe, updates: false });
+  const a = await createNode({ dataDir: join(tmp, 'a'), offline: true, heartbeatMs: 200, operator: 'host', roles: ['mesh'], ro3Port: 5480, ro3Name: 'Prontera', tunnelBin: bin, ro3Probe, updates: false });
   const b = await createNode({ dataDir: join(tmp, 'b'), offline: true, heartbeatMs: 200, operator: 'player', roles: ['mesh'], seeds: [a.addr], updates: false });
   t.after(async () => { await a.stop().catch(() => {}); await b.stop().catch(() => {}); });
   const hosts = async (n) => (await (await fetch(`${n.addr}/ro3/hosts`)).json()).hosts;
-  const first = 'https://fake-5390-g0.trycloudflare.com';
+  const first = 'https://fake-5480-g0.trycloudflare.com';
 
   assert.ok(await until(async () => (await hosts(b)).some((h) => h.url === first)), 'the player\'s node lists the host');
   const listed = (await hosts(b)).find((h) => h.url === first);
@@ -52,14 +52,14 @@ test('ro3: the host advertises its RO3 tunnel once RO3Emu answers; peers list it
   assert.equal((await hosts(a))[0].self, true, 'the host lists itself');
   assert.ok(probed.includes(first), 'checked through the tunnel before it was advertised');
   const health = await (await fetch(`${a.addr}/health`)).json();
-  assert.equal(health.tunnel.ro3.state, 'up'); assert.equal(health.tunnel.ro3.port, 5390);
+  assert.equal(health.tunnel.ro3.state, 'up'); assert.equal(health.tunnel.ro3.port, 5480);
 
   // The tunnel's name dies: withdrawn (players stop being sent to it), then cloudflared is restarted and the fresh
   // hostname is verified, advertised and listed in its place.
   writeFileSync(gen, '1');
   dead.add(first);
   assert.ok(await until(async () => !(await hosts(b)).some((h) => h.url === first), 15_000), 'a dead name is withdrawn');
-  const second = 'https://fake-5390-g1.trycloudflare.com';
+  const second = 'https://fake-5480-g1.trycloudflare.com';
   assert.ok(await until(async () => (await hosts(b)).some((h) => h.url === second), 20_000), 'the new hostname reaches the player\'s node');
   assert.ok((await (await fetch(`${a.addr}/health`)).json()).tunnel.ro3.rotations >= 1);
 });
