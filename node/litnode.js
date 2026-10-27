@@ -26,6 +26,7 @@ import { createMatchBook } from './matchbook.js';
 import { matchIdBytes32 } from '../protocol/matchbook.js';
 import { createUpdater, RESTART_EXIT } from './update.js';
 import { createTunnel } from './tunnel.js';
+import { createRo3Host, ro3Entry, ro3Name } from './ro3.js';
 import { createGauntlets } from './gauntlet.js';
 import { openBundle, writeFiles, configFromBundle, runtimeOk, permanent, MANIFEST_NAME, MAX_BUNDLE_BYTES } from './server-bundle.js';
 import { createServices as createPublisherServices } from './publisher-services.js';
@@ -115,6 +116,9 @@ export async function createNode({
   tunnel = null, tunnelName = null, tunnelHost = null, relayPort = null, relayTunnelName = null, relayTunnelHost = null, tunnelBin = undefined,
   // How a new tunnel URL is checked from the outside before it is advertised (tests inject one): url → true when this node answered through it.
   tunnelProbe = null,
+  // RO3Emu's tunnel front on this machine (RO3_PORT, node/ro3.js): fronted by its own quick tunnel and advertised as
+  // `ro3` in the heartbeat. ro3Probe replaces the outside check in tests: url → true when RO3Emu answered through it.
+  ro3Port = null, ro3Name: ro3NameIn = null, ro3Probe = null,
   // Relay verification: (url) → true when a WebSocket opens through it. Default: a real WebSocket open (8 s);
   // tests pass a fake. A relay tunnel is advertised and announced only once this passes, and dropped when it stops.
   relayProbe = null,
@@ -659,7 +663,8 @@ export async function createNode({
   const runsGateway = Object.keys(gauntlets).length > 0 || Object.keys(gauntletServers).length > 0 || serviceBundles.length > 0;
   const relayFront = runsGateway && gauntletPort != null ? gauntletPort : relayPort;
   let lanAddr = null;           // what we listen on, kept for /health when a tunnel replaces addr
-  const tunnels = { node: null, relay: null };
+  const tunnels = { node: null, relay: null, ro3: null };
+  let ro3 = null; // { url, name } while the RO3 tunnel answers (node/ro3.js)
   let upnpCtl = null;
   // ---------------------------------------------------------------- directory
   let chainSeeds = [];          // liveSeeds() from NodeDirectory, refreshed every 10 min, or at once when lonely
@@ -774,6 +779,8 @@ export async function createNode({
     nodeId, operator, roles, region, addr, wsAddr, standing: 0, version, protocol: PROTOCOL_VERSION, relayKeys,
     // Titles whose match server THIS node runs (node/gauntlet.js). Placement puts these nodes first
     // for those titles: a gauntlet title drawn onto a node without its court is a match nobody can join.
+    // An RO3Emu server reachable through this node's RO3 tunnel (node/ro3.js); players' nodes list it at /ro3/hosts.
+    ...(ro3 ? { ro3 } : {}),
     ...(Object.keys(gauntlets).length ? { gauntlets: Object.keys(gauntlets).sort() } : {}),
     // Server bundles this node holds and runs (node/server-bundle.js), by title: a peer that opted in fetches the hash from GET /server/<id>?build=.
     ...(serverCurrent.size ? { servers: Object.fromEntries([...serverCurrent].map(([rid, e]) => [rid, e.hash]).sort()) } : {}),
@@ -1446,7 +1453,7 @@ export async function createNode({
           sandbox: sandbox.status(), secrets: secretsStatus(), trust: { policy: titleTrust, publishers: trustedPublishers, titleRegistry: titleRegistry ?? null, relayKeys, courts: Object.keys(courts) }, registry: registry ? 'chain' : erc6699 ? 'offline' : 'unset',
           cabinet: { version: CABINET_VERSION }, // the copy this node serves at /; a cabinet loaded from elsewhere compares its own
           relay: relayFront ? relayStatus() : null, // the relay tunnel as a WebSocket client sees it: verified before it is advertised
-          wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, upnp: upnpCtl?.status() ?? null, gauntlet: gauntlet?.status() ?? null, gauntletServers: Object.keys(gauntletServers).length || servers.size ? serverStatus() : null, guardian: (({ matches, reports, flagged }) => ({ matches, reports, flagged: flagged.length }))(guardianSummary()),
+          wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null, ro3: tunnels.ro3?.status() ?? null }, upnp: upnpCtl?.status() ?? null, gauntlet: gauntlet?.status() ?? null, gauntletServers: Object.keys(gauntletServers).length || servers.size ? serverStatus() : null, guardian: (({ matches, reports, flagged }) => ({ matches, reports, flagged: flagged.length }))(guardianSummary()),
           directory: nodeDirectory ? { contract: nodeDirectory, seeds: chainSeeds.length, announcer: announcer?.status() ?? null } : null, startedAt: new Date(startedAt).toISOString(), uptimeMs: Date.now() - startedAt, stalls, chainTicksSkipped: chainSkipped,
           // reachable: a peer has pushed gossip to us in the last 30 s. null = no peers known, so nothing to conclude.
           inbound: { peers: [...inbound.values()].filter((t) => Date.now() - t < 30_000).length, lastAt: inbound.size ? new Date(Math.max(...inbound.values())).toISOString() : null, reachable: peersKnown.size ? [...inbound.values()].some((t) => Date.now() - t < 30_000) : null } });
@@ -1475,6 +1482,15 @@ export async function createNode({
       // Everyone we have heard from, bonded or not — for onboarding a new
       // machine (its full nodeId is what the bond tool needs). /snapshot is
       // the bonded set only.
+      // RO3Emu servers on the mesh, newest heartbeat first: what `RO3Emu.exe join litnode` reads (node/ro3.js).
+      if (req.method === 'GET' && url.pathname === '/ro3/hosts') {
+        const now = Date.now(), recent = epochOf(now) - Math.ceil(60_000 / EPOCH_MS);
+        const hosts = [...heartbeats.values()].filter((b) => b.nodeId !== nodeId && b.epoch >= recent)
+          .map((b) => ({ b, e: ro3Entry(b) })).filter((x) => x.e)
+          .map(({ b, e }) => ({ nodeId: b.nodeId, name: e.name, url: e.url, seenAt: b.epoch * EPOCH_MS }));
+        if (ro3) hosts.push({ nodeId, name: ro3.name, url: ro3.url, seenAt: now, self: true });
+        return json(res, 200, { hosts: hosts.sort((x, y) => y.seenAt - x.seenAt) });
+      }
       if (req.method === 'GET' && url.pathname === '/peers') {
         const now = Date.now();
         return json(res, 200, { peers: [...heartbeats.values()].map((b) => ({
@@ -1946,13 +1962,17 @@ export async function createNode({
       };
       tunnels.node = createTunnel({ port: actualPort, name: tunnel === 'named' ? tunnelName : null, hostname: tunnel === 'named' ? tunnelHost : null, log, bin: tunnelBin, onUrl: verifyTunnel });
     }
+    if (ro3Port) {
+      tunnels.ro3 = createRo3Host({ port: ro3Port, name: ro3Name(ro3NameIn) || ro3Name(operator) || nodeId.slice(0, 12), bin: tunnelBin, log, emit,
+        probe: ro3Probe, fast: !!ro3Probe, onChange: (e) => { ro3 = e; } }); // the next heartbeat carries it
+    }
     if (relayFront && !wsAddrIn) {
       tunnels.relay = createTunnel({ port: relayFront, name: relayTunnelName, hostname: relayTunnelHost, log, bin: tunnelBin,
         onUrl: relayUrl });
     }
   } catch (e) {
     // A misconfigured tunnel must not leave a half-started node listening.
-    tunnels.node?.stop();
+    tunnels.node?.stop(); tunnels.ro3?.stop();
     await new Promise((r) => server.close(r));
     throw e;
   }
@@ -1986,6 +2006,6 @@ export async function createNode({
     rulesets: () => buildHashes(), peers: () => heartbeats, inbound, operator, roles, region, startedAt, chat: chatLines,
     version, updater, restart, tunnels, upnp: upnpCtl, get wsAddr() { return wsAddr; }, get announcer() { return announcer; }, seeds: () => chainSeeds, seedChecks, admitSeed, sandbox, refused, incompatible, protocol: PROTOCOL_VERSION, peersKnown,
     get gauntlet() { return gauntlet; },
-    async stop() { clearInterval(stallTimer); clearInterval(timer); clearInterval(tunnelWatch?.timer); clearInterval(updateTimer); clearTimeout(firstUpdateTimer); clearInterval(directoryTimer); clearTimeout(announceRetry); clearInterval(relayTimer); await publisherServices?.stop(); await gauntlet?.stopAll(); tunnels.node?.stop(); tunnels.relay?.stop(); await upnpCtl?.stop(); server.closeAllConnections?.(); await new Promise((r) => server.close(r)); },
+    async stop() { clearInterval(stallTimer); clearInterval(timer); clearInterval(tunnelWatch?.timer); clearInterval(updateTimer); clearTimeout(firstUpdateTimer); clearInterval(directoryTimer); clearTimeout(announceRetry); clearInterval(relayTimer); await publisherServices?.stop(); await gauntlet?.stopAll(); tunnels.node?.stop(); tunnels.relay?.stop(); tunnels.ro3?.stop(); await upnpCtl?.stop(); server.closeAllConnections?.(); await new Promise((r) => server.close(r)); },
   };
 }
