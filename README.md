@@ -61,12 +61,46 @@ with, it gets ignored.
 </tr>
 </table>
 
-Three games ship with it today: **Agent Fighter** (a browser fighting
-game, humans vs. AI agents; any bonded node can run its matches and
-settle them here), **Pickle Brawl** (physics dodgeball; its backend runs
-as services on the publisher's node, and its results are court-attested),
-and **Robot Fighting Championship** (in the cabinet, not wired to the
-mesh yet).
+## 🏟️ Titles on the mesh
+
+Four games are on the mesh as of 0.12.3. Each one settles at a **proof
+level** that says how much of the result anyone can check for themselves:
+
+| Level | Name | What it means |
+|---|---|---|
+| L3 | `verified` | Witnesses replay the match from the players' signed inputs and get the same result. Can be official. |
+| L2 | `checkable` | A court signed the result and committed the exact match log; a registered verifier bundle re-runs the log, so anyone can check it. |
+| L1 | `attested` | A court the title registered signed the result. The node checks the bounds it can, but can't re-run it. |
+| L0 | `host` | Only the hosting node vouches for it. Never ranked. |
+
+| | Agent Fighter | Pickle Brawl | FLOOD CONTROL | AFC (Robot Fighting Championship) |
+|---|---|---|---|---|
+| **What it is** | Browser fighting game, humans vs. AI agents | Pickleball | Single-player typhoon defence ("Storm of the Day") | Humanoid mech fighting |
+| **Play** | in the arcade | in the arcade | [play.bagyo.app](https://play.bagyo.app) | [rfc.litvm.games](https://rfc.litvm.games) |
+| **Ruleset** | `agent-fighter.v1` `7414ddf3…` (replayable) | `pickle-brawl.v1` `866bb9eb…` (attested) | `flood-control.v1` `b16bc0a2…` (attested) | `afc.v1` `e3725bd2…` (attested) |
+| **Status** | **Ranked live.** Ruleset and server bundle `e8d8f22b…` registered; casual play stays in the game's own database | **Live.** Results settle on chain; ruleset and verifier `e23358c4…` registered | **Live, casual.** Ruleset and verifier `56cfff04…` registered | **Casual only, not yet settling.** Shipped in 0.12.3; ruleset and verifier `14336181…` not registered yet |
+| **Proof level** | L3 `verified` (ranked) | L2 `checkable` when the node holds the log, else L1 | L2 `checkable` when the node holds the log, else L1 | L2 `checkable` once registered |
+| **Who runs the match** | Any bonded node that opts in (`GAUNTLET_SERVERS`) runs the hashed match server; the mesh draws the host | The studio's court and matchmaker, run as services on the publisher's nodes (desktop, with m16 on standby) | The game's own board, a Vercel function | The AFC match host, a Vercel function |
+| **How a match is decided** | Best of three rounds (first to 2), KO or time-out. Both players sign the input ledger; witnesses replay it | USA Pickleball rules: to 11, win by 2, side-out scoring, so no ties. A side that quits forfeits to the side that stayed; abandoned before play is a no-contest (no ladder movement) | One seat, no opponent. The run's score is its points; the board replays the run's command log and signs only if it reproduces the claimed result | Three 45-second rounds, first to 2, by KO or decision; a draw is possible. The host re-simulates the bout from its match file before signing. Bouts vs the house bot have one participant |
+| **Who signs the result** | The two players (and the replaying witnesses) | Court key `09b2b849…` | Court key `f82a5ef3…` | Court key `040bc3d9…` |
+| **Seat identity** | The player's arcade key | Arcade key for arcade-placed matches; `pb:` ids otherwise (unplaced, casual) | Arcade key when the arcade signs the run; `fc:` ids otherwise (casual) | Arcade key bound through PlayerProfile; `afc:` ids otherwise (casual) |
+| **Per-match stats** | kos, roundsWon, perfectRounds, damageDealt, supersLanded, throwTechs, maxCombo, fastestKo | pointsWon, aces, winners, unforcedErrors, smashes, dinks, matchesMvp, longestRally | points, bestChain, stars, rescued, casualties, keptDry, stormsSurvived | kos, roundsWon, damageDealt, hits, parries, maxCombo, fastestKoTicks |
+
+**How settlement works, for every title.** The hosting node commits the
+match to `MatchBook` on litVM LiteForge (chain 4441), with the result, its
+proof level, the stats and their schema, and hashes of the match log.
+Three witnesses drawn by stake attest to it; with no dispute inside the
+window it is final (optimistic finality). A disputed match goes to an
+escalation panel, which needs 13 bonded operators; with fewer, a disputed
+match is voided rather than decided. Ladders and ratings are folded from
+the `MatchBook` event log, so anyone can recompute them. A rebuilt engine is
+a new build hash: old results are never relabelled. The contract is
+[docs/SETTLEMENT-STANDARD.md](docs/SETTLEMENT-STANDARD.md); where it is going
+(one intake, no shared court keys, any bonded node hosting any title) is
+[docs/SETTLEMENT-ARCHITECTURE.md](docs/SETTLEMENT-ARCHITECTURE.md).
+
+What stays off the mesh: inventory, credits and the economy live in each
+title's own database (Neon or Supabase), never on the node.
 
 ## 📦 Run a node
 
