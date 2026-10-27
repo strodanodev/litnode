@@ -65,10 +65,12 @@ if (['register', 'set-build', 'revoke'].includes(cmd) && !it.buildHash) { consol
 if (cmd === 'transfer' && !/^0x[0-9a-fA-F]{40}$/.test(extra ?? '')) { console.error('transfer: <to> must be an address'); process.exit(1); }
 
 let id = 0;
+// The primary, then rpcFallback (contracts.json), one per retry: a rate-limited gateway is not an outage.
+const RPCS = [deployed.rpc, ...(deployed.rpcFallback ?? [])];
 async function rpc(method, params, tries = 6) {
   for (let i = 0; ; i++) {
     try {
-      const r = await fetch(deployed.rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }) });
+      const r = await fetch(RPCS[i % RPCS.length], { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }) });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const j = await r.json();
       if (j.error) throw Object.assign(new Error(`${method}: ${j.error.message}`), { final: true });
