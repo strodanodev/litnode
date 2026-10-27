@@ -596,7 +596,13 @@ gen-5).**
   `dissentsLost`) goes up. **Nobody is slashed below a nine-seat panel**,
   because a panel that small can be packed.
 - **Fewer than three:** it voids, as today.
-- So a lone dissenter on a 4–12 operator mesh no longer gets a free void.
+- **It seats only from 7 operators.** The draw leaves out the operators of
+  the host and of all three original seats (`MatchBook._candidates`), so
+  three uninvolved seats need 4 + 3 = 7 distinct operators. On a 7–12
+  operator mesh a lone dissenter no longer gets a free void.
+- **On 4–6 operators the void stays.** The dissenter's record does the work
+  there: its `dissentsVoided` count divides its weight in later draws
+  (item 2), so one void is free once and dearer each time after.
 
 **Rapture and gen-5.** Exclusion, the records and the reduced panel all
 draw from the same pool: bonded, Rapture-holding, `sync`-current nodes
@@ -665,7 +671,7 @@ The crediting cron lives there:
   escrow and refunds stay where they are.
 - Relay-only modes (wager, solo, arcade) never reach the mesh. Whether they
   move onto gauntlets and finality or keep relay-trusted rewards,
-  **labelled**, is a product decision (§19).
+  **labelled**, was a product decision: decided in §19 item 4.
 
 **PB's API needs:**
 - migration **013** `mesh_credits` (012 is already `player_keys`, which
@@ -844,16 +850,32 @@ Decisions that are the user's:
    NodeStake generation 5 enforces it, in phase 2 (§6).
 3. **The reduced panel (§14.1 item 4): decided 25 Oct, adopted.** When
    nine can't be seated, three or more uninvolved operators replay and the
-   majority finalizes, with no slash below nine.
+   majority finalizes, with no slash below nine. It ships in MatchBook
+   gen-5.
+   - **Refined 27 Oct:** it seats only from **7 operators**, because the
+     draw leaves out the host's and the three original seats' operators.
+   - **On 4–6 operators the void stays,** and the dissenter is demoted:
+     its `dissentsVoided` count divides its weight in later draws.
 4. **AF relay-only modes (§14.2): decided 25 Oct.**
    - **Wager** moves onto gauntlets and mesh finality, because it pays
      between players. **When no host is available, the escrow is
      refunded** (27 Oct).
+   - **Refined 27 Oct: wager settles as a ranked match, final on chain.**
+     That pays in about 5–7 minutes (up to 120 s of custody, then the
+     300 s attest window), where the off-chain path waits out the 1 h
+     dispute window.
+   - **The switch waits for 4 operators online,** the quorum a ranked
+     commit needs. Until then wager stays relay-trusted, labelled as the
+     studio's word, on testnet credits only.
    - **Solo and arcade** keep relay-trusted rewards, labelled as the
      studio's word.
 5. **The dispute window for off-chain credits (§14.2): decided 25 Oct,
    1 h.** The game shows the result as **"pending"** straight away (27 Oct),
    and credits it once the window passes.
+   - **Refined 27 Oct:** 1 h is a default each studio sets in its own
+     crediting job, not a protocol rule, so changing it needs no release.
+   - **Revisit it when §11's challenge path lands.** Until then only a
+     result's custodians can dispute it.
 
 Facts to check during the build (not decisions):
 
