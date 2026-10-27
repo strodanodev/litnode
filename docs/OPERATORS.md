@@ -5,7 +5,7 @@ your own wallet, make it reachable, and keep it running. It takes about
 30 minutes. Everything happens on the **litVM LiteForge testnet**, so the
 tokens are free and have no value.
 
-Written for litnode **0.12.2** (protocol 4, settlement v4). Deeper references:
+Written for litnode **0.12.3** (protocol 4, settlement v4). Deeper references:
 [HOST-A-NODE.md](HOST-A-NODE.md) (the `npm run host` harness, command by
 command) and [RUNBOOK.md](RUNBOOK.md) (keys, releases, evidence).
 

@@ -3,12 +3,27 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.12.3] — 2026-10-28 — host an RO3Emu server through the node's own tunnel; arcade key proofs
 
-Protocol 4, unchanged. No contract, ruleset or bundle hash changes. The cabinet changes; redeploy it with the next
-release.
+Protocol 4, unchanged: 0.12.0 through 0.12.3 nodes are peers. The heartbeat gains an optional `ro3` field, which
+older nodes ignore and forward as part of the signed envelope. No contract, ruleset or bundle hash changes. The
+cabinet changes; redeploy it with this release.
 
 ### Added
+- **RO3Emu hosting through the node's own quick tunnel** (`node/ro3.js`, off unless `RO3_PORT` is set).
+  - **Hosting:** an operator who runs RO3Emu with `--tunnel-port 5480` sets `RO3_PORT=5480` (and optionally
+    `RO3_NAME`). The node runs a free Cloudflare quick tunnel to that loopback port. That port is RO3Emu's
+    "tunnel front", which serves only the player paths and never the admin tools.
+  - **Verify, then advertise:** the URL goes into the heartbeat as `ro3: { url, name }` only after
+    `GET /ro3emu/status` answers through it, the same check the node and relay tunnels get.
+  - **Watch:** the node withdraws the URL after 3 failed checks and restarts cloudflared for a fresh hostname after
+    6. A name that never verifies is rotated after 5 minutes.
+  - **Finding a server:** `GET /ro3/hosts` lists the RO3 servers that peers advertised in the last 60 s, plus this
+    node's own (`self: true`). A player's `RO3Emu.exe join litnode[:name]` asks its own node there at start and
+    again whenever the tunnel stops answering, so a host restart (a new trycloudflare name) is followed without
+    anyone copying a link.
+  - `/health` `tunnel.ro3` reports the state, URL, last check and rotations. The new section in
+    `docs/OPERATORS.md` covers it, and `demo/ro3.test.mjs` tests it.
 - **`cabinet:sign-key`: a player proves its arcade key to the title's own service, outside a match.**
   - **What the shell signs:** `{ aud, nonce, player, rulesetId }`, under the `key` tag. Only the launched title's
     `rulesetId` goes in, so a proof made for one title never verifies for another, and `aud` names the service that
