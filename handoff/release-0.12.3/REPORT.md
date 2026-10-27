@@ -1,10 +1,21 @@
 # 0.12.3: merge and cross-session check (28 Oct 2026)
 
-All of this is local. Nothing is pushed, tagged, released or registered from this session.
+Nothing was pushed, tagged, released or registered from this session.
 
-## Where master is
+## Release status (03:30 local)
 
-master `b7b55d1` is version **0.12.3**. It is 35 commits ahead of `origin/master` (`3482ee0`, v0.12.1). No v0.12.2 or v0.12.3 tag exists.
+**litnode v0.12.3 is published** as GitHub's Latest release, at 19:14Z from `34f4c12`, which was pushed at 03:11.
+- **Not checked:** registration on ReleaseRegistry. The 0.12.3 `release.json` isn't in this checkout's `dist/`.
+- **Desktop:** still 0.12.1 (protocol 4, 2 peers). Its last update check predates the release.
+
+**master is ahead of `origin/master` by:**
+- `b7b55d1`: the `/ro3/hosts` bonded-only fix. It is **not in the published 0.12.3** and ships in the next release (0.12.4).
+  - Its CHANGELOG lines are under `[Unreleased]`, which another session wrote into the file concurrently; the `[0.12.3]` section matches the release.
+- This report's commits.
+
+## What 0.12.3 contains
+
+Release commit `34f4c12`, 32 commits after v0.12.1 (`3482ee0`).
 
 **Added after this report was first written:**
 - `34f4c12` (in 0.12.3): CHANGELOG lists AFC under `[0.12.3]`, so the release notes cover everything it ships.
