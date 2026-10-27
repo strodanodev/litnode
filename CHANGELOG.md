@@ -11,14 +11,39 @@ cabinet changes; redeploy it with the next release.
 ### Added
 - **AFC (Robot Fighting Championship) joins the mesh as `afc.v1`, an attested title** (`titles/afc.adapter.js`,
   the AFC session's hand-back, unchanged apart from its court key). Ruleset build `e3725bd2…b6a4` (display URL
-  `https://rfc.litvm.games`; the earlier `6371d0f6…42fc` was never registered). Casual only: a bout against the house bot has one participant (`teams [[p], []]`). The court is a dedicated key,
+  `https://rfc.litvm.games`; the earlier `6371d0f6…42fc` was never registered). Casual only: a bout against the
+  house bot has one participant (`teams [[p], []]`). The court is a dedicated key,
   `040bc3d9…c5b5`, pinned in `attestors`; its private half lives only in the AFC Vercel project's env, where the
   court's function re-simulates, pays and signs. `validate()` checks rounds, ticks, hp, the KO/decision rules, each
   seat's `loadoutHash`, the `hmc-match@2` commitments, and stats against the result. Stats: `kos`, `roundsWon`,
   `damageDealt`, `hits`, `parries` (sum), `maxCombo` (max), `fastestKoTicks` (min). Its verifier,
   `14336181…e8e9`, reproduces a bout's StreamHash from the match file the node holds; once it is registered, AFC
-  results settle `checkable`. The arcade lists AFC as attested with arcade sign-in at `rfc.litvm.games`, with no Find match (`queue: false`, new) until its PvP bundle and ranked ship. `demo/afc.test.mjs` settles a
-  real AFC bout on test nodes. **Not registered yet:** the ruleset and the verifier are user steps.
+  results settle `checkable`. The arcade lists AFC as attested with arcade sign-in at
+  `rfc.litvm.games`, with no Find match (`queue: false`, new) until its PvP bundle and ranked ship.
+  `demo/afc.test.mjs` settles a real AFC bout on test nodes. **Not registered yet:** the ruleset and the verifier
+  are user steps.
+
+## [0.12.3] — 2026-10-28 — host an RO3Emu server through the node's own tunnel; arcade key proofs
+
+Protocol 4, unchanged: 0.12.0 through 0.12.3 nodes are peers. The heartbeat gains an optional `ro3` field, which
+older nodes ignore and forward as part of the signed envelope. No contract, ruleset or bundle hash changes. The
+cabinet changes; redeploy it with this release.
+
+### Added
+- **RO3Emu hosting through the node's own quick tunnel** (`node/ro3.js`, off unless `RO3_PORT` is set).
+  - **Hosting:** an operator who runs RO3Emu with `--tunnel-port 5480` sets `RO3_PORT=5480` (and optionally
+    `RO3_NAME`). The node runs a free Cloudflare quick tunnel to that loopback port. That port is RO3Emu's
+    "tunnel front", which serves only the player paths and never the admin tools.
+  - **Verify, then advertise:** the URL goes into the heartbeat as `ro3: { url, name }` only after
+    `GET /ro3emu/status` answers through it, the same check the node and relay tunnels get.
+  - **Watch:** the node withdraws the URL after 3 failed checks and restarts cloudflared for a fresh hostname after
+    6. A name that never verifies is rotated after 5 minutes.
+  - **Finding a server:** `GET /ro3/hosts` lists the RO3 servers that peers advertised in the last 60 s, plus this
+    node's own (`self: true`). A player's `RO3Emu.exe join litnode[:name]` asks its own node there at start and
+    again whenever the tunnel stops answering, so a host restart (a new trycloudflare name) is followed without
+    anyone copying a link.
+  - `/health` `tunnel.ro3` reports the state, URL, last check and rotations. The new section in
+    `docs/OPERATORS.md` covers it, and `demo/ro3.test.mjs` tests it.
 - **`cabinet:sign-key`: a player proves its arcade key to the title's own service, outside a match.**
   - **What the shell signs:** `{ aud, nonce, player, rulesetId }`, under the `key` tag. Only the launched title's
     `rulesetId` goes in, so a proof made for one title never verifies for another, and `aud` names the service that

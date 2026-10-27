@@ -203,7 +203,14 @@ test('server bundle: an operator node that opted in fetches the publisher\'s bun
 
 test('server bundle: npm run bundle:server packs Agent Fighter\'s real server; a second node fetches it by hash and plays a match with the title\'s own bots', { skip: !haveAf && `no Agent Fighter checkout with node_modules at ${AF}`, timeout: 420_000 }, async (t) => {
   const { bundleServer } = await import('../tools/bundle-server.mjs');
-  const spec = JSON.parse(readFileSync(join(ROOT, 'gauntlets', 'agent-fighter.server.json'), 'utf8'));
+  const shipped = JSON.parse(readFileSync(join(ROOT, 'gauntlets', 'agent-fighter.server.json'), 'utf8'));
+  // The bots play faster than real time, which Agent Fighter's pace limits stop: past 20x the server drops a PvP
+  // input, the lockstep bots wait on it, and the 30 s idle check settles the match 'incomplete'. AF_NO_PACE_CHECK
+  // lifts them, and it rides in THIS test's bundle: a title's process inherits only the OS basics (node/gauntlet.js
+  // INHERITED_ENV, since 0.12.0) and a bundle passes only its manifest's env, so the flag in this process never
+  // reached the server. The shipped spec leaves it out: those limits guard every operator's matches.
+  assert.equal(shipped.env?.AF_NO_PACE_CHECK, undefined, 'the shipped spec keeps Agent Fighter\'s pace limits on');
+  const spec = { ...shipped, env: { ...shipped.env, AF_NO_PACE_CHECK: '1' } };
   const tmp = mkdtempSync(join(tmpdir(), 'lit-sbaf-'));
   const nodes = [];
   t.after(async () => { for (const n of nodes.splice(0)) await n.stop().catch(() => {}); rmSync(tmp, { recursive: true, force: true }); });
@@ -221,10 +228,7 @@ test('server bundle: npm run bundle:server packs Agent Fighter\'s real server; a
   const RULESET = join(ROOT, 'rulesets', 'agent-fighter.v1.js');
   const pub = await createNode({ dataDir: join(tmp, 'pubnode'), offline: true, heartbeatMs: 200, operator: 'studio', roles: ['mesh', 'witness'], rulesets: [RULESET], gauntletServers: { 'agent-fighter.v1': tgz }, gauntletPort: 0 });
   nodes.push(pub);
-  // The operator: no checkout, no config file, just the opt-in. Bots play faster than real time; the bundled
-  // server inherits AF_NO_PACE_CHECK from this process as it would from an operator's environment.
-  process.env.AF_NO_PACE_CHECK = '1';
-  t.after(() => { delete process.env.AF_NO_PACE_CHECK; });
+  // The operator: no checkout, no config file, just the opt-in. The bundle it fetches carries its own env.
   const op = await createNode({ dataDir: join(tmp, 'op'), offline: true, heartbeatMs: 200, operator: 'guild', roles: ['mesh', 'host', 'settler'], rulesets: [RULESET], gauntletServers: { 'agent-fighter.v1': null }, trustedPublishers: [publisher.publicKey], gauntletPort: 0, seeds: [pub.addr] });
   nodes.push(op);
   assert.ok(await until(() => op.servers().current['agent-fighter.v1']?.serverHash === b.hash, 60_000), `fetched: ${JSON.stringify(op.servers())}`);
