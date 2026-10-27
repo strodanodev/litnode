@@ -4,7 +4,14 @@ All of this is local. Nothing is pushed, tagged, released or registered from thi
 
 ## Where master is
 
-master `d8582be` is version **0.12.3**. It is 32 commits ahead of `origin/master` (`3482ee0`, v0.12.1). No v0.12.2 or v0.12.3 tag exists.
+master `b7b55d1` is version **0.12.3**. It is 35 commits ahead of `origin/master` (`3482ee0`, v0.12.1). No v0.12.2 or v0.12.3 tag exists.
+
+**Added after this report was first written:**
+- `34f4c12`: CHANGELOG now lists AFC under `[0.12.3]`, so the release notes cover everything it ships.
+  - `tools/release.mjs` takes the notes from the top section. Before this, a 0.12.3 release would have been titled "[Unreleased]".
+  - AFC's registration was read back from TitleRegistry: ruleset `e3725bd2` and verifier `14336181`, both active, publisher `0x04bE…a378`.
+- `b7b55d1`: `/ro3/hosts` lists only bonded peers' servers, with each entry's operator and staking wallet. This fixes finding 1.
+- Full suite on `b7b55d1`: **294/294**.
 
 Since v0.12.1 it carries the following.
 
@@ -23,8 +30,7 @@ Since v0.12.1 it carries the following.
 - Branch `afc-v4` was fast-forwarded onto master at 02:35 by the AFC session, at your choice there (`00a3ff0`).
 - Build `e3725bd2…` and verifier `14336181…` were registered on TitleRegistry at 18:42Z.
 - That session ran `npm test` at 293/293 on `00a3ff0`.
-- **Version mismatch.** `package.json` says 0.12.3, but CHANGELOG lists AFC under a new `[Unreleased]` heading above `[0.12.3]`. A release cut from master's tip would contain AFC without listing it.
-- Before releasing, either fold the AFC entry into `[0.12.3]`, or release this tip as 0.12.4.
+- **Version mismatch (fixed in `34f4c12`).** CHANGELOG listed AFC under a new `[Unreleased]` heading while `package.json` said 0.12.3. The entry now sits in `[0.12.3]`.
 
 **Fixes from this session:**
 - `ff13d6b`: the Agent Fighter bundle test passes its pace flag through the bundle.
@@ -40,7 +46,8 @@ All suite runs had TEMP/TMP on E:, because C: is full.
 |---|---|
 | `8cae9ed` (before tonight) | 286/287; the one failure was the AF bundle flake, explained below |
 | `68cd3ac` (0.12.3, before AFC) | **290/290** |
-| `d8582be` (tip: AFC and the top-bar fix) | **293/293** |
+| `d8582be` (AFC and the top-bar fix) | **293/293** |
+| `b7b55d1` (tip: plus the changelog fold and RO3 bonded-only listing) | **294/294** |
 
 **AF bundle flake: fixed in `ff13d6b`.**
 - **Cause:** since 0.12.0 a title's process inherits only the OS basics, and a bundle passes only its manifest's `env`. So the test's own `AF_NO_PACE_CHECK` never reached the bundled server.
@@ -90,10 +97,11 @@ Their worktrees still exist under `.claude/worktrees/` and `E:/NPC/litnode-guard
 
 ## Open findings
 
-1. **`/ro3/hosts` trusts any peer (for the 0.12.3 update).**
-   - It lists the RO3 server of every node this node has heard from, bonded or not, and `ro3Entry` accepts any https origin.
-   - An unbonded node could advertise a lookalike-named server and collect players' RO3 logins.
-   - Suggested fix: list only bonded peers, and show the operator and node id beside the name.
+1. **`/ro3/hosts` trusted any peer. Fixed in `b7b55d1`.**
+   - It listed the RO3 server of every node it had heard from, bonded or not. An unbonded node could advertise a lookalike-named server and collect players' RO3 logins.
+   - Now, with NodeStake, only peers the chain shows bonded are listed. A dev mesh with no chain lists everyone.
+   - Each entry carries `operator` and `wallet`.
+   - **Follow-up for the RO3 session:** RO3Emu's client (`src/Ro3Emu.Setup/TunnelBridge.cs`, branch `litnode-tunnel`) reads only `nodeId`, `name`, `url` and `seenAt`. It picks the newest host by name, so two bonded servers with the same name are still picked newest-first. Showing `operator` and `wallet`, or matching on them, is that repo's change.
 2. **The gauntlet readiness check can mistake another process for its own server** (`node/gauntlet.js`, `canConnect`).
    - A port free on 127.0.0.1 can still be taken on `::`. The title's server then dies with `EADDRINUSE`, but the node marks the match up because another listener answers.
    - The desktop node, test runs and other sessions all use 7820–7859 on this machine.
