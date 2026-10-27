@@ -37,7 +37,7 @@ every name below.
 |---|---|
 | `GET /health` | `nodeId operator roles region addr epoch peers rulesets{rulesetId: buildHash} buildsHeld staking bonded chain.{offline,rpc,head,lastError} startedAt uptimeMs inbound.{peers,lastAt,reachable} profiles version cabinet.version` — the cabinet compares `cabinet.version` with its own `cabinet/version.js` and flags a copy that is not the node's (0.11.12) |
 | `GET /profile?player=` | `player profiles owner tokenId active name` — the profile card; `profiles` is `unset` until `PlayerProfile` is deployed |
-| `GET /peers` | `peers[].{nodeId operator addr region roles fresh bonded clockSkewS rulesets}` |
+| `GET /peers` | `peers[].{nodeId operator addr region roles fresh bonded clockSkewS rulesets protocol wallet witnessEligible}` — `wallet` and `witnessEligible` (0.12.2) are the chain's word for the key; the ranked-capacity notice (`cabinet/quorum.js`) counts distinct `wallet`s, falling back to `operator` labels only for a node that predates them |
 | `GET /snapshot` | `epoch peers[] manifests{rulesetId: {buildHash, services, …}} root staking` — the fold uses `manifests[rid].services`; placement verification uses `peers` and `root` |
 | `GET /progress?ruleset=[&player=][&scope=pending][&limit=]` | `rulesetId scope source cursor counts version digest rules` + with `player`: `player matches wins losses draws xpTotal level xp xpForNext streak bestStreak rating lastMatchId`; without: `players ranking[]` (level, XP, wins). Folded from ranked results FINAL on chain (protocol/progression.js); `scope=pending` adds settled, not yet final (0.11.21) |
 | `GET /leaderboard?ruleset=[&by=owner]` | `rulesetId by deriveVersion digest skipped leaderboard[].{rank player rating}` — `by=owner` folds bound keys into their wallet |
@@ -127,8 +127,8 @@ Agent Fighter, 17 Sep 2026 (AF commit `b362c87`):
 
 Acceptance (unchanged): a match started with *Find match* appears in that
 player's record on the cabinet, co-signed by a node under another
-operator. To run it live: push AF `b362c87`, redeploy the relay (tunnel or
-Railway), redeploy the cabinet, and play one match from *Find match*.
+operator. To run it live: push AF `b362c87`, redeploy the relay (the
+`litnode-relay` task on the publisher's node; Railway is retired), redeploy the cabinet, and play one match from *Find match*.
 
 What AF still gates on: online play requires AIR sign-in, which is blocked
 inside the cabinet's iframe by AF's `frame-ancestors`. Until the allowlist

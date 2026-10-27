@@ -29,6 +29,7 @@ import { createTunnel } from './tunnel.js';
 import { createGauntlets } from './gauntlet.js';
 import { openBundle, writeFiles, configFromBundle, runtimeOk, permanent, MANIFEST_NAME, MAX_BUNDLE_BYTES } from './server-bundle.js';
 import { createServices as createPublisherServices } from './publisher-services.js';
+import { policyOf, scanDataDir } from './secrets.js';
 import { keepMapped } from './upnp.js';
 import { createAnnouncer } from './announce.js';
 import { createAirVerifier } from './air.js';
@@ -141,6 +142,8 @@ export async function createNode({
   // beyond this node's own view. `matchBookFromBlock`: where a fresh node
   // starts reading the log (the deploy block); `matchBookWindows` in seconds.
   matchBook: matchBookAddr = null, gasRefund = null, matchBookFromBlock = 0, matchBookWindows = { attestWindow: 120, escalationWindow: 300 }, matchBookDrive = true,
+  // Custody before settle (0.12.2): false makes this node neither wait for its seats nor take custody as one, as 0.12.1 (tests: a mixed fleet).
+  matchBookCustody = true,
   // EpochAnchor v3: the settler proposes each frozen hour's root over the chain-finalized set from its delegate.
   epochAnchor = null,
   // ERC6699Registry (this project's proposed interface): characters for
@@ -177,6 +180,9 @@ export async function createNode({
   // Each match's process output, kept per title under <dataDir>/gauntlet-logs (node/gauntlet.js openProcessLog):
   // { maxBytes, keep } override the size cap per file and the files kept per title; { dir: null } keeps none.
   gauntletLogs = {},
+  // Secrets rule (node/secrets.js, docs/SETTLEMENT-ARCHITECTURE.md §11): 'warn' reports a publisher secret in a
+  // service's or gauntlet's environment; 'strict' (Season 0) refuses to start that process.
+  secretsPolicy = 'warn',
   // Server bundles (node/server-bundle.js): a gauntlet title's match server as a hashed artifact.
   // { rulesetId: null } opts in to fetching the title's bundle from peers (admitted by TitleRegistry or a
   // TRUSTED_PUBLISHERS signature) and running it; { rulesetId: '<path>.tgz' } is this operator's own file (the
@@ -554,12 +560,15 @@ export async function createNode({
     chatStamp: () => chatStamp(), // defined below; only called at settle time
   });
   const canSettle = roles.some((r) => ['host', 'settler', 'relay'].includes(r));
+  const CUSTODY_TAG = 'custody'; // a seat's receipt for a ledger it holds before the host settles (POST /custody)
   const isWitness = roles.includes('witness');
   if (matchBookAddr && !offline) {
     mbook = createMatchBook({
       dataDir, nodeId, contract: matchBookAddr, stakeContract: nodeStake, epochAnchor, chainId: chainId ?? 4441, rpc: chain.rpc, fromBlock: matchBookFromBlock, log, emit, settlement,
       hostAddr: (hostKey) => (hostKey === nodeId ? addr : heartbeats.get(hostKey)?.addr ?? null),
       rulesetIds: () => [...loaded.keys()], hasRole: (r) => roles.includes(r), windows: matchBookWindows, drive: matchBookDrive, fetchImpl: globalThis.fetch, baseFee: chain.baseFeeWei, gasRefund,
+      // a seat counts toward the host's custody wait only when its own heartbeat says it takes custody (0.12.2 and later)
+      custody: matchBookCustody ? { capable: (k) => (heartbeats.get(k)?.custody ?? 0) >= 1, seal: (body) => seal(CUSTODY_TAG, body, identity) } : null,
     });
   }
   /** /health.settlement (v4): what this node does with proof levels, logs and verifiers — read by a court
@@ -770,6 +779,8 @@ export async function createNode({
     ...(serverCurrent.size ? { servers: Object.fromEntries([...serverCurrent].map(([rid, e]) => [rid, e.hash]).sort()) } : {}),
     // Publisher services this node runs (reachable at <wsAddr>/svc/<name>): how a game client finds its backend.
     ...(serviceBundles.length ? { services: serviceBundles.flatMap((b) => Object.keys(b.services).map((n) => `${b.prefix}.${n}`)).sort() } : {}),
+    // A witness that takes custody before settle (0.12.2): a host waits for such seats only. Not in the snapshot root.
+    ...(mbook && isWitness && matchBookCustody ? { custody: 1 } : {}),
     buildHashes: buildHashes(), manifests: manifests(), epoch: epochOf(Date.now()),
     // who we reached in the last ten seconds and how fast (16 hex of the key, ms) — the mesh's edges, for /fleet.graph on any node; not part of the snapshot root
     links: [...heartbeats.values()].filter((b) => b.nodeId !== nodeId && b.addr && Date.now() - (links.get(b.addr)?.okAt ?? 0) < 10_000).map((b) => ({ id: b.nodeId.slice(0, 16), ms: links.get(b.addr).emaMs })),
@@ -933,6 +944,15 @@ export async function createNode({
     return s;
   };
 
+  // ---------------------------------------------------------------- secrets (node/secrets.js)
+  // Names and paths only, never values. The data folder is rescanned at most every 10 minutes.
+  let dataScan = { at: 0, findings: [] };
+  const secretsStatus = () => {
+    if (Date.now() - dataScan.at > 600_000) dataScan = { at: Date.now(), findings: scanDataDir(dataDir) };
+    const services = (publisherServices?.status() ?? []).filter((x) => x.secrets?.length).map((x) => ({ name: x.name, secrets: x.secrets }));
+    return { policy: policyOf(secretsPolicy), clean: !dataScan.findings.length && !services.length, dataDir: dataScan.findings.map(({ path, kind }) => ({ path, kind })), services };
+  };
+
   // ---------------------------------------------------------------- hydration by hash
   const hydrateMissing = async (s) => {
     for (const [rid, m] of Object.entries(s.manifests)) {
@@ -985,6 +1005,8 @@ export async function createNode({
       payload.deltas = adverts();
       // MatchBook hints: the transaction hashes of the matches this node touched today — a peer verifies each from its receipt, never from our word
       payload.hints = mbook ? mbook.hints() : [];
+      // Settles this host holds until its seats hold the ledger: each seat pulls it outbound and sends a receipt (POST /custody)
+      payload.custody = mbook ? mbook.custodyAdverts() : [];
       matchesNow();
       payload.matches = matchEnvelopes();
       const body = JSON.stringify(payload);
@@ -1116,6 +1138,7 @@ export async function createNode({
     // Ranked placed results are witnessed from the chain (node/matchbook.js); everything else by its custody set.
     if (isWitness) for (const ad of list(msg.deltas)) void witnessOne(ad);
     if (mbook && Array.isArray(msg.hints)) mbook.absorbHints(msg.hints);
+    if (mbook && Array.isArray(msg.custody)) mbook.absorbCustody(msg.custody);
   };
 
   /** Witness role: fetch the ledger and the delta, replay independently,
@@ -1420,7 +1443,7 @@ export async function createNode({
           // v3 bond: witnessEligible, delegate, bondedSince; `admin` says whether NodeStake's admin is a multisig/timelock ('contract') or a wallet ('eoa'). null = v2 contract or unread.
           bond: myBond ? { eligible: myBond.eligible, delegate: myBond.delegate, bondedSince: myBond.bondedSince ? new Date(myBond.bondedSince * 1000).toISOString() : null, unbondAt: myBond.unbondAt ? new Date(myBond.unbondAt * 1000).toISOString() : null, amount: myBond.amount.toString() } : null,
           admin: stakeAdmin === null ? null : stakeAdmin ? 'contract' : 'eoa', matchBook: mbook ? mbook.status() : matchBookAddr ? { contract: matchBookAddr, offline: true } : null, chain: chain.status(), profiles: profileState(), version, repair: sdkMissing, update: updater.status(),
-          sandbox: sandbox.status(), trust: { policy: titleTrust, publishers: trustedPublishers, titleRegistry: titleRegistry ?? null, relayKeys, courts: Object.keys(courts) }, registry: registry ? 'chain' : erc6699 ? 'offline' : 'unset',
+          sandbox: sandbox.status(), secrets: secretsStatus(), trust: { policy: titleTrust, publishers: trustedPublishers, titleRegistry: titleRegistry ?? null, relayKeys, courts: Object.keys(courts) }, registry: registry ? 'chain' : erc6699 ? 'offline' : 'unset',
           cabinet: { version: CABINET_VERSION }, // the copy this node serves at /; a cabinet loaded from elsewhere compares its own
           relay: relayFront ? relayStatus() : null, // the relay tunnel as a WebSocket client sees it: verified before it is advertised
           wsAddr, lanAddr, tunnel: { node: tunnels.node?.status() ?? null, relay: tunnels.relay?.status() ?? null }, upnp: upnpCtl?.status() ?? null, gauntlet: gauntlet?.status() ?? null, gauntletServers: Object.keys(gauntletServers).length || servers.size ? serverStatus() : null, guardian: (({ matches, reports, flagged }) => ({ matches, reports, flagged: flagged.length }))(guardianSummary()),
@@ -1457,6 +1480,9 @@ export async function createNode({
         return json(res, 200, { peers: [...heartbeats.values()].map((b) => ({
           nodeId: b.nodeId, operator: b.operator, addr: b.addr, region: b.region, roles: b.roles,
           fresh: b.epoch >= epochOf(now) - 2, bonded: stakes ? !!stakes[b.nodeId]?.active : null,
+          // The staking wallet and witness eligibility the chain gives this key (0.12.2): what MatchBook counts as an
+          // operator. `operator` above is the label the node chose for itself. null = not read (or no NodeStake).
+          wallet: stakes?.[b.nodeId]?.operator?.toLowerCase() ?? null, witnessEligible: typeof stakes?.[b.nodeId]?.eligible === 'boolean' ? stakes[b.nodeId].eligible : null,
           // Their clock minus ours, in seconds, at their last heartbeat. A peer
           // more than ~4 s behind never reads as fresh: that is clock skew,
           // not a dead node (BUILD-SPEC §16).
@@ -1498,6 +1524,7 @@ export async function createNode({
           queue: [...queueEnvelopes.values()],
           deltas: adverts(),
           hints: mbook ? mbook.hints() : [],
+          custody: mbook ? mbook.custodyAdverts() : [],
           matches: matchEnvelopes(),
           // the chat window — or the whole ring when the pusher's newest is further behind ours than the window (a restart, a partition)
           chat: chatEnvelopes(Number.isFinite(msg?.chatNewest) && chatNewest() - msg.chatNewest > CHAT_PUSH_WINDOW_MS), chatNewest: chatNewest(),
@@ -1576,12 +1603,17 @@ export async function createNode({
           return json(res, 200, d);
         } catch (e) { emit('refused', { what: 'ledger', reason: e.message }); return json(res, 400, { error: e.message }); }
       }
+      // A seat serves the ledgers it holds in custody too (0.12.2): a reader checks what it fetched against the chain's
+      // ledgerHash, so any holder is as good as the host.
       if (req.method === 'GET' && url.pathname.startsWith('/ledger/')) {
-        const l = settlement.ledger(decodeURIComponent(url.pathname.slice(8)));
+        const id = decodeURIComponent(url.pathname.slice(8));
+        const l = settlement.ledger(id) ?? mbook?.held(id)?.ledger ?? null;
         return l ? json(res, 200, l) : json(res, 404, { error: 'unknown match' });
       }
       if (req.method === 'GET' && url.pathname.startsWith('/delta/')) {
-        const d = settlement.delta(decodeURIComponent(url.pathname.slice(7)));
+        const id = decodeURIComponent(url.pathname.slice(7));
+        // this node's own result, else a seat's custody copy — which a results screen reads with ?chain=1 too
+        const d = settlement.delta(id) ?? mbook?.held(id)?.delta ?? null;
         // ?chain=1: the same chain view /deltas gives, so a results screen can tell "final on MatchBook" from one
         // route. Opt-in: witnesses and custodians fetch the delta itself here, and must get it unannotated.
         if (!d) return json(res, 404, { error: 'unknown match' });
@@ -1602,6 +1634,15 @@ export async function createNode({
         let ds = settlement.list(url.searchParams.get('ruleset') ?? undefined, { scope: url.searchParams.get('scope') === 'official' ? 'official' : 'all' });
         if (who) ds = ds.filter((d) => d.participants?.includes(who));
         return json(res, 200, { deltas: withChain(ds) });
+      }
+      // Custody before settle: a seat says it holds the ledger this host is about to settle (node/matchbook.js acceptReceipt)
+      if (req.method === 'POST' && url.pathname === '/custody') {
+        if (!mbook) return json(res, 404, { ok: false, reason: 'no MatchBook here' });
+        const env = await readBody(req).catch(() => null);
+        const b = env?.body;
+        if (!b || typeof b.matchId !== 'string' || typeof b.ledgerHash !== 'string' || b.seat !== env.signer) return json(res, 400, { ok: false, reason: 'a custody receipt is signed by the seat it names' });
+        if (!(await checked(CUSTODY_TAG, env))) return json(res, 403, { ok: false, reason: 'bad signature' });
+        return json(res, 200, mbook.acceptReceipt(b));
       }
       if (req.method === 'POST' && url.pathname === '/dispute') {
         const dsp = await readBody(req);
@@ -1827,9 +1868,9 @@ export async function createNode({
   addr ??= `http://${host}:${actualPort}`;
   lanAddr = addr;
   if (runsGateway) {
-    if (serviceBundles.length) publisherServices = createPublisherServices({ bundles: serviceBundles, nodeUrl: `http://127.0.0.1:${actualPort}`, publicBase: () => wsAddr, log, emit });
+    if (serviceBundles.length) publisherServices = createPublisherServices({ bundles: serviceBundles, nodeUrl: `http://127.0.0.1:${actualPort}`, publicBase: () => wsAddr, log, emit, secretsPolicy });
     const upstream = gauntletUpstream ?? (gauntletPort != null && relayPort && gauntletPort !== relayPort ? `ws://127.0.0.1:${relayPort}` : null);
-    gauntlet = createGauntlets({ configs: gauntlets, port: gauntletPort ?? relayPort ?? 0, upstream, nodeUrl: `http://127.0.0.1:${actualPort}`, wsAddr: () => wsAddr, nodeId, log, emit, services: publisherServices,
+    gauntlet = createGauntlets({ configs: gauntlets, port: gauntletPort ?? relayPort ?? 0, upstream, nodeUrl: `http://127.0.0.1:${actualPort}`, wsAddr: () => wsAddr, nodeId, log, emit, services: publisherServices, secretsPolicy,
       logs: gauntletLogs.dir === null ? null : { dir: gauntletLogs.dir ?? join(dataDir, 'gauntlet-logs'), maxBytes: gauntletLogs.maxBytes, keep: gauntletLogs.keep } });
     await gauntlet.listen();
     if (publisherServices) await publisherServices.start({ gatewayPort: gauntlet.port });

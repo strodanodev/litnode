@@ -12,7 +12,7 @@
 import { loadPlayer as loadKeypair, createClient, IDENTITY_KEY } from './client.js';
 import { roomCodeFor } from './protocol/pairing.js';
 import { chainHead, ledgerBody, signLedger } from './protocol/log.js';
-import { signSeat, NONCE_RE } from './protocol/challenge.js';
+import { signSeat, signKeyProof, NONCE_RE, AUD_RE } from './protocol/challenge.js';
 import { sign as signTagged } from './protocol/keys.js';
 const RUN_TAG = 'run'; // sdk/court RUN_TAG: a player's signature over a single-player run
 import { applyDelta, sortDeltas } from './protocol/derive.js';
@@ -23,6 +23,7 @@ import { identicon, fileToAvatar } from './avatar.js';
 import { paintBackdrop } from './bg.js';
 import { sample, slots, uptimePct, fmtDuration, ring, strip, heatmap } from './uptime.js';
 import { readStake } from './chain.js';
+import { rankedCapacity } from './quorum.js';
 import * as wallet from './wallet.js';
 import * as air from './air.js';
 import * as nodeops from './nodeops.js';
@@ -717,9 +718,10 @@ function renderMatchmaking(g) {
  *  operators among fresh bonded nodes that carry the title — the draw's exact rule (build hash, eligibility age,
  *  staking addresses) can only seat fewer, so a warning here is never a false alarm. */
 function rankedShortfall(g) {
-  const operators = new Set(S.peers.filter((p) => p.fresh && p.bonded && (p.rulesets ?? []).includes(g.rulesetId)).map((p) => p.operator));
-  const need = 4;
-  return operators.size < need ? `Ranked plays casual-only right now: going on chain needs a host and three witnesses under ${need} different operators, and ${operators.size} ${operators.size === 1 ? 'is' : 'are'} online with this title. You can still play; the result stays off the official ladder.` : null;
+  const c = rankedCapacity(S.peers, g.rulesetId, { protocol: S.health?.protocol ?? null });
+  if (c.ok) return null;
+  const why = !c.hosts ? 'no host with this title is online' : `${c.operators} ${c.operators === 1 ? 'is' : 'are'} online with this title, and a host finds ${c.seats} witness${c.seats === 1 ? '' : 'es'} under other wallets`;
+  return `Ranked plays casual-only right now: going on chain needs a host and three witnesses under four different staking wallets${c.by === 'label' ? ' (this node names operators by label only: update it to count wallets)' : ''}; ${why}. You can still play; the result stays off the official ladder.`;
 }
 /** Matchmaking is a function of everyone's clock (2 s buckets). A node whose
  *  clock disagrees with its bonded peers computes buckets nobody else has
@@ -1292,6 +1294,17 @@ window.addEventListener('message', async (e) => {
     if (!ok) { frame.contentWindow.postMessage({ type: 'cabinet:seat-signed', matchId: c.matchId ?? null, error: 'not a seat in the match this shell launched' }, '*'); return; }
     const sig = await signSeat(c, player.kp.privateKey);
     frame.contentWindow.postMessage({ type: 'cabinet:seat-signed', matchId: c.matchId, nonce: c.nonce, player: player.id, sig }, '*');
+  }
+  // The title's own service asks the player to prove its arcade key outside a match (protocol/challenge.js KEY_TAG):
+  // Pickle Brawl's API mints a matchmaker ticket that seats the key, not the AIR id. Signed only under the ruleset
+  // of the title this shell launched, as this player, over the service's one-time nonce.
+  if (e.data.type === 'cabinet:sign-key') {
+    const c = e.data.claim ?? {};
+    const ok = current?.rulesetId && player?.kp && typeof c.aud === 'string' && AUD_RE.test(c.aud) && typeof c.nonce === 'string' && NONCE_RE.test(c.nonce);
+    if (!ok) { frame.contentWindow.postMessage({ type: 'cabinet:key-signed', nonce: c.nonce ?? null, error: current?.rulesetId ? (player?.kp ? 'aud or nonce malformed' : 'no player key yet') : 'this title names no ruleset' }, '*'); return; }
+    const claim = { aud: c.aud, nonce: c.nonce, player: player.id, rulesetId: current.rulesetId };
+    const sig = await signKeyProof(claim, player.kp.privateKey);
+    frame.contentWindow.postMessage({ type: 'cabinet:key-signed', ...claim, sig }, '*');
   }
   // A single-player title asks this shell to sign the run log its court will commit (settlement v4, FLOOD CONTROL's
   // daily): sign('run', { rulesetId, inputsHash }) — sdk/court verifyRun is the court's check before it seats this

@@ -42,5 +42,17 @@ export const seatBody = ({ matchId, room, player, nonce }) => ({ matchId, room, 
 export const signSeat = (claim, privateKey) => sign(SEAT_TAG, seatBody(claim), privateKey);
 export const verifySeat = (claim, sig) => verify(SEAT_TAG, seatBody(claim), sig, claim.player);
 
+/** A key proof for a studio service (settlement architecture rev 2 §6): the player proves to the title's own API
+ *  that it holds an arcade key, outside any match, so a service seats that key instead of an AIR id. The arcade
+ *  shell signs it only for the title it launched (cabinet:sign-key): the ruleset is in the body, so a proof made for
+ *  one title never verifies for another, and `aud` names the service that issued the nonce (e.g. 'pb-matchmaker'),
+ *  so a proof for one service is not replayed at another. Single use is the verifier's: it keeps its nonces.
+ *  Pickle Brawl hand-back 11 (25 Oct 2026). */
+export const KEY_TAG = 'key';
+export const AUD_RE = /^[a-z0-9][a-z0-9.-]{0,63}$/;
+export const keyProofBody = ({ aud, nonce, player, rulesetId }) => ({ aud, nonce, player, rulesetId });
+export const signKeyProof = (claim, privateKey) => sign(KEY_TAG, keyProofBody(claim), privateKey);
+export const verifyKeyProof = (claim, sig) => verify(KEY_TAG, keyProofBody(claim), sig, claim.player);
+
 /** A random nonce as hex, from whatever crypto the runtime has (browser or Node). */
 export const newNonce = () => Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');

@@ -28,13 +28,14 @@ import { lanAddress } from '../../node/upnp.js';
 import { loadGauntletConfigs } from '../../node/gauntlet.js';
 import { parseServerOptIns } from '../../node/server-bundle.js';
 import { loadServiceBundles } from '../../node/publisher-services.js';
+import { envSecretLines, scanDataDir, secretNames, POLICIES } from '../../node/secrets.js';
 
 export const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), '..', '..'));
 export const ENV_FILE = 'node.env';
 /** Where node.env and litnode.log live: the code folder, or LITNODE_HOME
  *  (so a config can sit outside the checkout, and tests get a scratch one). */
 export const home = () => (process.env.LITNODE_HOME ? resolve(process.env.LITNODE_HOME) : ROOT);
-export const KNOWN_KEYS = ['OPERATOR', 'ROLES', 'PORT', 'HOST', 'PUBLIC_ADDR', 'SEEDS', 'RULESETS', 'DATA_DIR', 'REGION', 'TUNNEL', 'TUNNEL_NAME', 'TUNNEL_HOST', 'UPNP', 'RELAY_PORT', 'RELAY_TUNNEL_NAME', 'RELAY_TUNNEL_HOST', 'WS_ADDR', 'RELAY_KEYS', 'COURTS', 'VERIFIERS', 'TITLE_TRUST', 'TRUSTED_PUBLISHERS', 'SANDBOX_TIMEOUT_MS', 'SANDBOX_MEMORY_MB', 'RELEASE_CHANNEL', 'RPC', 'RPC_FALLBACK', 'NODE_STAKE', 'NODE_DIRECTORY', 'ANNOUNCE', 'ERC6699', 'OFFLINE', 'AF_ROOT', 'AIR_PARTNER_ID', 'AIR_JWKS_URL', 'AIR', 'TITLE_REGISTRY', 'STAKE_TOKEN', 'RELEASE_REGISTRY', 'MATCH_BOOK', 'GAUNTLETS', 'GAUNTLET_SERVERS', 'GAUNTLET_UPSTREAM', 'GAUNTLET_GATEWAY_PORT', 'SERVICES', 'SERVICE_NAME'];
+export const KNOWN_KEYS = ['OPERATOR', 'ROLES', 'PORT', 'HOST', 'PUBLIC_ADDR', 'SEEDS', 'RULESETS', 'DATA_DIR', 'REGION', 'TUNNEL', 'TUNNEL_NAME', 'TUNNEL_HOST', 'UPNP', 'RELAY_PORT', 'RELAY_TUNNEL_NAME', 'RELAY_TUNNEL_HOST', 'WS_ADDR', 'RELAY_KEYS', 'COURTS', 'VERIFIERS', 'TITLE_TRUST', 'TRUSTED_PUBLISHERS', 'SANDBOX_TIMEOUT_MS', 'SANDBOX_MEMORY_MB', 'SECRETS_POLICY', 'RELEASE_CHANNEL', 'RPC', 'RPC_FALLBACK', 'NODE_STAKE', 'NODE_DIRECTORY', 'ANNOUNCE', 'ERC6699', 'OFFLINE', 'AF_ROOT', 'AIR_PARTNER_ID', 'AIR_JWKS_URL', 'AIR', 'TITLE_REGISTRY', 'STAKE_TOKEN', 'RELEASE_REGISTRY', 'MATCH_BOOK', 'GAUNTLETS', 'GAUNTLET_SERVERS', 'GAUNTLET_UPSTREAM', 'GAUNTLET_GATEWAY_PORT', 'SERVICES', 'SERVICE_NAME'];
 /** The arcade's AIR partner app (cabinet/config.js AIR.partnerId); `host init` pins tokens to it unless --no-air. */
 export const AIR_PARTNER_ID = '62e01755-138f-4e58-9cdc-fab71e037afd';
 export const ALL_ROLES = ['mesh', 'host', 'witness', 'settler'];
@@ -93,6 +94,7 @@ export function validateEnv(env) {
   if (env.TUNNEL === 'named' && !(env.TUNNEL_NAME && env.TUNNEL_HOST)) errors.push('TUNNEL=named needs TUNNEL_NAME and TUNNEL_HOST');
   if (env.TITLE_TRUST && !['trusted', 'open'].includes(env.TITLE_TRUST)) errors.push('TITLE_TRUST must be trusted or open');
   if (env.RELEASE_CHANNEL && !['stable', 'canary'].includes(env.RELEASE_CHANNEL)) errors.push('RELEASE_CHANNEL must be stable or canary');
+  if (env.SECRETS_POLICY && !POLICIES.includes(env.SECRETS_POLICY)) errors.push(`SECRETS_POLICY must be ${POLICIES.join(' or ')}`);
   // effectiveConfig falls back to 'litnode' on a bad name; refusing it here stops a typo from silently taking the first node's task.
   if (env.SERVICE_NAME && !/^[A-Za-z0-9._-]{1,64}$/.test(env.SERVICE_NAME)) errors.push(`SERVICE_NAME "${env.SERVICE_NAME}" must be 1-64 of A-Z a-z 0-9 . _ -`);
   return errors;
@@ -395,6 +397,37 @@ export async function preflight(cfg, { env = readEnv(cfg.home), fetchImpl = fetc
     if (cfg.afRoot && cfg.relayPort && cfg.gauntletGatewayPort == null) problems.push(`the gateway would take RELAY_PORT ${cfg.relayPort}, where the Agent Fighter relay listens; set GAUNTLET_GATEWAY_PORT (e.g. 8478)`);
     if (cfg.gauntletGatewayPort != null && cfg.gauntletGatewayPort === cfg.relayPort) problems.push('GAUNTLET_GATEWAY_PORT equals RELAY_PORT');
     add('gauntlets', problems.length === 0, problems.length ? problems.join('; ') : `${titles.join(', ')} on gateway :${cfg.gauntletGatewayPort ?? cfg.relayPort ?? '(ephemeral, this machine only)'}`, 'fix GAUNTLETS / GAUNTLET_GATEWAY_PORT (docs/BRING-YOUR-BACKEND.md §6a)');
+  }
+  // Secrets (node/secrets.js, docs/SETTLEMENT-ARCHITECTURE.md §11): this install may hold one stored secret, the
+  // node's own key. Names and paths are reported, never values.
+  {
+    const found = [];
+    const own = secretNames(env ?? {});
+    if (own.length) found.push(`node.env: ${own.join(', ')}`);
+    if (cfg.services) {
+      try {
+        for (const b of loadServiceBundles(cfg.services, { root: cfg.root })) {
+          const files = new Set([...(b.envFiles ?? []), ...Object.values(b.services).flatMap((x) => x.envFiles ?? [])]);
+          for (const f of files) {
+            const p = isAbsolute(f) || /^[A-Za-z]:/.test(f) ? f : join(b.cwd, f);
+            try { const names = envSecretLines(readFileSync(p, 'utf8')); if (names.length) found.push(`${b.prefix}: ${f} carries ${names.join(', ')}`); } catch { /* missing: the services check says so */ }
+          }
+          for (const [name, x] of Object.entries(b.services)) { const n = secretNames({ ...(x.env ?? {}), ...Object.fromEntries((x.inheritEnv ?? []).map((k) => [k, ''])) }); if (n.length) found.push(`${b.prefix}.${name}: env ${n.join(', ')}`); }
+        }
+      } catch { /* the services check reports a bundle that does not load */ }
+    }
+    if (cfg.gauntlets) {
+      try {
+        for (const [rid, g] of Object.entries(loadGauntletConfigs(cfg.gauntlets, { root: cfg.root }))) {
+          const perRun = Object.entries(g.env ?? {}).filter(([, v]) => String(v).includes('${secret}')).map(([k]) => k);
+          const n = secretNames({ ...(g.env ?? {}), ...Object.fromEntries((g.inheritEnv ?? []).map((k) => [k, ''])) }, { except: perRun });
+          if (n.length) found.push(`gauntlet ${rid}: env ${n.join(', ')}`);
+        }
+      } catch { /* the gauntlets check reports it */ }
+    }
+    for (const f of scanDataDir(cfg.dataDir)) found.push(`${join(cfg.dataDir, f.path)}: ${f.detail}`);
+    const strict = env?.SECRETS_POLICY === 'strict';
+    add('secrets', found.length === 0, found.length ? `${found.join('; ')}${strict ? '' : ' (SECRETS_POLICY=warn: reported; Season 0 runs strict and refuses these services)'}` : "only this node's own key (identity.json, announcer.json)", "move each one to the studio's managed env (Vercel) and delete it here; a node keeps only its own key (docs/SETTLEMENT-ARCHITECTURE.md §11). Never copy it to another machine.");
   }
   add('roles', true, `${cfg.roles.join(',')}${bonded ? ' (needs a bond to be placed / co-sign)' : ''}`);
   return { ok: checks.every((c) => c.ok !== false), checks };

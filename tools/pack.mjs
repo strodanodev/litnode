@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { stage, checkStage } from './lib/pack-plan.mjs';
+import { stage, checkStage, scanStage } from './lib/pack-plan.mjs';
 import { createHash } from 'node:crypto';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -64,6 +64,9 @@ for (const kind of kinds) {
   const { stage: dir } = stage(kind, { root, dist, name, runtime, pkg });
   const problems = checkStage(dir);
   if (problems.length) { console.error(`${name}: the staged folder is not whole:\n  ${problems.join('\n  ')}`); process.exit(1); }
+  // No release carries a secret (docs/SETTLEMENT-ARCHITECTURE.md §11): a key file, an env file, credential content.
+  const leaks = scanStage(dir);
+  if (leaks.length) { console.error(`${name}: the staged folder carries secrets (paths only):\n  ${leaks.join('\n  ')}`); process.exit(1); }
   const zip = join(dist, `${name}.zip`);
   rmSync(zip, { force: true });
   execFileSync(tar, ['-a', '-cf', zip, '-C', dist, name], { stdio: 'inherit' });

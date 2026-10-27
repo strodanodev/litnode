@@ -5,9 +5,82 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-Protocol 4, unchanged. No contract, ruleset or bundle hash changes.
+Protocol 4, unchanged. No contract, ruleset or bundle hash changes. The cabinet changes; redeploy it with the next
+release.
 
 ### Added
+- **`cabinet:sign-key`: a player proves its arcade key to the title's own service, outside a match.**
+  - **What the shell signs:** `{ aud, nonce, player, rulesetId }`, under the `key` tag. Only the launched title's
+    `rulesetId` goes in, so a proof made for one title never verifies for another, and `aud` names the service that
+    issued the nonce.
+  - **Checking it:** `verifyKeyProof` in `protocol/challenge.js`.
+  - **Why:** Pickle Brawl's API can now mint a matchmaker ticket that seats the key rather than the AIR id (PB
+    hand-back 11). Before this, `cabinet:sign-seat` refused anything outside a launched match, so tickets carried no
+    key.
+
+### Changed
+- **Pickle Brawl's matchmaker config drops `AIR_*`** (`gauntlets/pickle-brawl.services.json`). The matchmaker no
+  longer sees a player's AIR token. It verifies the API's 10-minute ticket instead.
+
+## [0.12.2] — 2026-10-25 — a ranked ledger outlives its host; seats expire unfed escalations; the arcade counts wallets; a node holds one stored secret
+
+Protocol 4, unchanged: 0.12.0, 0.12.1 and 0.12.2 nodes are peers. No contract, ruleset, placement or result-hash
+change. Gap 3 of `handoff/mesh-gaps/REPORT.md` (options a, b and e), the arcade's operator count, and phase 1 of the
+secrets rule.
+
+### Added
+- **Custody before settle** (`node/matchbook.js`). A ranked host no longer sends `settle` the moment the players'
+  ledger arrives. It names the match in a new gossip field, `custody` (in its pushes and its `/gossip` replies, so a
+  seat behind NAT sees it too). Each seat pulls the delta and the ledger outbound, checks them, keeps them under
+  `<DATA_DIR>/custody/` and sends a signed receipt to the new `POST /custody`. The host settles at the second receipt.
+  The Settled event's `custodians` are now the host and the seats that hold the ledger, not every seat by default.
+  - **Bounded:** the host settles anyway after `custodyHold` (120 s; `matchBookWindows.custodyHold`), never later
+    than the settle window less 30 s. Seats that die mid-match cannot stall it.
+  - **Mixed fleet:** only seats whose heartbeat carries `custody: 1` (0.12.2 and later) count. With 0.12.0 or 0.12.1
+    seats the host needs none and settles at once with `custodians = [host, ...panel]`, exactly as before. A 0.12.1
+    host never asks, and 0.12.2 seats witness it from the Settled event as before.
+  - While the host holds a settle for custody, the player's `POST /ledger` answers at once. It does not wait for
+    the receipts or the settle transaction.
+  - `/health` `matchBook.custody` reports `{ hold, waiting, held }`: the hold in seconds, the settles held now, and
+    the custody copies this node keeps as a seat. `matchBook.windows` still lists only the contract's windows.
+- **Any-holder fetch.** A seat witnessing a settled match takes the delta and the ledger from its own custody copy,
+  then the host, the custodians on the Settled event and the other seats, each with a 15 s timeout. The ledger must
+  hash to the chain's `ledgerHash`, so any source is as good as the host. A seat keeps what it verified and serves it
+  at `GET /ledger/<id>` and `/delta/<id>`; `/delta/<id>?chain=1` annotates a custody copy with the chain's status as it
+  does the node's own results, so a results screen (Agent Fighter's `proof.ts`) asking a seat sees "final", not a bare
+  delta. Its custody copy also feeds `escalate()` and the anchored stats of a final
+  match. Copies go when a match ends void, 48 h after it goes final, and after a week in any case.
+- **`GET /peers` names each key's staking wallet and witness eligibility** (`wallet`, `witnessEligible`): the
+  chain's word, beside the `operator` label the node chose for itself.
+
+### Fixed
+- **A host that dies after settling no longer strands its match** (gap 3). Its seats held the ledger only if the
+  host served it to them after settle, so a crash, a power cut or a withheld ledger left the panel unable to attest
+  or to feed the escalation. Now they hold it before the host settles, and attest from their own copies
+  (`demo/gap-3-ledger-host-only.test.mjs`).
+- **Seats expire unfed escalations.** `drive()` voided an unsettled commit but had no branch for an escalation that
+  nobody fed. The match sat in Escalating, and on every seat's duty list, until an outsider called `expire()`. Now
+  the host, then each seat a stagger later, calls `MatchBook.expire()` once the feed window has passed or the seed
+  block is older than 256 blocks. Nobody is slashed, as the contract has it.
+- **The arcade's "Ranked plays casual-only" notice counts staking wallets** (`cabinet/quorum.js`). It counted the
+  distinct operator labels nodes choose for themselves, so four nodes under one wallet read as four operators while
+  MatchBook refused the panel. It now applies the commit's rule: a host and three witness-eligible witnesses with the
+  title, on this node's protocol, under four different wallets. Against a node older than 0.12.2 it falls back to
+  labels and says so.
+
+### Added (since 0.12.1, before the mesh-gaps work)
+- **The secrets rule** (`node/secrets.js`, docs/SETTLEMENT-STANDARD.md §18, settlement architecture rev 2 §11). A
+  litnode install holds one stored secret, the node's own key, and nothing else.
+  - **Services and gauntlets:** one whose environment carries a secret-shaped name (`*_SECRET`, `*SERVICE_KEY`,
+    `DATABASE_URL`, `SUPABASE_*`, a key-file path such as PB's `COURT_IDENTITY`, …) is reported in the log and
+    `/health.secrets`. With `SECRETS_POLICY=strict` it is not started. Season 0 runs strict; the default stays
+    `warn`.
+  - **`npm run host -- doctor`** gets a `secrets` check. It lists every secret-shaped name in `node.env`, the
+    services' env files and configs, and the gauntlet configs. It also lists every key or credential file in the
+    data folder other than `identity.json` and `announcer.json`, including the AIR proxy wallets under `proxies/`.
+  - **`npm run pack`** refuses a staged release that carries a key file, an env file or credential content.
+  - **Reporting:** findings are reported by name and path, never by value. Per-run secrets (`${secret}`,
+    `LITNODE_GAUNTLET_TOKEN`) are exempt.
 - **`sdk/court` carries the placement descriptor.** `envelope()` and `attest()` take an optional `descriptor`, the
   placing node's signed envelope (`GET /match` `envelope`, or the arcade's `cabinet:init.match.descriptor`). It rides
   outside the attested body, so the court's signature does not change, and `checkEnvelope` refuses one that names
@@ -30,6 +103,17 @@ Protocol 4, unchanged. No contract, ruleset or bundle hash changes.
   (`GAUNTLET_LOG_MAX_MB`), the newest 100 per title (`GAUNTLET_LOG_KEEP`); `GAUNTLET_LOGS=0` keeps none. The gateway's
   `/gateway` status names each running match's `log`. The child's environment, which holds the seat secret, is never
   written.
+
+### Changed
+- **Publisher services inherit only the OS basics of the node's environment** (`node/publisher-services.js`), the
+  same allowlist gauntlet servers have had since 0.12.0 (`INHERITED_ENV`). Before, a service got every variable the
+  node had (`AIR_*`, RPC URLs, tunnel settings). **Operators:** if a service read a `node.env` value, list its name in
+  the bundle's or the service's `inheritEnv`.
+- **docs/STANDBY-HOST.md is rewritten:** nothing secret is copied to a second machine. The old page copied AF's
+  `.env` (with `SUPABASE_SERVICE_KEY`), PB's `.env` files and PB's court key to m16. m16 now runs only its node and
+  the AF ranked bundle, and the page lists the undo steps. docs/SECOND-RELAY.md is withdrawn for the same reason.
+- **The settlement standard** adds three rules: no stat repeats a report field (§9.2), register the verifier before
+  promoting a build (§11), and §18 Secrets.
 
 ### Fixed
 - **The Agent Fighter relay task no longer inherits the node's settings** (`portable/run-af-relay.cmd`). It loaded

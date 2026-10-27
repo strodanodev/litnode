@@ -6,10 +6,11 @@
  *  Now every script's entry file is copied together with its relative-import closure, and `checkStage` proves a
  *  staged folder is whole: every script resolves, every relative import inside it resolves, every bare import is a
  *  Node builtin or a declared dependency. demo/pack.test.mjs runs it against a real stage. */
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { builtinModules } from 'node:module';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { scanText } from '../../node/secrets.js';
 
 /** Folders copied whole (minus what git ignores). */
 export const SHIPPED = ['node', 'protocol', 'sdk', 'titles', 'rulesets', 'cabinet'];
@@ -138,5 +139,28 @@ export function checkStage(dir, { extraEntries = ['node/cli.mjs', 'sdk/conforman
     }
   };
   for (const e of entries) walk(resolve(dir, e));
+  return problems;
+}
+
+/** Files no release ever ships, whatever they hold: keys, env files, a node's data. */
+const NEVER_SHIPPED = [/(^|\/)\.env(\.|$)/i, /\.pem$/i, /\.key$/i, /(^|\/)(identity|announcer|release-key|pickle-brawl-court)\.json$/i, /(^|\/)proxies\//i, /(^|\/)data\/node-/i];
+const SCAN_MAX = 2 * 1024 * 1024;
+
+/** The secrets rule for releases (docs/SETTLEMENT-ARCHITECTURE.md §11): a staged folder holds no key file, no env
+ *  file and no credential content (node/secrets.js SECRET_PATTERNS). `runtime/` (the vendored Node binary) and files
+ *  over 2 MB are not read. Returns problems as `<path>: <why>`, never the matched text. */
+export function scanStage(dir) {
+  const problems = [];
+  const walk = (abs) => {
+    for (const e of readdirSync(abs, { withFileTypes: true })) {
+      const full = join(abs, e.name), rel = relative(dir, full).split(sep).join('/');
+      if (e.isDirectory()) { if (rel !== 'runtime' && e.name !== 'node_modules') walk(full); continue; }
+      if (NEVER_SHIPPED.some((r) => r.test(rel))) { problems.push(`${rel}: a key, env or node-data file`); continue; }
+      if (statSync(full).size > SCAN_MAX) continue;
+      const ids = scanText(readFileSync(full, 'utf8'));
+      if (ids.length) problems.push(`${rel}: ${ids.join(', ')}`);
+    }
+  };
+  walk(dir);
   return problems;
 }

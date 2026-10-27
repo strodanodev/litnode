@@ -286,6 +286,8 @@ your game. Transport between players is yours. [BUILD-FROM-SCRATCH.md](BUILD-FRO
 | shell → game | `cabinet:signed { matchId, player, sig }` | or `{ error }` |
 | game → shell | `cabinet:sign-seat { challenge }` | the signature of the player over a gauntlet seat challenge `{ matchId, room, player, nonce }`, only for the match launched, in its room |
 | shell → game | `cabinet:seat-signed { matchId, nonce, player, sig }` | or `{ error }` |
+| game → shell | `cabinet:sign-key { claim: { aud, nonce } }` | the player's signature (tag `key`) over `{ aud, nonce, player, rulesetId }`, for the title's own service outside a match: its API issues the nonce, `aud` names that service (`[a-z0-9.-]`, ≤ 64), and the shell fills in `player` and the launched title's `rulesetId` |
+| shell → game | `cabinet:key-signed { aud, nonce, player, rulesetId, sig }` | or `{ error }`. The service checks it with `verifyKeyProof` (`protocol/challenge.js`) and keeps the nonce, single use |
 | game → shell | `cabinet:played { matchId }` | the placed match was played; the arcade closes the title |
 | game → shell | `cabinet:exit` | back to the launcher |
 | game → shell | `cabinet:air { id, token? }` · `cabinet:air-login { id }` · `cabinet:air-logout { id }` | universal login: the arcade's AIR session, a fresh token, the arcade's sign-in dialog, sign-out. Answered only for titles the arcade lists with `login: 'arcade'`, at their own origin |

@@ -1,5 +1,5 @@
 {
-  "$comment": "Pickle Brawl's lobby matchmaker, run by a node (node/publisher-services.js) with NOTHING secret on disk: names, friends, Open Play and tuning are services/api's, which runs on Vercel with its secrets in Vercel's environment, and the matchmaker asks it with each player's own token. It asks this node for a court per friends' match (POST /gauntlet/start; gauntletCallers, and the court config in pickle-brawl.json). COURT_IDENTITY is THIS node's Pickle Brawl key, generated here and never copied (npm run bridge -- key --kind attested --ruleset pickle-brawl.v1); the matchmaker signs accepted lobby invites with it, the courts sign results with it, and the API trusts it because its public half is in the API's COURT_PUBLIC_KEYS. In node.env: SERVICES=<absolute path to this file>, GAUNTLET_GATEWAY_PORT=8478, COURTS=pickle-brawl.v1:<this node's court public key>. cwd is a RUNTIME checkout pinned to the commit the live web build came from; move it forward only together with the web build. Machine-specific: copy and edit.",
+  "$comment": "Pickle Brawl's lobby matchmaker, run by a node (node/publisher-services.js) with NOTHING secret on disk: names, friends, Open Play and tuning are services/api's, which runs on Vercel with its secrets in Vercel's environment, and the matchmaker never sees a player's token: the API mints a 10-minute ticket (scope lobby, friends:read) that the matchmaker verifies with the API's public key, which ships in the bundle (settlement architecture rev 2, PB hand-back 11). It asks this node for a court per friends' match (POST /gauntlet/start; gauntletCallers, and the court config in pickle-brawl.json). COURT_IDENTITY is THIS node's Pickle Brawl key, generated here and never copied (npm run bridge -- key --kind attested --ruleset pickle-brawl.v1); the matchmaker signs accepted lobby invites with it, the courts sign results with it, and the API trusts it because its public half is in the API's COURT_PUBLIC_KEYS. In node.env: SERVICES=<absolute path to this file>, GAUNTLET_GATEWAY_PORT=8478, COURTS=pickle-brawl.v1:<this node's court public key>. cwd is a RUNTIME checkout pinned to the commit the live web build came from; move it forward only together with the web build. Machine-specific: copy and edit.",
   "prefix": "pickle-brawl",
   "cwd": "E:/NPC/PICKLEBRAWLv2/pb-runtime",
   "portRange": [
@@ -15,9 +15,6 @@
       ],
       "env": {
         "PORT": "${port}",
-        "AIR_BUILD_ENV": "sandbox",
-        "AIR_PARTNER_ID": "62e01755-138f-4e58-9cdc-fab71e037afd",
-        "AIR_PARTNER_IDS": "4db5a42b-dfa5-467d-b58c-24b825acf6db",
         "CORS_ALLOWED_ORIGINS": "https://play.picklebrawl.live,https://www.picklebrawl.live,https://picklebrawl.live",
         "API_BASE_URL": "https://picklebrawl-api.vercel.app",
         "COURT_IDENTITY": "C:/Users/sedano/.litnode/pickle-brawl-court.json"

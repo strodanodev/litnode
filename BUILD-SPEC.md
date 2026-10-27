@@ -61,10 +61,15 @@ locked (§2.2). Sequencing is in §17.
 | Phase 2, still open: escalation exercised on Liteforge — which needs **thirteen distinct operators** (the nine exclude the host, the panel and every one of their operators), so with four every dissent voids the match, nobody is slashed, and a single seat can void any match for free; the cabinet showing `pending` beside `official`; the relay-attested (Agent Fighter) path onto MatchBook; a sandbox worker pool; append-only ledger storage | Specified | — |
 | **Settlement v1.0 — phase 3: open hosting.** Anyone bonds and hosts; per-match fee split to host and attesting witnesses; obligatory custody by the drawn witnesses with on-chain custody challenges | Specified | — |
 
-Production today: the Agent Fighter match server on Railway, its client on
-Vercel, its database on Supabase. **Railway stays until the node mesh can carry
-the backend persistently with minimal downtime** (§17 item 5). The laptop
-tunnel (`npm run tunnel` in the Agent Fighter repo) is the development path.
+Production today (24 Oct 2026): the Agent Fighter client on Vercel, its relay
+(casual play, wagers, accounts) as the `litnode-relay` task on the publisher's
+node, ranked matches on the node's gauntlet server bundle, its database on
+Supabase. **Railway is retired across the stack**: Agent Fighter left it on
+23 Oct 2026 (`29d4400` in its repo), and no title, court or relay is planned
+on it. The split: litnode carries multiplayer, matchmaking, match resolution
+and per-match stats; the title's own Neon or Supabase database carries
+inventory, credits and studio-side stats. The laptop tunnel (`npm run tunnel`
+in the Agent Fighter repo) is the development path.
 
 ### 0.1 What V1 is for
 
@@ -843,7 +848,9 @@ The order of transports, and why:
    the two browsers; nodes do signalling and act as TURN-equivalent fallback.
    Both players hold the ledger and sign it. Verification is asynchronous by
    whichever node is up. This is what makes the mesh able to carry
-   production, and it is the gate on retiring Railway.
+   production without a publisher relay. It was the gate on retiring
+   Railway; Railway was retired on 23 Oct 2026 without it, with the relay
+   on the publisher's node.
 
 Costs stated: TURN relay is a real service and its egress is the one line
 that is not free; P2P exposes player IPs unless relayed, which is why Agent
@@ -1051,7 +1058,8 @@ manifest completeness, bounded ranked mapping. A title that passes is listed.
 
 **Decision.** litnode is the placement, verification and settlement layer
 around the titles' own gameplay; it does not re-implement netcode. Agent
-Fighter's server becomes the `relay` role. Railway stays until item 3 lands.
+Fighter's server becomes the `relay` role. Railway is retired (23 Oct 2026):
+the relay runs as a task on the publisher's node.
 
 **Consolidated 17 Sep 2026** after the cabinet (`strodanodev/litnode`)
 shipped on the 12 Sep portable snapshot: the source tree is the git history,
@@ -1123,14 +1131,16 @@ to that consolidation.
    claim is reworded.
 3. **Peer-to-peer gameplay (weeks 6–10).** WebRTC in `cabinet/client.js`,
    nodes as signalling (`POST /signal`) and TURN fallback, both players sign
-   the ledger, asynchronous verification. Gate on retiring Railway.
+   the ledger, asynchronous verification. What lets play continue when the publisher's
+   node is off.
 4. **Open-source launch (weeks 11–14).** Apache-2.0 for protocol, node, SDK.
    The cabinet is the reference frontend; `sdk-client.js` + `client.js` are
    the SDK; AFC's bundling recipe is the title template. Conformance suite,
    one-command node install, protocol RFC process, honest zeroes (SPEC §4)
    as a release artifact.
-5. **Retire Railway** when the mesh has carried production traffic through
-   item 3 with measured downtime the team accepts.
+5. **Railway retired: done 23 Oct 2026**, ahead of item 3. Agent Fighter's
+   relay runs on the publisher's node and ranked play on gauntlet server
+   bundles; Railway is deprecated stack-wide.
 6. On-chain registry reads · Wasm rulesets · audit the v3 contracts and
    `MatchBook` before mainnet · VRF or commit-reveal beacon · verifiable-VM
    replay for escalation · SDK availability guard · agent role, committed

@@ -33,7 +33,7 @@
  *  funds IS the delegate (tools/delegate.mjs). Not delegated or unfunded →
  *  every send reports why on /health and the node keeps settling locally.
  *  Nothing here can move the bond. */
-import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, appendFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomPrivateKey, addressOf } from '../protocol/evm.js';
 import { feeParams, signWithFee, effectivePrice, capFromEnv } from './fees.js';
@@ -66,9 +66,22 @@ const RECEIPTS_PER_POLL = 10;        // receipt reads per 2 s poll, our own firs
 const WINDOW_MARGIN_S = 5;           // clock skew between this node and the chain
 const SEAT_STAGGER_MS = 20_000;      // finalize / resolve / expire: host +0, seat i at +(i+1)×this
 const FEED_STAGGER_BLOCKS = 24;      // escalate: host +0, seat i at +(i+1)×this blocks after drawBlock
+const SEED_BLOCKS = 256;             // blockhash() reaches this far back: past it an escalation can only be expired
 const PARAMS_TTL_MS = 3600_000;      // the windows are read from the contract, not trusted from a file
 const REFUND_HOST_DELAY_MS = 5_000;   // the host claims a FINAL match's gas refund this long after the event
 const REFUND_STAGGER_MS = 120_000;    // seat i claims in its place, if still unclaimed, (i + 1) × this later
+// Custody before settle (0.12.2, handoff/mesh-gaps/REPORT.md gap 3): the host holds its settle until CUSTODY_NEED seats
+// say they hold the ledger, or custodyHold seconds pass, whichever comes first — and never past the settle
+// window less CUSTODY_SETTLE_MARGIN_S. Only seats whose heartbeat says they take custody count: a fleet of 0.12.0 and
+// 0.12.1 seats needs none, and the host settles at once, as before.
+const CUSTODY_NEED = 2;
+const CUSTODY_SETTLE_MARGIN_S = 30;
+const CUSTODY_ADVERT_MAX = 32;        // pending settles one gossip message names
+const CUSTODY_MAX_BYTES = 8 << 20;    // a delta or ledger a seat will take into custody
+const CUSTODY_RETRY_MS = 5_000;       // a seat that failed to take custody asks again after this
+const CUSTODY_KEEP_MS = 48 * 3600_000; // a custody copy outlives its FINAL match this long (stats are resolved from it)
+const FETCH_TIMEOUT_MS = 15_000;
+const CUSTODIANS_ASKED = 8;           // custodians from a Settled event a seat tries, after the host and before the panel
 
 export function createMatchBook({
   dataDir, nodeId, contract, stakeContract = null, epochAnchor = null, chainId, rpc, fromBlock = 0, log = () => {}, emit = () => {},
@@ -81,8 +94,13 @@ export function createMatchBook({
   // GasRefund (contracts/GasRefund.sol): after a match this node served goes FINAL, it claims the gas back from the
   // treasury. null = no refund contract on this chain.
   gasRefund = null,
+  // Custody before settle: { capable(nodeId) → that seat takes custody (its heartbeat says so), seal(body) → this
+  // node's signed receipt envelope }. null = a node that neither waits for custody nor takes it (as 0.12.1).
+  custody = null,
 }) {
-  const windows = { settleWindow: 1800, ...windowsIn };
+  // custodyHold is this node's own setting (matchBookWindows.custodyHold, seconds), not one of the contract's windows
+  const { custodyHold = 120, ...contractWindows } = windowsIn;
+  const windows = { settleWindow: 1800, ...contractWindows };
   const keyPath = join(dataDir, 'announcer.json');
   const key = existsSync(keyPath) ? JSON.parse(readFileSync(keyPath, 'utf8')) : { privateKey: randomPrivateKey() };
   if (!existsSync(keyPath)) writeFileSync(keyPath, JSON.stringify(key, null, 2) + '\n');
@@ -138,6 +156,21 @@ export function createMatchBook({
   const blockTs = new Map();                // block number → timestamp (seconds), for the hour a Finalized event belongs to
   const proposedHours = new Set();          // epochs this node already proposed (a restart re-tries; the contract refuses harmlessly)
   const committed = new Set();              // matchIds (chain keys) this node committed — a settle without a commit would only revert
+  const commitAt = new Map();               // chain key → when this node sent the commit (the settle window's clock until Committed is read)
+  // Custody: a seat's copy of a ledger it holds for a match it sits on — taken before settle when the host asks, or
+  // verified from any holder when witnessing — served at GET /ledger/<id> and /delta/<id> when this node is not the host.
+  // <dataDir>/custody/<key>.json = { key, delta, ledger, at }. Not the settlement store: that one is this node's own results.
+  const custodyDir = join(dataDir, 'custody');
+  try { mkdirSync(custodyDir, { recursive: true }); } catch { /* read-only data dir: custody kept in memory */ }
+  const custodyMem = new Map();
+  const keyOf = (id) => mb.matchIdBytes32(String(id));
+  const held = (id) => { const key = keyOf(id); if (custodyMem.has(key)) return custodyMem.get(key); try { return JSON.parse(readFileSync(join(custodyDir, `${key}.json`), 'utf8')); } catch { return null; } };
+  const hold = (key, delta, ledger) => { const rec = { key, delta, ledger, at: Date.now() }; try { writeFileSync(join(custodyDir, `${key}.json`), JSON.stringify(rec)); } catch { custodyMem.set(key, rec); } };
+  const dropHeld = (key) => { custodyMem.delete(key); try { unlinkSync(join(custodyDir, `${key}.json`)); } catch { /* not held */ } };
+  const pendingSettle = new Map();          // chain key → { delta, ledger } of a settle held for custody (the clock and the holders live on the duty)
+  const settling = new Set();               // chain keys whose held settle is being sent
+  const custodyTaking = new Map();          // chain key → when this seat last tried to take custody
+  const receipted = new Set();              // chain keys this seat's receipt was accepted for
 
   // ---------------------------------------------------------------- send
   let nonce = null;
@@ -206,10 +239,12 @@ export function createMatchBook({
     if (panel.length !== 3) { lastError = `commit ${descriptor.matchId.slice(0, 12)}: the draw seated ${panel.length} witnesses, MatchBook needs 3 — placed casual-only`; emit('commit-skipped', { matchId: descriptor.matchId, reason: lastError }); return null; }
     const dh = descriptorHashOf(descriptor);
     const tx = await trySend(mb.commitCalldata(descriptor.matchId, dh, descriptor.rulesetId, nodeId, panel), 'commit', descriptor.matchId);
-    if (tx) committed.add(mb.matchIdBytes32(descriptor.matchId));
+    if (tx) { const key = mb.matchIdBytes32(descriptor.matchId); committed.add(key); commitAt.set(key, Date.now()); }
     return tx;
   };
-  /** A ranked, placed match settled here: put the result on chain. */
+  /** A ranked, placed match settled here: put the result on chain — once its seats hold the ledger (custody before
+   *  settle), so a host that dies after settling does not take the only copy with it. Returns at once when it holds
+   *  the settle: the player's POST /ledger must not wait out the custody window. */
   const settle = async (delta, ledger) => {
     const key = mb.matchIdBytes32(delta.matchId);
     if (!committed.has(key) && !panels.has(key)) {
@@ -220,10 +255,112 @@ export function createMatchBook({
       return null;
     }
     const panel = panels.get(key)?.panel ?? ledger.descriptor?.body?.panel ?? [];
-    const custodians = [nodeId, ...panel];
+    const need = custody ? Math.min(CUSTODY_NEED, panel.filter((k) => custody.capable(k)).length) : 0;
+    if (need > 0 && custodyHold > 0) {
+      const d = duty(key, delta.matchId, 'host', null);
+      const committedAt = d.status !== 'none' ? clockOf(d, d.committedAt) : commitAt.get(key) ?? Date.now();
+      const until = Math.min(Date.now() + custodyHold * 1000, committedAt + (windows.settleWindow - CUSTODY_SETTLE_MARGIN_S) * 1000);
+      if (until > Date.now()) {
+        d.custody = { ledgerHash: mb.ledgerHash(ledger), panel, need, until, holders: [], tries: 0 };
+        pendingSettle.set(key, { delta, ledger });
+        saveDuties();
+        log(`matchbook: ${delta.matchId.slice(0, 12)} settles once ${need} seat(s) hold the ledger, or in ${Math.round((until - Date.now()) / 1000)} s`);
+        emit('custody-wait', { matchId: delta.matchId, need, until });
+        return null;
+      }
+    }
+    return sendSettle(key, delta, ledger, [nodeId, ...panel]);
+  };
+  const sendSettle = async (key, delta, ledger, custodians) => {
     const tx = await trySend(mb.settleCalldata(delta.matchId, { resultHash: delta.resultHash, ledger, buildHash: delta.buildHash, participants: delta.participants, scores: delta.scores, custodians }), 'settle', delta.matchId);
-    if (tx) { const d = duty(key, delta.matchId, 'host', null); Object.assign(d, { status: 'settled', settledAt: Date.now() }); saveDuties(); }
+    if (tx) { const d = duty(key, delta.matchId, 'host', null); delete d.custody; Object.assign(d, { status: 'settled', settledAt: Date.now() }); pendingSettle.delete(key); saveDuties(); }
     return tx;
+  };
+  /** Held settles whose seats now hold the ledger, or whose custody window ran out: send them. The custodians on
+   *  chain are the host and the seats that said they hold it — no longer every seat, whatever it holds. */
+  const settleHeld = async () => {
+    for (const d of [...duties.values()]) {
+      const c = d.custody;
+      if (!c || d.role !== 'host' || settling.has(d.key)) continue;
+      if (d.status === 'settled' || d.status === 'escalating' || d.status === 'escalated') { delete d.custody; pendingSettle.delete(d.key); saveDuties(); continue; }
+      if (c.holders.length < c.need && Date.now() < c.until) continue;
+      const data = pendingSettle.get(d.key) ?? { delta: settlement?.delta?.(d.matchId) ?? null, ledger: settlement?.ledger?.(d.matchId) ?? null };
+      if (!data.delta || !data.ledger || c.tries >= 3) {
+        log(`matchbook: ${d.matchId.slice(0, 12)}: the held settle ${!data.delta || !data.ledger ? 'lost its ledger' : 'failed three times'}; the seats expire the commit`);
+        delete d.custody; pendingSettle.delete(d.key); saveDuties(); continue;
+      }
+      if (c.holders.length < c.need) { log(`matchbook: ${d.matchId.slice(0, 12)}: ${c.holders.length} of ${c.need} seat(s) took custody in time — settling anyway`); emit('custody-short', { matchId: d.matchId, holders: c.holders.length, need: c.need }); }
+      settling.add(d.key); c.tries++;
+      try { await sendSettle(d.key, data.delta, data.ledger, [nodeId, ...c.panel.filter((k) => c.holders.includes(k))]); }
+      finally { settling.delete(d.key); }
+    }
+  };
+  /** A seat's receipt, its signature already checked by the caller (POST /custody): it holds this ledger. */
+  const acceptReceipt = (r) => {
+    const key = typeof r?.matchId === 'string' ? r.matchId.toLowerCase() : '';
+    const d = duties.get(key);
+    if (!d?.custody || d.role !== 'host') return { ok: false, reason: 'no settle is waiting for custody here' };
+    if (!d.custody.panel.includes(r.seat)) return { ok: false, reason: 'not a seat of this match' };
+    if (r.ledgerHash !== d.custody.ledgerHash) return { ok: false, reason: 'that is not the ledger this host settles' };
+    if (!d.custody.holders.includes(r.seat)) { d.custody.holders.push(r.seat); saveDuties(); emit('custody-receipt', { matchId: d.matchId, seat: r.seat, holders: d.custody.holders.length, need: d.custody.need }); }
+    if (d.custody.holders.length >= d.custody.need) void settleHeld().catch(() => {});
+    return { ok: true, holders: d.custody.holders.length, need: d.custody.need };
+  };
+  /** The settles this host holds for custody, for its gossip: a seat that reads one comes and takes the ledger. */
+  const custodyAdverts = () => [...duties.values()].filter((d) => d.role === 'host' && d.custody).slice(0, CUSTODY_ADVERT_MAX).map((d) => ({ key: d.key, ledgerHash: d.custody.ledgerHash }));
+  const getJson = async (url) => {
+    const r = await fetchImpl(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    if (!r.ok) return null;
+    const text = await r.text();
+    if (text.length > CUSTODY_MAX_BYTES) throw new Error(`${url.split('/').slice(-2, -1)[0]} is larger than ${CUSTODY_MAX_BYTES} bytes`);
+    return JSON.parse(text);
+  };
+  /** A host's custody adverts (from its push or its reply to ours): for each match this node sits on, pull the delta
+   *  and the ledger outbound — so a seat behind NAT takes custody too — keep them, and send the host a signed receipt. */
+  const absorbCustody = (list) => {
+    if (!custody?.seal || !hasRole('witness')) return;
+    for (const a of Array.isArray(list) ? list.slice(0, CUSTODY_ADVERT_MAX) : []) {
+      const key = typeof a?.key === 'string' && /^[0-9a-f]{64}$/i.test(a.key) ? a.key.toLowerCase() : null;
+      if (!key || typeof a.ledgerHash !== 'string' || receipted.has(key) || settled.has(key) || Date.now() - (custodyTaking.get(key) ?? 0) < CUSTODY_RETRY_MS) continue;
+      const p = panels.get(key);
+      if (!p || p.hostKey === nodeId || !p.panel.includes(nodeId)) continue; // not seated, or Committed not read yet: the next advert
+      custodyTaking.set(key, Date.now());
+      void takeCustody(key, a.ledgerHash, p);
+    }
+  };
+  const takeCustody = async (key, ledgerHash, p) => {
+    try {
+      const addr = hostAddr(p.hostKey);
+      if (!addr) throw new Error('host address unknown');
+      const have = held(key);
+      if (!have || mb.ledgerHash(have.ledger) !== ledgerHash) {
+        const [delta, ledger] = await Promise.all([getJson(`${addr}/delta/${key}`), getJson(`${addr}/ledger/${key}`)]);
+        if (!delta || !ledger || delta.error || ledger.error) throw new Error('the host does not serve it');
+        if (mb.ledgerHash(ledger) !== ledgerHash) throw new Error('the ledger the host serves is not the one it advertised');
+        if (delta.hostId !== p.hostKey || ledger.matchId !== delta.matchId || mb.matchIdBytes32(delta.matchId) !== key) throw new Error('the delta the host serves is not this match\'s');
+        hold(key, delta, ledger);
+      }
+      const env = await custody.seal({ matchId: key, ledgerHash, seat: nodeId });
+      const r = await fetchImpl(`${addr}/custody`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(env), signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok || !out.ok) throw new Error(`receipt refused: ${out.reason ?? out.error ?? r.status}`);
+      receipted.add(key);
+      emit('custody-held', { matchId: key, holders: out.holders, need: out.need });
+    } catch (e) { log(`matchbook: custody ${key.slice(0, 12)}: ${e.message}`); }
+  };
+  /** Custody copies: void matches go at once, final ones after CUSTODY_KEEP_MS, anything after a week. */
+  let custodyPrunedAt = 0;
+  const pruneCustody = () => {
+    if (Date.now() - custodyPrunedAt < 3600_000) return;
+    custodyPrunedAt = Date.now();
+    let names = [];
+    try { names = readdirSync(custodyDir).filter((n) => n.endsWith('.json')); } catch { return; }
+    for (const n of names) {
+      const key = n.slice(0, -5), rec = held(key);
+      const fin = decoded.find((e) => e.event === 'Finalized' && e.matchId === key);
+      const age = Date.now() - (rec?.at ?? 0);
+      if (!rec || age > 7 * 24 * 3600_000 || (fin && (fin.status !== 'final' || age > CUSTODY_KEEP_MS))) dropHeld(key);
+    }
   };
 
   // ---------------------------------------------------------------- watch
@@ -253,13 +390,14 @@ export function createMatchBook({
     if (e.event === 'Settled') settled.set(e.matchId, { ...e, seenAt: Date.now() });
     const d = duties.get(e.matchId);
     if (d) {
-      if (e.event === 'Settled') Object.assign(d, { status: 'settled', settledAt: at, block: e.block, tried: {} });
+      if (e.event === 'Settled') { Object.assign(d, { status: 'settled', settledAt: at, block: e.block, tried: {} }); delete d.custody; pendingSettle.delete(e.matchId); }
       if (e.event === 'Extended') Object.assign(d, { status: 'settled', settledAt: at, block: e.block, tried: {} }); // the contract reset the clock
       if (e.event === 'Escalating') Object.assign(d, { status: 'escalating', drawBlock: e.drawBlock, feedBy: e.feedBy, tried: {} });
       if (e.event === 'Escalated') Object.assign(d, { status: 'escalated', escalatedAt: at, block: e.block, tried: {} });
       if (e.event === 'Finalized') { if (!replaying) noteFinal(e, d); duties.delete(e.matchId); ledgers.delete(e.matchId); }
       if (!replaying) saveDuties();
     }
+    if (e.event === 'Finalized') { receipted.delete(e.matchId); custodyTaking.delete(e.matchId); if (e.status !== 'final') dropHeld(e.matchId); } // a void match's custody copy serves nobody
     if (e.event === 'Escalated') escalation.set(e.matchId, { panel: e.panel, at: Date.now() });
     if (e.event === 'Finalized' && !replaying) emit('chain-final', { matchId: e.matchId, status: e.status, finalHash: e.finalHash });
   };
@@ -304,6 +442,8 @@ export function createMatchBook({
     return n;
   };
   const duty = (key, matchId, role, seat) => { let d = duties.get(key); if (!d) { d = { key, matchId, role, seat, status: 'none', tried: {} }; duties.set(key, d); } return d; };
+  // the clock a window runs on is the block's, once stamped (a restarted node re-reads old events at 'now')
+  const clockOf = (d, local) => (d.block != null && blockTs.has(d.block) ? blockTs.get(d.block) * 1000 : local);
   /** The contract's windows, from the contract: a file can be stale (npm run params changes them live). */
   let paramsAt = 0;
   const readParams = async () => {
@@ -332,6 +472,7 @@ export function createMatchBook({
     if (!st || statsKnown.has(st.matchId)) return true;
     const ok = (d) => d && d.resultHash === st.resultHash && commitOf(d) === d.resultHash;
     let d = settlement?.delta?.(st.matchId) ?? null;
+    if (!ok(d)) d = held(st.matchId)?.delta ?? null; // a seat's custody copy
     if (!ok(d)) {
       d = null;
       for (const k of [...new Set([st.hostKey, ...(st.custodians ?? []), ...(panels.get(st.matchId)?.panel ?? [])])]) {
@@ -473,6 +614,36 @@ export function createMatchBook({
     }
   };
 
+  /** A settled match's delta and ledger, from whoever holds them (0.12.2, gap 3 option b): this node's own custody
+   *  copy, then the host, the custodians the Settled event names and the other seats. The chain makes any source safe:
+   *  the ledger must hash to the Settled ledgerHash, and a delta whose resultHash is the chain's is preferred (the
+   *  result attested is this node's own replay either way). What it verified, it keeps and serves. */
+  const fetchSettled = async (s, p) => {
+    const fits = (d) => !!d && !d.error && typeof d.matchId === 'string' && mb.matchIdBytes32(d.matchId) === s.matchId;
+    let ledger = null, delta = null, other = null;
+    const take = (d) => { if (!fits(d)) return; if (d.resultHash === s.resultHash) delta ??= d; else other ??= d; };
+    const mine = held(s.matchId);
+    if (mine && mb.ledgerHash(mine.ledger) === s.ledgerHash) { ledger = mine.ledger; take(mine.delta); }
+    const why = [];
+    // the host writes the custodians: a few are worth asking, a list of every peer is not
+    const holders = [...new Set([p?.hostKey ?? s.hostKey, ...(s.custodians ?? []).slice(0, CUSTODIANS_ASKED), ...(p?.panel ?? [])])].filter((k) => k && k !== nodeId);
+    for (const k of holders) {
+      if (ledger && delta) break;
+      const a = hostAddr(k);
+      if (!a) { why.push(`${k.slice(0, 8)}: no address`); continue; }
+      // a host serves by its own match id; the chain key is the same 64 hex for a mesh-placed match, and /delta resolves a chain key otherwise
+      const id = encodeURIComponent(s.matchId);
+      const [dx, lx] = await Promise.all([delta ? null : getJson(`${a}/delta/${id}`).catch((e) => ({ error: e.message })), ledger ? null : getJson(`${a}/ledger/${id}`).catch((e) => ({ error: e.message }))]);
+      take(dx);
+      if (lx && !lx.error && mb.ledgerHash(lx) === s.ledgerHash) ledger = lx;
+      else if (!ledger) why.push(`${k.slice(0, 8)}: ${lx?.error ?? (lx ? 'a ledger that is not the one on chain' : 'not held')}`);
+    }
+    delta ??= other;
+    if (!ledger) throw new Error(`no holder serves the ledger on chain (${why.join('; ') || 'nobody to ask'})`);
+    if (!delta) throw new Error('no holder serves the delta');
+    if (!mine || mb.ledgerHash(mine.ledger) !== s.ledgerHash || mine.delta?.resultHash !== delta.resultHash) hold(s.matchId, delta, ledger);
+    return { delta, ledger };
+  };
   /** I sit on this match's panel and it has settled: recompute and attest what I reached. */
   const witness = async (s) => {
     if (attested.has(s.matchId) || witnessing.has(s.matchId)) return;
@@ -482,15 +653,7 @@ export function createMatchBook({
     if (p?.hostKey === nodeId) return;
     witnessing.add(s.matchId);
     try {
-      const addr = hostAddr(p?.hostKey ?? s.hostKey);
-      if (!addr) throw new Error('host address unknown (no fresh heartbeat)');
-      // the host serves by its own match id; the chain key is the same 64 hex for a mesh-placed match, and /delta resolves a chain key otherwise
-      const [delta, ledger] = await Promise.all([
-        fetchImpl(`${addr}/delta/${encodeURIComponent(s.matchId)}`).then((r) => r.json()),
-        fetchImpl(`${addr}/ledger/${encodeURIComponent(s.matchId)}`).then((r) => r.json()),
-      ]);
-      if (delta?.error || ledger?.error) throw new Error(delta?.error ?? ledger?.error);
-      if (mb.ledgerHash(ledger) !== s.ledgerHash) throw new Error('the ledger the host serves is not the one it committed');
+      const { delta, ledger } = await fetchSettled(s, p);
       if (onFirst) ledgers.set(s.matchId, ledger); // a seat keeps what it verified: it may have to feed the escalation
       const res = await settlement.cosign(delta, ledger);
       const ours = res.ok ? delta.resultHash : res.ours;
@@ -509,8 +672,7 @@ export function createMatchBook({
     if (!driving || duties.size === 0) return;
     const now = Date.now();
     const order = (d) => (d.role === 'host' ? 0 : d.seat + 1);
-    // the clock a window runs on is the block's, once stamped (a restarted node re-reads old events at 'now')
-    const since = (d, local) => (d.block != null && blockTs.has(d.block) ? blockTs.get(d.block) * 1000 : local);
+    const since = clockOf;
     let head = null;
     const headBlock = async () => head ?? (head = parseInt(await call('eth_blockNumber', []), 16));
     for (const d of [...duties.values()]) {
@@ -530,10 +692,20 @@ export function createMatchBook({
         const answered = d.role === 'host' ? decoded.filter((e) => e.event === 'Attested' && e.matchId === d.key && !e.escalation).length : 0;
         if (answered >= 3 || now - since(d, d.settledAt) > (windows.attestWindow + WINDOW_MARGIN_S) * 1000 + late) await once('finalize', mb.finalizeCalldata(d.matchId));
       }
-      if (d.status === 'escalating' && d.drawBlock != null && (await headBlock()) > d.drawBlock + order(d) * FEED_STAGGER_BLOCKS) {
-        const ledger = ledgers.get(d.key) ?? settlement.ledger?.(d.matchId) ?? settlement.ledger?.(d.key) ?? null;
-        if (ledger) await once('escalate', mb.escalateCalldata(d.matchId, ledger));
-        else if (!d.tried.noLedger) { d.tried.noLedger = now; log(`matchbook: ${d.matchId.slice(0, 12)} is escalating and this ${d.role} holds no ledger to feed it`); }
+      if (d.status === 'escalating' && d.drawBlock != null) {
+        const headNow = await headBlock();
+        if (headNow > d.drawBlock + order(d) * FEED_STAGGER_BLOCKS) {
+          const copy = held(d.key)?.ledger ?? null, onChain = settled.get(d.key)?.ledgerHash;
+          const ledger = ledgers.get(d.key) ?? settlement.ledger?.(d.matchId) ?? settlement.ledger?.(d.key) ?? (copy && (!onChain || mb.ledgerHash(copy) === onChain) ? copy : null);
+          if (ledger) await once('escalate', mb.escalateCalldata(d.matchId, ledger));
+          else if (!d.tried.noLedger) { d.tried.noLedger = now; log(`matchbook: ${d.matchId.slice(0, 12)} is escalating and this ${d.role} holds no ledger to feed it`); }
+        }
+        // Nobody fed it within the window, or its seed block aged out of blockhash(): void it, host first, then each seat a
+        // stagger later (0.12.2). MatchBook.expire allows exactly this and slashes nobody; without it the match sat in
+        // Escalating, and on every seat's duty list, until an outsider expired it.
+        const unfed = d.feedBy != null && now > (d.feedBy + WINDOW_MARGIN_S) * 1000 + late;
+        const seedGone = headNow > d.drawBlock + SEED_BLOCKS + order(d) * FEED_STAGGER_BLOCKS;
+        if (unfed || seedGone) await once('expire', mb.expireCalldata(d.matchId));
       }
       if (d.status === 'escalated' && now - since(d, d.escalatedAt) > (windows.escalationWindow + WINDOW_MARGIN_S) * 1000 + late) await once('resolve', mb.resolveCalldata(d.matchId));
     }
@@ -549,6 +721,8 @@ export function createMatchBook({
       await readParams();
       await autoEnrol();
       await readReceipts();
+      await settleHeld(); // not a window this node drives: a host with drive off still settles what it holds
+      pruneCustody();
       void scan();
       for (const s of settled.values()) {
         const st = statusOf(s.matchId);
@@ -588,6 +762,8 @@ export function createMatchBook({
 
   return {
     address, commit, settle, poll, ladder, progress, statusOf, epoch, propose, hints, absorbHints, ingestReceipt,
+    // custody before settle: the host's adverts and receipts, a seat's intake, and what this node holds as a seat
+    custodyAdverts, absorbCustody, acceptReceipt, held,
     // What this key sent, newest last (receipt outcome once read): the operator's ledger of settlement work.
     sent: (n = 50) => sentLog.slice(-n),
     // The last n decided matches this node holds events for, newest last — the dashboard's "recent" strip.
@@ -595,7 +771,7 @@ export function createMatchBook({
     statsProof,
     proof: (matchId) => { const key = mb.matchIdBytes32(matchId); const fin = decoded.find((e) => e.event === 'Finalized' && e.matchId === key); if (!fin) return null; const ts = blockTs.get(fin.block); if (ts == null) return null; const ep = epoch(hourOf(ts * 1000)); const p = mb.chainProof(ep, key); return p && { ...p, resultsRoot: ep.resultsRoot, statsRoot: ep.statsRoot, root: ep.root, path: withStatsStep(p.path, ep.statsRoot) }; },
     chainStatus: (matchId) => ({ matchId, key: mb.matchIdBytes32(matchId), status: statusOf(mb.matchIdBytes32(matchId)), panel: panels.get(mb.matchIdBytes32(matchId))?.panel ?? null, events: decoded.filter((e) => e.matchId === mb.matchIdBytes32(matchId)) }),
-    status: () => ({ contract, epochAnchor, delegate: address, delegated, funded, enrolled, purse: purse(), cursor, scanRange, scanMs, scanError, receipts: ingested.size, pendingReceipts: pendingReceipts.size, events: decoded.length, sends, lastTx, lastError, hosting: [...duties.values()].filter((d) => d.role === 'host').length, seated: [...duties.values()].filter((d) => d.role === 'seat').length, windows: { ...windows }, attested: attested.size, proposed: [...proposedHours], refunds: gasRefund ? { contract: gasRefund, claimed: refundsClaimed, due: [...refunds.values()].filter((r) => r.state === 'due').length, last: refundLast } : null }),
+    status: () => ({ contract, epochAnchor, delegate: address, delegated, funded, enrolled, purse: purse(), cursor, scanRange, scanMs, scanError, receipts: ingested.size, pendingReceipts: pendingReceipts.size, events: decoded.length, sends, lastTx, lastError, hosting: [...duties.values()].filter((d) => d.role === 'host').length, custody: custody ? { hold: custodyHold, waiting: [...duties.values()].filter((d) => d.custody).length, held: (() => { try { return readdirSync(custodyDir).filter((n) => n.endsWith('.json')).length; } catch { return custodyMem.size; } })() } : null, seated: [...duties.values()].filter((d) => d.role === 'seat').length, windows: { ...windows }, attested: attested.size, proposed: [...proposedHours], refunds: gasRefund ? { contract: gasRefund, claimed: refundsClaimed, due: [...refunds.values()].filter((r) => r.state === 'due').length, last: refundLast } : null }),
   };
 }
 

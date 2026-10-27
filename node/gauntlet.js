@@ -44,6 +44,7 @@ import { roomCodeFor } from '../protocol/pairing.js';
 import { newNonce, verifySeat, NONCE_RE } from '../protocol/challenge.js';
 import { seedFor } from '../protocol/placement.js';
 import { h } from '../protocol/canonical.js';
+import { policyOf, secretNames } from './secrets.js';
 
 export const OPERATOR_SECRETS = ['OPERATOR_KEY', 'DEPLOYER_KEY', 'PUBLISHER_KEY', 'ADMIN_KEY'];
 
@@ -165,7 +166,9 @@ export function loadGauntletConfigs(spec, { root = process.cwd() } = {}) {
 const portFree = (port) => new Promise((res) => { const s = createTcpServer(); s.once('error', () => res(false)); s.listen(port, '127.0.0.1', () => s.close(() => res(true))); });
 const canConnect = (port) => new Promise((res) => { const s = connect(port, '127.0.0.1'); s.once('connect', () => { s.destroy(); res(true); }); s.once('error', () => res(false)); });
 
-export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', upstream = null, nodeUrl, wsAddr = () => null, nodeId = null, log = () => {}, emit = () => {}, spawnImpl = spawn, services = null, logs = null }) {
+export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', upstream = null, nodeUrl, wsAddr = () => null, nodeId = null, log = () => {}, emit = () => {}, spawnImpl = spawn, services = null, logs = null, secretsPolicy = 'warn' }) {
+  const policy = policyOf(secretsPolicy);
+  const warned = new Set(); // rulesetIds whose secret-shaped env was already logged
   // logs: { dir, maxBytes?, keep? } — where each match's process output is kept (openProcessLog); null keeps none
   const active = new Map();   // matchId → run
   const rooms = new Map();    // room → run
@@ -200,6 +203,12 @@ export function createGauntlets({ configs = {}, port = null, host = '0.0.0.0', u
       // The node's environment never reaches a title's process beyond the allowlist (same rule as publisher
       // services); a config that needs a value names it in `env` or `inheritEnv`. Operator keys never pass.
       const inherited = inheritedEnv(process.env, cfg.inheritEnv ?? []);
+      // Secrets (node/secrets.js): a value the node fills with this run's ${secret} is minted here and allowed;
+      // anything else secret-shaped came from the operator's env or the config and is a publisher's secret.
+      const perRun = Object.entries(cfg.env).filter(([, v]) => String(v).includes('${secret}')).map(([k]) => k);
+      const found = secretNames({ ...inherited, ...cfg.env }, { except: perRun });
+      if (found.length && policy === 'strict') throw new Error(`not started: its environment carries ${found.join(', ')} (SECRETS_POLICY=strict: a node holds no publisher secret)`);
+      if (found.length && !warned.has(rulesetId)) { warned.add(rulesetId); log(`gauntlet ${rulesetId}: WARNING its environment carries secret-shaped names ${found.join(', ')}; Season 0 (SECRETS_POLICY=strict) will refuse to start it`); }
       const env = { ...inherited, ...Object.fromEntries(Object.entries(cfg.env).map(([k, v]) => [k, fill(v, vars)])), GAUNTLET_MATCH_ID: matchId, GAUNTLET_ROOM: room, GAUNTLET_PORT: String(run.port), GAUNTLET_SECRET: secret, GAUNTLET_SEATS: vars.seats, GAUNTLET_PUBLIC_URL: vars.publicUrl, GAUNTLET_NODE_URL: nodeUrl, GAUNTLET_MODE: mode, GAUNTLET_PLACED_MODE: vars.placedMode, GAUNTLET_SEED: seed, GAUNTLET_BUILD: vars.buildHash, GAUNTLET_RULESET: rulesetId, ...(cfg.stateDir ? { GAUNTLET_STATE_DIR: cfg.stateDir } : {}), ...(cfg.bundle ? { GAUNTLET_SERVER: cfg.bundle } : {}) };
       const child = spawnImpl(fill(cfg.command, vars), cfg.args.map((a) => fill(a, vars)), { cwd: cfg.cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
       run.child = child; run.pid = child.pid ?? null;

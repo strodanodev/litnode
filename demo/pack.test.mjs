@@ -7,7 +7,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { stage, checkStage, scriptsFor, closure } from '../tools/lib/pack-plan.mjs';
+import { stage, checkStage, scanStage, scriptsFor, closure } from '../tools/lib/pack-plan.mjs';
+import { mkdirSync } from 'node:fs';
 
 const root = process.cwd();
 
@@ -17,6 +18,7 @@ test('pack: both zips stage whole — every script resolves and its import graph
   for (const kind of ['portable', 'operator']) {
     const { stage: dir, scripts, files } = stage(kind, { root, dist: tmp, name: `litnode-${kind}-test` });
     assert.deepEqual(checkStage(dir), [], `${kind} is whole`);
+    assert.deepEqual(scanStage(dir), [], `${kind} carries no secret`);
     for (const cmd of Object.values(scripts)) assert.ok(existsSync(join(dir, cmd.split(' ')[1])), `${kind}: ${cmd}`);
     assert.ok(files.includes('tools/lib/rpc.mjs'), `${kind}: bond-node's rpc helper ships with it`);
     assert.ok(!existsSync(join(dir, 'cabinet', '.vercel')), `${kind}: git-ignored files stay out`);
@@ -38,6 +40,20 @@ test('pack: the check catches a missing import and an undeclared package', (t) =
   assert.ok(problems.some((p) => /package ethers/.test(p)), problems.join('; '));
   assert.ok(!problems.some((p) => /in-a-comment/.test(p)), 'an import in a comment is not an import');
   assert.throws(() => closure(tmp, ['nope.mjs']), /does not exist/);
+});
+
+test('pack: the secret scan catches key files, env files and credential content, and names paths only', (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'litnode-pack-sec-'));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  mkdirSync(join(tmp, 'services', 'api'), { recursive: true }); mkdirSync(join(tmp, 'runtime'));
+  writeFileSync(join(tmp, 'services', 'api', '.env'), 'PORT=1\n');
+  writeFileSync(join(tmp, 'identity.json'), '{}');
+  writeFileSync(join(tmp, 'config.mjs'), "export const db = 'postgres://app:hunter2@db.example/x';\n");
+  writeFileSync(join(tmp, 'doc.md'), 'Set OPERATOR_KEY=<64 hex> in the shell, never in a file.\n');
+  writeFileSync(join(tmp, 'runtime', 'node.exe'), '-----BEGIN PRIVATE KEY-----');
+  const p = scanStage(tmp);
+  assert.deepEqual(p.sort(), ['config.mjs: db-url-with-password', 'identity.json: a key, env or node-data file', 'services/api/.env: a key, env or node-data file']);
+  assert.ok(!p.join(' ').includes('hunter2'), 'never the matched text');
 });
 
 test('npm test lists every suite in demo/ (two suites once sat outside it for a month; audit §4.5)', () => {
