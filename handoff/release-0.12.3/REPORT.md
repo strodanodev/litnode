@@ -7,10 +7,10 @@ All of this is local. Nothing is pushed, tagged, released or registered from thi
 master `b7b55d1` is version **0.12.3**. It is 35 commits ahead of `origin/master` (`3482ee0`, v0.12.1). No v0.12.2 or v0.12.3 tag exists.
 
 **Added after this report was first written:**
-- `34f4c12`: CHANGELOG now lists AFC under `[0.12.3]`, so the release notes cover everything it ships.
-  - `tools/release.mjs` takes the notes from the top section. Before this, a 0.12.3 release would have been titled "[Unreleased]".
+- `34f4c12` (in 0.12.3): CHANGELOG lists AFC under `[0.12.3]`, so the release notes cover everything it ships.
+  - `tools/release.mjs` takes the notes from the top section. Before this, the release would have been titled "[Unreleased]".
   - AFC's registration was read back from TitleRegistry: ruleset `e3725bd2` and verifier `14336181`, both active, publisher `0x04bE…a378`.
-- `b7b55d1`: `/ro3/hosts` lists only bonded peers' servers, with each entry's operator and staking wallet. This fixes finding 1.
+- `b7b55d1` (after 0.12.3): `/ro3/hosts` lists only bonded peers' servers, with each entry's operator and staking wallet. This fixes finding 1.
 - Full suite on `b7b55d1`: **294/294**.
 
 Since v0.12.1 it carries the following.
@@ -118,9 +118,9 @@ Their worktrees still exist under `.claude/worktrees/` and `E:/NPC/litnode-guard
 
 1. Free space on C:.
 2. litnode:
-   - Push master.
-   - `npm run release -- --channel canary`, then `npm run release`.
-   - `npm run release:registry`.
+   - ~~Push and release 0.12.3~~ (done 03:11–03:14).
+   - `npm run release:registry` for 0.12.3, if it isn't registered yet.
+   - Then **0.12.4** for the `/ro3/hosts` fix: push `b7b55d1`, bump the version, release, register. Players' nodes on 0.12.3 still list unbonded RO3 servers until they update.
 3. Update the desktop, m16 and witness-2.
    - AFC bouts settle once a node serves `afc.v1`; then the AFC session reruns its retry job.
    - On m16, stop its relay copy and delete the copied `.env`.
