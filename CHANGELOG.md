@@ -3,6 +3,17 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Changed
+
+- **`/ro3/hosts` lists RO3Emu servers from bonded nodes only.** (Not in the published 0.12.3, which was cut from `34f4c12`.)
+  - **Bonded hosts only:** with NodeStake, `/ro3/hosts` lists a peer's server only once the chain shows that peer
+    bonded. Until its standing is read, it is not listed. Players log in to the server they pick, so a node that
+    staked nothing can't advertise a lookalike. A dev mesh with no chain lists everyone, as its snapshot does.
+  - **Telling servers apart:** each entry carries `operator` (the node's label) and `wallet` (its staking wallet),
+    so two servers with the same name can be told apart.
+
 ## [0.12.3] — 2026-10-28 — host an RO3Emu server through the node's own tunnel; AFC joins the mesh; arcade key proofs
 
 Protocol 4, unchanged: 0.12.0 through 0.12.3 nodes are peers. The heartbeat gains an optional `ro3` field, which

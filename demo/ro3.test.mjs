@@ -4,11 +4,13 @@
  *    node --test demo/ro3.test.mjs */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNode } from '../node/litnode.js';
 import { ro3Entry, ro3Name } from '../node/ro3.js';
+import { generateKeypair } from '../protocol/keys.js';
+import { createRpcEvm } from './lib/rpc-evm.mjs';
 
 const tmp = mkdtempSync(join(tmpdir(), 'litnode-ro3-'));
 // A stand-in cloudflared: a hostname from its port and FAKE_RO3_GEN (bumped by the test before a restart).
@@ -69,4 +71,40 @@ test('ro3: a node without RO3_PORT advertises nothing and lists an empty mesh', 
   t.after(() => c.stop().catch(() => {}));
   assert.deepEqual((await (await fetch(`${c.addr}/ro3/hosts`)).json()).hosts, []);
   assert.equal((await (await fetch(`${c.addr}/health`)).json()).tunnel.ro3, null);
+});
+
+test('ro3: with a chain, a player\'s node lists only bonded peers\' servers, with their operator and wallet', { timeout: 120_000 }, async (t) => {
+  const chain = await createRpcEvm();
+  const ticker = setInterval(() => chain.mine(), 250);
+  const nodes = [];
+  t.after(async () => { clearInterval(ticker); for (const n of nodes) await n.stop().catch(() => {}); });
+  const ONE = 10n ** 18n;
+  const token = await chain.deploy('TestLITVM.sol', 'TestLITVM', []);
+  const stake = await chain.deploy('NodeStake.sol', 'NodeStake', [token, ONE, 600, 1, 1200, chain.addressOf(0), chain.addressOf(0)]);
+  const kp = await generateKeypair();
+  const dir = join(tmp, 'bonded'); mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'identity.json'), JSON.stringify(kp));
+  await chain.send(1, token, 'faucet', []);
+  await chain.send(1, token, 'approve', [stake, 10n * ONE]);
+  await chain.bondNode(1, stake, kp, ONE);
+  chain.warp(2);
+
+  // Two RO3 servers under the same name (the fake cloudflared names a tunnel by its port): only the first node bonded.
+  const ro3Probe = async () => true;
+  const host = await createNode({ dataDir: dir, offline: true, heartbeatMs: 200, operator: 'guild', roles: ['mesh'], ro3Port: 5490, ro3Name: 'Prontera', tunnelBin: bin, ro3Probe, updates: false });
+  nodes.push(host);
+  const rogue = await createNode({ dataDir: join(tmp, 'rogue'), offline: true, heartbeatMs: 200, operator: 'rogue', roles: ['mesh'], ro3Port: 5491, ro3Name: 'Prontera', tunnelBin: bin, ro3Probe, updates: false, seeds: [host.addr] });
+  nodes.push(rogue);
+  const player = await createNode({ dataDir: join(tmp, 'player'), rpc: 'mock://', offline: false, chainFetch: chain.fetch, nodeStake: stake, chainId: 4441, heartbeatMs: 200, operator: 'player', roles: ['mesh'], seeds: [host.addr, rogue.addr], updates: false, announce: false });
+  nodes.push(player);
+  const hosts = async (n) => (await (await fetch(`${n.addr}/ro3/hosts`)).json()).hosts;
+  const good = (h) => h.url.startsWith('https://fake-5490-'), bad = (h) => h.url.startsWith('https://fake-5491-');
+
+  assert.ok(await until(async () => (await hosts(host)).some(bad), 20_000), 'the rogue advertised: a mesh with no chain lists it');
+  assert.ok(await until(async () => (await hosts(player)).some(good), 30_000), 'the player\'s node lists the bonded server');
+  const listed = (await hosts(player)).find(good);
+  assert.equal(listed.nodeId, host.nodeId); assert.equal(listed.name, 'Prontera'); assert.equal(listed.operator, 'guild');
+  assert.equal(listed.wallet, chain.addressOf(1).toLowerCase(), 'the staking wallet, so two servers named alike can be told apart');
+  // the rogue's heartbeat reaches the player's node too, but a key that staked nothing is never listed
+  for (const end = Date.now() + 3000; Date.now() < end; await sleep(100)) assert.ok(!(await hosts(player)).some(bad), 'an unbonded server is not listed');
 });

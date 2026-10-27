@@ -232,6 +232,12 @@ Players run a node too and type `RO3Emu.exe join litnode` (or
 current link at start and again whenever it stops answering, so a
 restarted tunnel is followed without anyone copying a link.
 
+Their node lists your server only while your node is **bonded**
+(step 4). Players log in to the server they pick, so a node that staked
+nothing can't put a lookalike in their list. Each entry also carries
+your operator label and staking wallet, so two servers with the same name
+can be told apart.
+
 ## 7. Keep it running and current
 
 - **Survive reboots.** Control Plane: it starts at sign-in. Windows zip:

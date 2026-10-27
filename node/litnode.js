@@ -1483,12 +1483,17 @@ export async function createNode({
       // machine (its full nodeId is what the bond tool needs). /snapshot is
       // the bonded set only.
       // RO3Emu servers on the mesh, newest heartbeat first: what `RO3Emu.exe join litnode` reads (node/ro3.js).
+      // With a chain, only BONDED peers' servers are listed: a player logs in to the server it picks, so a node that
+      // staked nothing must not be able to advertise a lookalike. A peer whose standing is not read yet waits. A dev
+      // mesh with no chain lists everyone, as its snapshot does. operator and wallet tell same-named servers apart.
       if (req.method === 'GET' && url.pathname === '/ro3/hosts') {
         const now = Date.now(), recent = epochOf(now) - Math.ceil(60_000 / EPOCH_MS);
-        const hosts = [...heartbeats.values()].filter((b) => b.nodeId !== nodeId && b.epoch >= recent)
+        const listable = (id) => !nodeStake || offline || !!stakes?.[id]?.active;
+        const who = (id, label) => ({ operator: ro3Name(label) || null, wallet: stakes?.[id]?.operator?.toLowerCase() ?? null });
+        const hosts = [...heartbeats.values()].filter((b) => b.nodeId !== nodeId && b.epoch >= recent && listable(b.nodeId))
           .map((b) => ({ b, e: ro3Entry(b) })).filter((x) => x.e)
-          .map(({ b, e }) => ({ nodeId: b.nodeId, name: e.name, url: e.url, seenAt: b.epoch * EPOCH_MS }));
-        if (ro3) hosts.push({ nodeId, name: ro3.name, url: ro3.url, seenAt: now, self: true });
+          .map(({ b, e }) => ({ nodeId: b.nodeId, name: e.name, url: e.url, ...who(b.nodeId, b.operator), seenAt: b.epoch * EPOCH_MS }));
+        if (ro3) hosts.push({ nodeId, name: ro3.name, url: ro3.url, ...who(nodeId, operator), seenAt: now, self: true });
         return json(res, 200, { hosts: hosts.sort((x, y) => y.seenAt - x.seenAt) });
       }
       if (req.method === 'GET' && url.pathname === '/peers') {
