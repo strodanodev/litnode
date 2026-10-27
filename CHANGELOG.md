@@ -3,10 +3,11 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.12.3] — 2026-10-28 — host an RO3Emu server through the node's own tunnel; AFC joins the mesh; arcade key proofs
 
-Protocol 4, unchanged. No contract or bundle hash changes; one new ruleset, `afc.v1` (`e3725bd2…b6a4`). The
-cabinet changes; redeploy it with the next release.
+Protocol 4, unchanged: 0.12.0 through 0.12.3 nodes are peers. The heartbeat gains an optional `ro3` field, which
+older nodes ignore and forward as part of the signed envelope. No contract or bundle hash changes; one new ruleset,
+`afc.v1` (`e3725bd2…b6a4`). The cabinet changes; redeploy it with this release.
 
 ### Added
 - **AFC (Robot Fighting Championship) joins the mesh as `afc.v1`, an attested title** (`titles/afc.adapter.js`,
@@ -20,16 +21,8 @@ cabinet changes; redeploy it with the next release.
   `14336181…e8e9`, reproduces a bout's StreamHash from the match file the node holds; once it is registered, AFC
   results settle `checkable`. The arcade lists AFC as attested with arcade sign-in at
   `rfc.litvm.games`, with no Find match (`queue: false`, new) until its PvP bundle and ranked ship.
-  `demo/afc.test.mjs` settles a real AFC bout on test nodes. **Not registered yet:** the ruleset and the verifier
-  are user steps.
-
-## [0.12.3] — 2026-10-28 — host an RO3Emu server through the node's own tunnel; arcade key proofs
-
-Protocol 4, unchanged: 0.12.0 through 0.12.3 nodes are peers. The heartbeat gains an optional `ro3` field, which
-older nodes ignore and forward as part of the signed envelope. No contract, ruleset or bundle hash changes. The
-cabinet changes; redeploy it with this release.
-
-### Added
+  `demo/afc.test.mjs` settles a real AFC bout on test nodes. Both builds are registered on TitleRegistry under the
+  publisher `0x04bE…a378`: the ruleset has been active since 27 Oct 18:42Z, the verifier since 18:43Z.
 - **RO3Emu hosting through the node's own quick tunnel** (`node/ro3.js`, off unless `RO3_PORT` is set).
   - **Hosting:** an operator who runs RO3Emu with `--tunnel-port 5480` sets `RO3_PORT=5480` (and optionally
     `RO3_NAME`). The node runs a free Cloudflare quick tunnel to that loopback port. That port is RO3Emu's
