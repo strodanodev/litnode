@@ -90,16 +90,16 @@ export const GAMES = [
     queue: false, // casual single-player only: no Find match until AFC's PvP bundle and ranked ship
   },
   {
-    id: 'litvm-chess',
-    title: 'LITVM CHESS',
+    id: 'rapture-chess',
+    title: 'RAPTURE CHESS',
     accent: '#e2b46a',
-    tagline: 'Rapture Chess: the ARC 1 champions take the board.',
-    description: '3D chess on litVM, built with Deckwright and three.js: the Rapture ARC 1 champions take the board. It runs at chess.litvm.games, which this arcade opens in its window; its matches are not settled by the mesh yet.',
+    tagline: 'by LitVM Games',
+    description: '3D chess on litVM where the Rapture ARC 1 champions take the board, by LitVM Games. Built with Deckwright and three.js, it runs at chess.litvm.games, which this arcade opens in its window; its matches are not settled by the mesh yet.',
     controls: ['Select a piece: click', 'Move: click a highlighted square', 'Orbit the board: drag', 'Zoom: scroll'],
     modes: ['vs AI', 'online'],
     players: '1P / 2P online',
     url: 'https://chess.litvm.games/', // its CSP lets arcade.litvm.games frame it
-    cover: './covers/litvm-chess.jpg',
+    cover: './covers/rapture-chess.jpg',
     status: 'external',
     tags: ['THREE.JS', 'DECKWRIGHT'],
     badge: 'chess.litvm.games',
