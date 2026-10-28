@@ -17,6 +17,11 @@ title repos as of 24 Oct, and litnode `caad4c6`.
 | 5 | Sign-in | **one AIR sign-in** across arcade.litvm.games and litnode; the NODE web app is gated by the **Rapture NFT** (litVM testnet); only holders bond nodes for rewards and points | §6 |
 | 6 | Secrets | **no service key or sensitive env in litnode code or data before production**; production = the testnet arcade going live as **Season 0** | §11 |
 
+**Amendment 1, approved 28 Oct** ([SETTLEMENT-ARCHITECTURE-A1.md](SETTLEMENT-ARCHITECTURE-A1.md)):
+one title contract (C1–C6) that every title meets to settle with its host
+or publisher offline. It lands in §0, §4, §8, §9, §12, §14, §17, §18 and
+§19 below; the amendment file keeps the reasoning and the per-title check.
+
 ## 0. The target in one paragraph
 
 **Play anywhere, sign at the seat, replay on the mesh, settle once.**
@@ -24,7 +29,9 @@ title repos as of 24 Oct, and litnode `caad4c6`.
 - A title is up to four **hashed artifacts on TitleRegistry**: a ruleset,
   a verifier, a server bundle (real-time titles), and an attestor set
   (only for a title that keeps a studio court). A node loads them by hash;
-  no title needs a litnode release.
+  no title needs a litnode release. Judging has **one interface**,
+  `verify(log) → { result, stats, finalHash }`: a light title's ruleset is
+  its verifier, a heavy title ships a verifier bundle (Amendment 1, C1).
 - **Players sign their own inputs** through the arcade shell. A host can't
   invent or drop a seat's inputs without the signatures showing it.
 - **Any bonded operator** that opts in hosts the match. It holds no
@@ -32,6 +39,9 @@ title repos as of 24 Oct, and litnode `caad4c6`.
 - **The mesh replays every result** with the title's verifier: the three
   witnesses for a ranked match, the three custodians for everything else.
   Agreement co-signs, a mismatch disputes.
+- **The evidence never lives on one machine.** The seats' shells stream
+  heads and log chunks to the match's custodians while it runs, and a
+  custodian settles when the host goes silent (Amendment 1, C3 and C5).
 - **Credentials never reach a node.** A player signs in once, with AIR, at
   the arcade. Tokens, payments and the economy go to the studio API
   (Vercel, Neon or Supabase). Nodes see signatures, never tokens.
@@ -155,6 +165,19 @@ verifier.** Both feed the same machinery.
   **L3 `verified`** once a replay agrees. **L2 `checkable`** and **L1
   `attested`** remain for studio-court results. Old results keep their
   level; nothing is relabelled.
+- **Custody during play (Amendment 1, C3).** The custodians are drawn at
+  placement (`custodians(matchId, rulesetId, hostId)`), so the shell knows
+  them too. They receive log chunks `{ matchId, from, to, bytes,
+  chunkHash }` while the match runs, each checked against the last head
+  before it's kept, under `MAX_LOG_BYTES`, and dropped at settle or expiry.
+  Who streams follows who holds the full log: each seat's shell for
+  lockstep titles, the match server for server-authoritative ones, the
+  shell at the end for a single-player run. The after-settle fetch from
+  the host stays as a fallback.
+- **Settle without the host (Amendment 1, C5).** If the host hasn't
+  settled within `settleGraceS` of the match's end (proposed 120 s, §19),
+  the first custodian in hash order settles it from the streamed evidence.
+  For ranked this needs MatchBook gen-5 (§14.1).
 
 **Who computes what** (the user's question 5):
 
@@ -325,6 +348,9 @@ their courts are gone.
   order's join ticket. It records each seat's **signed head**
   (`cabinet:sign`, `ledger` tag over `{ matchId, seat, ticks, head }`) at
   least every 30 s and at the end.
+- **The shell** also sends each head straight to the match's custodians
+  (Amendment 1, C2 and C3), so the match server's copy is no longer the
+  only one. A head commits to the running log hash.
 - **The node** refuses an arcade-sourced envelope whose participants are
   not all keys, and a log that doesn't match every seat's last head. A
   seat's inputs after its last head count as empty (a disconnect).
@@ -351,10 +377,20 @@ to that same path (`GET /verifier/<id>?build=`, `GET /attestors/<id>?set=`).
    mismatch.
 2. It writes `releases/<rulesetId>/<version>.json` with the hashes and the
    source commits.
-3. It prints **one** batch of registration calls for the signer page
+3. **The release gate (Amendment 1, C6).** It runs conformance, then
+   replays the title's fixture logs on two machines or runtimes and
+   compares `finalHash`, then runs the **publisher-offline drill**: the
+   generic form of `demo/publisher-offline.test.mjs`, five in-process
+   nodes, the publisher's node stops, the title's own bots (`bots` in the
+   release spec) play on a non-publisher node, the host is killed halfway,
+   and the match must settle from custody and be replayed. It stops at the
+   first failure. A title that passes is labelled **survives publisher
+   offline** in the arcade; one that doesn't stays playable, labelled with
+   its proof level.
+4. It prints **one** batch of registration calls for the signer page
    (`tools/signer`), new builds first, revokes after activation. It never
    sends them. One signing session per release is the user's only step.
-4. A court or client reads its verifier hash from the release file or env,
+5. A court or client reads its verifier hash from the release file or env,
    never from a compile-time define (FLOOD CONTROL's `__FC_VERIFIER_HASH__`
    goes).
 
@@ -452,6 +488,13 @@ Vercel is no longer on any settlement path. What it still carries is
 sign-in, lobbies and the economy, and those belong to the studio by the
 stack split.
 
+**A host that dies (Amendment 1).** Today a host lost mid-match, or after
+the match but before it settles, loses the match: the players re-queue.
+With streamed custody (§4) the match settles from the last head every
+seat signed (§14.1, the forfeit rule), and a host silent after the end is
+replaced by the first custodian. A single-player run has no host to lose,
+and AF casual has nothing to settle (studio-only results).
+
 ## 13. Ops
 
 **Guardian version skew.** Guardian reports gain `protocol` and `impl`. A
@@ -497,10 +540,19 @@ asks a fresh peer, then reports `statsMissing`. An empty hour is logged as
 9. **Co-signatures readable by anyone** (§14.2, mesh gap 6):
    `GET /delta/<id>` carries the signed custody co-signatures, so a studio
    can check finality without trusting the node that serves it.
+10. **Streamed custody** (Amendment 1, B2): shell heads to custodians and
+    log chunks during play (§4, §8).
+11. **Custodian settle** (Amendment 1, B3): the first custodian settles
+    after `settleGraceS`, against **MatchBook generation 5** (§4).
 
 Node-only, no bump: the guardian `protocol` field, doctor checks,
-`title:release`, the services env allowlist, the release scan, and
-`sdk/chain` (§14.2).
+`title:release` with its release gate (Amendment 1, B4), the services env
+allowlist, the release scan, and `sdk/chain` (§14.2).
+
+**Deferred by Amendment 1 (B5):** a generic input relay built into
+litnode. AF ranked has its server bundle and AF casual its relay split
+(row 9); revisit when a third-party lockstep title arrives without a
+server.
 
 **One contract generation, not two.** NodeStake gen-5 (the Rapture gate,
 §6) and MatchBook gen-5 (the records and the reduced panel, §14.1) deploy
@@ -744,16 +796,17 @@ match. The old build or key is revoked only after that.
 | 3 | 1 | **FC** | stats from the body (`keptDry` in the body); verifier hash from env | one signer batch (ruleset + verifier); set the env; deploy | a run settles `checkable` |
 | 4 | 1 | **AFC** | adapter keeps `modes: ['casual']`; `pvpEnvelope` sends `casual` until ranked is ready; re-vendor `sdk/court` | one signer batch; deploy | a bout settles |
 | 5 | 1 | **litnode** | services env allowlist; doctor `secrets`; release scan; the A6–A8 rules | — | suite green |
-| 6 | 2 | **litnode** | protocol 5 (§14); AIR off the node; Rapture rule; **NodeStake gen-5** with the gate, and its dependents redeployed | deploy generation 5 (`deploy:testnet --fresh`); release + register 0.13.0; one operator window: update, then re-bond with a Rapture card per node | 4 Rapture-holding operators bonded on gen-5 |
+| 6 | 2 | **litnode** | protocol 5 (§14); verifier runner (A1 B1); streamed custody (A1 B2); AIR off the node; Rapture rule; **NodeStake gen-5** with the gate, and its dependents redeployed | deploy generation 5 (`deploy:testnet --fresh`); release + register 0.13.0; one operator window: update, then re-bond with a Rapture card per node | 4 Rapture-holding operators bonded on gen-5 |
 | 7 | 2 | **arcade** | AIR proxy custody and `/air/*` in the arcade API; Rapture gate on the Nodes pages | set `PROXY_ROOT` and the sponsor key in Vercel env; deploy; run the proxy handover | sign-in works with no node involved |
-| 8 | 2 | **PB** | court loop as a server bundle that records heads; verifier as the judge; lobbies in PB's database with match orders; matchmaker retired; `boundKey` | one signer batch (ruleset, bundle, verifier, orders set); deploy | PB plays and settles with desktop and m16 off |
+| 8 | 2 | **PB** | court loop as a server bundle that records heads and streams log chunks to custodians (A1 C3); verifier as the judge; lobbies in PB's database with match orders; matchmaker retired; `boundKey` | one signer batch (ruleset, bundle, verifier, orders set); deploy | PB plays and settles with desktop and m16 off, and passes the release gate (A1 C6) |
 | 9 | 2 | **AF** | relay split: account API → Vercel; rooms relay secret-free | deploy; remove the AF `.env` from the desktop | AF casual plays with the desktop off |
-| 10 | 2 | **AFC, FC** | heads (AFC); courts become optional; custodians replay | one signer batch each | a result verified by replay |
-| 11 | 3 | **AFC** | ranked on: release a ruleset with `ranked` once doctor is green | one signer batch | `ranked.*` green |
-| 12 | 2 | **litnode + contracts** | §14.1: exclusion, records in placement, forfeit from heads, the reduced panel; **MatchBook gen-5** deployed with NodeStake gen-5; co-signatures in `/delta`; `sdk/chain` | in the same generation-5 deploy and 0.13.0 window as row 6 | `demo/gap-2-free-abort.test.mjs` flips: 2.1 excludes, 2.2 records, 2.3 finalizes by the reduced panel |
+| 10 | 2 | **AFC, FC** | heads and streamed custody (AFC, A1 C3); courts become optional; custodians replay. FC goes first on the verifier runner | one signer batch each | a result verified by replay, and the release gate passes (A1 C6) |
+| 11 | 3 | **AFC** | ranked on: release a ruleset with `ranked` once doctor is green | one signer batch | `ranked.*` green and the release gate passes |
+| 12 | 2 | **litnode + contracts** | §14.1: exclusion, records in placement, forfeit from heads, the reduced panel; custodian settle after `settleGraceS` (A1 B3); **MatchBook gen-5** deployed with NodeStake gen-5; co-signatures in `/delta`; `sdk/chain` | in the same generation-5 deploy and 0.13.0 window as row 6 | `demo/gap-2-free-abort.test.mjs` flips: 2.1 excludes, 2.2 records, 2.3 finalizes by the reduced panel; a match whose host stops after the end settles by a custodian |
 | 13 | 2 | **AF** | §14.2 in ADR 0015's account API: `mesh_credits`, `player_keys`, the cron; mesh XP/Elo/tickets from Final only; AF clients sign rolling heads | Vercel env (`CRON_SECRET`, the DB secret), migration, deploy | a ranked match credits once, after Final, and never before |
 | 14 | 2 | **PB** | §14.2: migration 013, court results recorded pending, the cron, match-id pairing, no client-report pickles for human matches | Vercel env, migration, deploy | a court report pays nothing until the delta is final |
-| 15 | 2 | **arcade** | placement in `cabinet/protocol/` reads `owners` and the records (vendored with 0.13.0) | redeploy after the desktop runs 0.13.0 | the browser draws the same host as the node |
+| 15 | 2 | **arcade** | placement in `cabinet/protocol/` reads `owners` and the records (vendored with 0.13.0); the shell streams heads (and lockstep log chunks) to the custodians (A1 C3); the "survives publisher offline" label | redeploy after the desktop runs 0.13.0 | the browser draws the same host as the node, and its custodians hold a live match's chunks |
+| 16 | 2 | **litnode** | the release gate in `title:release`: determinism on two runtimes and the generic publisher-offline drill (A1 B4, node-only) | — | AF ranked passes the drill with its own bots |
 
 ## 18. Phased plan
 
@@ -778,7 +831,10 @@ and web; one signer batch each for FC and AFC, then their env and deploy.
 
 ### Phase 2: protocol 5 and the Season 0 gate (litnode 0.13.0)
 
-**Scope:** rows 6–10 and 12–15. Season 0 launches at the end of phase 2.
+**Scope:** rows 6–10 and 12–16. Season 0 launches at the end of phase 2.
+**Title order (Amendment 1):** AF ranked, FLOOD CONTROL, AFC, then Pickle
+Brawl once its pure-JS sim is extracted; until then PB stays attested,
+labelled L1.
 
 **Tests.**
 
@@ -805,6 +861,14 @@ and web; one signer batch each for FC and AFC, then their env and deploy.
 - `demo/mesh-credit.test.mjs` (litnode side): `sdk/chain` recomputes a
   delta to the chain's hash, verifies co-signatures against a gen-5 stake
   table, and rejects a co-sign from the host's own operator.
+- `demo/streamed-custody.test.mjs` (Amendment 1): custodians receive a
+  live match's chunks and heads; a chunk that doesn't match the last head
+  is refused; the host is killed mid-match and the match settles from the
+  last head every seat signed.
+- `demo/custodian-settle.test.mjs` (Amendment 1): the host stops after the
+  end; after `settleGraceS` the first custodian settles on MatchBook gen-5
+  and the panel replays it to final.
+- The release gate run on AF ranked with its own bots (row 16).
 - A five-node in-process mesh with PB, AF and FC, and the §12 target
   matrix drilled once and written down.
 
@@ -876,6 +940,18 @@ Decisions that are the user's:
      crediting job, not a protocol rule, so changing it needs no release.
    - **Revisit it when §11's challenge path lands.** Until then only a
      result's custodians can dispute it.
+
+Amendment 1's open items (the user's, approved 28 Oct with these open):
+
+- **A1-1 Head interval.** ≤ 30 s (§8). Is 30 s of lost play on a host
+  death acceptable for AF, or should lockstep titles sign every 10 s?
+- **A1-2 `settleGraceS`.** Proposed 120 s.
+- **A1-3 Gas for a custodian settle.** Does GasRefund pay the custodian as
+  it pays the host?
+- **A1-4 Stream bandwidth** per title, measured on AF and PB before B2
+  ships.
+- **A1-5 AF casual.** Wait for the relay split (row 9), or bring the
+  generic relay (B5) forward?
 
 Facts to check during the build (not decisions):
 
