@@ -376,7 +376,7 @@ const gameTag = (g) => (g?.rulesetId ? proofTag(titleProof(g)) : '<span class="t
 const settledBy = (g) => ({ verified: 'replay of the player-signed input log (L3 verified)', checkable: "the court's replay, log held by the mesh, verifier registered (L2 checkable)", attested: "the court's signed report, checked against the rules (L1 attested)" }[titleProof(g)] ?? 'not on the mesh yet');
 /** What backs a result, in one word: verified (players signed + independent witness agreed), disputed, or unverified — and whether it counts. */
 const verifyTag = (d) => d.chain === 'final' ? '<span class="tag live" title="finalized on chain: committed before play, settled by the host, attested by three witnesses; counts toward the official ladder">final on chain</span>' : d.chain === 'void' ? '<span class="tag court" title="voided on chain: the witnesses disagreed, or the host never settled">voided</span>' : d.chain && d.chain !== 'none' ? `<span class="tag" title="on chain, ${esc(d.chain)}: attestations still arriving">on chain · ${esc(d.chain)}</span>` : d.verification === 'verified' ? `<span class="tag live" title="players signed, an independent witness reached the same result${d.official ? '; counts toward the official ladder' : ''}">verified${d.official ? '' : ' · unofficial'}</span>` : d.verification === 'disputed' ? '<span class="tag court" title="a witness recomputed a different result">disputed</span>' : `<span class="tag" title="${esc(d.attestation ?? '')}: not independently verified; not on the official ladder">unverified</span>`;
-const statusTag = (g) => g.status === 'attested' ? '<span class="tag court">Court</span>' : g.status === 'external' ? '<span class="tag hosted">Hosted</span>' : g.status === 'mesh' ? '<span class="tag hosted">Mesh</span>' : '';
+const statusTag = (g) => g.status === 'attested' ? '<span class="tag court">Court</span>' : g.status === 'external' ? '<span class="tag hosted">Hosted</span>' : g.status === 'mesh' ? '<span class="tag hosted">Mesh</span>' : g.status === 'community' ? '<span class="tag hosted" title="Run by their hosts on the LITNODE mesh; not settled">Community servers</span>' : '';
 const tagRow = (g) => `<div class="chips">${(g.tags ?? []).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}${statusTag(g)}</div>`;
 /** Rank badge: the number inside bracket ticks. */
 const rankBadge = (n, color) => {
@@ -543,7 +543,7 @@ function gamesPanel() {
   const rows = GAMES.map((g, i) => `
     <a class="grow" href="#/game/${g.id}" style="--ga:${g.accent}">
       <div class="ico" style="${g.cover ? `background-image:url('${esc(g.cover)}')` : ''}">${g.cover ? '' : `0${i + 1}`}</div>
-      <div style="min-width:0"><div class="t">${esc(g.title)}<sup>™</sup></div><div class="s">${esc(g.players)} · ${esc(g.modes.join(' / '))}</div></div>
+      <div style="min-width:0"><div class="t">${esc(g.title)}${g.trademark === false ? '' : '<sup>™</sup>'}</div><div class="s">${esc(g.players)} · ${esc(g.modes.join(' / '))}</div></div>
       <div class="right">${gameTag(g)}${g.playable ? `<button class="btn sm primary" data-play="${g.id}">Play</button>` : ''}</div>
     </a>`).join('');
   return panel('Game library', `<div class="glist">${rows}</div>`, moreLink('#/games', 'all games'), 's3');
@@ -609,8 +609,8 @@ const coverArt = (g) => g.cover
 // built once — render() runs on every node poll, and rewriting the frame's
 // HTML would reload the game — so only the parts around it re-render.
 const playableGames = () => GAMES.filter((g) => g.playable && g.url);
-let arcadePick = null;   // picked this session; otherwise the featured title (config.js order) loads
-const arcadeGame = () => { const list = playableGames(); return list.find((g) => g.id === arcadePick) ?? list[0] ?? null; };
+let arcadePick = null;   // picked this session; otherwise the featured title (config.js `featured`, else the first) loads
+const arcadeGame = () => { const list = playableGames(); return list.find((g) => g.id === arcadePick) ?? list.find((g) => g.featured) ?? list[0] ?? null; };
 const inWindow = () => current && frame !== overlayFrame;
 // The Arcade tab is the landing page: entering it with nothing running loads
 // the featured title. A remembered AIR session is restored first (capped), so
@@ -647,7 +647,7 @@ function renderGames() {
     <article class="card" style="--ga:${g.accent}">
       <a class="cover" href="#/game/${g.id}">${coverArt(g)}${gameTag(g)}<span class="no">0${i + 1}</span></a>
       <div class="body">
-        <div class="ttl"><h2>${esc(g.title)}<sup>™</sup></h2><a class="sel" href="#/game/${g.id}">Select ›</a></div>
+        <div class="ttl"><h2>${esc(g.title)}${g.trademark === false ? '' : '<sup>™</sup>'}</h2><a class="sel" href="#/game/${g.id}">Select ›</a></div>
         <div class="tagline">${esc(g.tagline)}</div>
         ${tagRow(g)}
         <ul class="mini">${!g.rulesetId ? '<li class="dim">not on the mesh yet</li>' : S.online ? ((S.boards[g.rulesetId] ?? []).slice(0, 3).map((r) => `<li><span>${r.rank}. ${short(r.player, 12)}</span><span>${r.rating}</span></li>`).join('') || '<li class="dim">no settled matches yet</li>') : `<li class="dim">${S.checked ? 'node offline' : 'connecting…'}</li>`}</ul>
@@ -665,7 +665,7 @@ function renderGame(g) {
     <div class="page-h"><a class="dim" href="#/games">‹ all games</a></div>
     <section class="hero ${g.cover ? 'has-cover' : ''}" style="${g.cover ? `--cover:url('${esc(g.cover)}')` : ''}">
       <div><h1 class="chrome">${esc(g.title)}</h1><div class="tagline">${esc(g.tagline)}</div><div class="chips">${gameTag(g)}<span class="tag">${esc(g.players)}</span>${(g.tags ?? []).map((t) => `<span class="tag">${esc(t)}</span>`).join('')}${statusTag(g)}</div></div>
-      <div class="hero-actions">${g.rulesetId && g.queue !== false ? `<button class="btn primary" data-queue="${g.id}" ${S.online && player.kp ? '' : 'disabled'}>Find match</button>` : ''}${g.playable ? `<button class="btn ${g.rulesetId && g.queue !== false ? '' : 'primary'}" data-play="${g.id}">Play now</button>` : '<button class="btn" disabled>Played off-cabinet</button>'}${g.url ? `<a class="btn" href="${esc(g.url)}" target="_blank" rel="noopener">↗ open in tab</a>` : ''}</div>
+      <div class="hero-actions">${g.rulesetId && g.queue !== false ? `<button class="btn primary" data-queue="${g.id}" ${S.online && player.kp ? '' : 'disabled'}>Find match</button>` : ''}${g.playable ? `<button class="btn ${g.rulesetId && g.queue !== false ? '' : 'primary'}" data-play="${g.id}">Play now</button>` : `<button class="btn" disabled>${esc(g.offCabinet ?? 'Played off-cabinet')}</button>`}${g.url ? `<a class="btn" href="${esc(g.url)}" target="_blank" rel="noopener">↗ open in tab</a>` : ''}</div>
     </section>
     ${g.rulesetId ? '<div id="mm"></div>' : ''}
     <div class="cols">

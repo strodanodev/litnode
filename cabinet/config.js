@@ -89,6 +89,40 @@ export const GAMES = [
     playable: true,
     queue: false, // casual single-player only: no Find match until AFC's PvP bundle and ranked ship
   },
+  {
+    id: 'rapture-chess',
+    title: 'RAPTURE CHESS',
+    accent: '#e2b46a',
+    tagline: 'by LitVM Games',
+    description: '3D chess on litVM where the Rapture ARC 1 champions take the board, by LitVM Games. Built with Deckwright and three.js, it runs at chess.litvm.games, which this arcade opens in its window; its matches are not settled by the mesh yet.',
+    controls: ['Select a piece: click', 'Move: click a highlighted square', 'Orbit the board: drag', 'Zoom: scroll'],
+    modes: ['vs AI', 'online'],
+    players: '1P / 2P online',
+    url: 'https://chess.litvm.games/', // its CSP lets arcade.litvm.games frame it
+    cover: './covers/rapture-chess.jpg',
+    status: 'external',
+    tags: ['THREE.JS', 'DECKWRIGHT'],
+    badge: 'chess.litvm.games',
+    playable: true,
+    featured: true, // the title the Arcade page opens with (app.js arcadeGame), whatever the list order
+  },
+  {
+    id: 'ro3',
+    title: 'RAGNAROK ONLINE 3',
+    accent: '#f0c060',
+    tagline: 'Community RO3 servers on the LITNODE mesh. New Prontera is open.',
+    description: 'Ragnarok Online 3 on community servers that run through LITNODE: no port forwarding, no server bills. The RO3 on LITNODE desktop launcher downloads the game from the official servers, patches it on your PC and finds the servers on the mesh. Register in the game itself; sign in here to link your account for arcade features and the testnet shop. Prototype: results are not settled by the mesh.',
+    controls: ['Move and target: mouse', 'Skills: 1-9 and the skill bar', 'Chat: Enter', 'Played in the desktop launcher (Windows)'],
+    modes: ['community servers', 'parties and guilds', 'shop (zkLTC testnet)'],
+    players: 'MMO',
+    cover: './covers/ro3.jpg',
+    status: 'community',
+    tags: ['WINDOWS', 'DESKTOP LAUNCHER', 'PROTOTYPE'],
+    badge: 'RO3 on LITNODE',
+    playable: false,
+    offCabinet: 'Desktop launcher · coming soon', // the button until the launcher has a public download
+    trademark: false, // Ragnarok Online is Gravity's mark, not this arcade's: no ™ from us
+  },
 ];
 
 /** litVM (LiteForge testnet) — read-only from the dashboard. Addresses come from
