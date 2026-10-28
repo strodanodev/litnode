@@ -1132,24 +1132,26 @@ function renderDownload() {
 }
 
 // ═══════════════════════════════════════════════ RO3 on LITNODE launcher ══
-const R3 = { params: null, listed: null, checking: false, shop: null, amount: '', tx: null, busy: '', error: '', done: null };
+const R3 = { params: null, listed: null, checking: false, listNode: null, listAt: 0, listErr: '', shop: null, amount: '', tx: null, busy: '', error: '', done: null };
 let r3Html = '';   // the page last drawn (renderRo3)
 const r3Profile = () => { const p = ro3.signedProfile(Ai.me.session, player?.id); return p.ok ? p : null; };
 function renderRo3() {
-  if (R3.params?.state !== route.ro3?.state) Object.assign(R3, { params: route.ro3, listed: null, checking: false, shop: null, amount: '', tx: null, busy: '', error: '', done: null });
-  // The server to link on is checked against this page's own node, never taken from the URL (cabinet/ro3.js).
-  if (R3.params?.realm && !R3.listed && !R3.checking && !R3.error) {
-    R3.checking = true;
-    ro3.listedRealm({ nodeUrl: nodeUrl(), realm: R3.params.realm, serverId: R3.params.serverId })
+  if (R3.params?.state !== route.ro3?.state) Object.assign(R3, { params: route.ro3, listed: null, checking: false, listNode: null, listAt: 0, listErr: '', shop: null, amount: '', tx: null, busy: '', error: '', done: null });
+  // The server to link on is checked against this page's own node, never taken from the URL (cabinet/ro3.js). Until it
+  // passes, the check runs again whenever the node changes (the page can open before the seed is found, on the
+  // 127.0.0.1 default an https page cannot reach) and every 15 s otherwise.
+  if (R3.params?.realm && !R3.listed && !R3.checking && (R3.listNode !== nodeUrl() || Date.now() - R3.listAt > 15_000)) {
+    R3.checking = true; R3.listNode = nodeUrl(); R3.listAt = Date.now();
+    ro3.listedRealm({ nodeUrl: R3.listNode, realm: R3.params.realm, serverId: R3.params.serverId })
       .then(async (l) => {
-        R3.listed = l;
+        R3.listed = l; R3.listErr = '';
         if (R3.params.shop && !(R3.shop = await ro3.shopInfo({ realm: l.url }))) R3.error = 'This server does not sell anything right now.';
-      }, (e) => { R3.error = e.message; })
+      }, (e) => { R3.listErr = e.message; })
       .finally(() => { R3.checking = false; if (route.name === 'ro3') renderRo3(); });
   }
   // render() runs on every 5-s node poll: an unchanged page is left alone, so typing in its fields survives the poll;
   // a changed one (an error, sign-in done) keeps what was typed and where the cursor was.
-  const html = ro3.ro3View({ ...R3, profile: r3Profile() });
+  const html = ro3.ro3View({ ...R3, error: R3.error || (R3.listed ? '' : R3.listErr), profile: r3Profile() });
   if (html === r3Html && view('ro3').firstChild) return;
   r3Html = html;
   const typed = ['ro3-account', 'ro3-password'].map((id) => [id, $(id)?.value]).filter(([, v]) => v);
