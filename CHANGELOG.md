@@ -35,6 +35,22 @@ follows [Keep a Changelog](https://keepachangelog.com/).
   - Tests: `demo/verifier.test.mjs` (the judge, the ceilings, the child's isolation, the budget and trust gates, a
     two-node mesh that co-signs an honest result and disputes a forged one, and the real FLOOD CONTROL bundle on
     `demo/fixtures/flood-control-run.json` when the game checkout is present, `FC_ROOT`).
+- **The arcade's `#/ro3` page, for the RO3 on LITNODE launcher** (`cabinet/ro3.js`). The launcher opens
+  `#/ro3?return=<port>&state=<32 hex>` and gets the player back on `http://127.0.0.1:<port>/ro3/return` with public
+  facts only (profile name, number, address). No AIR token or key leaves the page.
+  - **Sign in:** the arcade's own AIR flow.
+  - **Link an RO3 account** (`&realm=…&serverId=…`): only on a server this page's node lists at `/ro3/hosts` with
+    the same node id and address, named from that listing. The server's challenge must carry the aud
+    `ro3.<first 32 hex of its node id>` before the page signs its `key` proof (`ro3.v1`). The name and password go
+    to that server only. https only.
+  - **Buy premium currency with zkLTC** (`&shop=1`, litVM testnet): only from a listed server whose price list names
+    chain 4441. The payment's data is the page's player key, so it credits only that profile. The wallet's chain is
+    re-checked and pinned (`chainId`) at the moment of paying; a wallet switched to another network sends nothing.
+    The server credits once per transaction (`/ro3emu/shop/claim`), and the page keeps the hash for "Claim again".
+  - No node, protocol or contract change. It goes live with the arcade deploy, and needs the bonded-only
+    `/ro3/hosts` below on the node the arcade uses.
+  - Tests: `demo/ro3-launcher.test.mjs`, and `demo/key-proof-vectors.test.mjs` (test vectors for the `key` proof
+    that RO3Emu's C# verifier checks byte for byte; `tools/key-proof-vectors.mjs`).
 
 ### Changed
 
