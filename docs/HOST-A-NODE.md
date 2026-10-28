@@ -192,6 +192,22 @@ does not need the publisher's relay. This is the only way an Agent Fighter
 match reaches the mesh: the always-on relay is casual play and keeps its
 results in Agent Fighter's own database.
 
+## Verifiers: re-running attested results
+
+A witness or custodian re-runs an attested result's committed log with the
+title's verifier bundle and disputes a result the verifier doesn't
+reproduce (`node/verifier.js`, docs/SETTLEMENT-STANDARD.md §11). It is on by
+default and needs no setting: the node fetches a verifier by hash only when
+the title registered it on TitleRegistry, runs each one in its own
+restricted process, and serves what it holds to peers.
+
+- `VERIFY_BUDGET_MIN=60` caps a day's runs in minutes; `0` turns the runner
+  off (results are then co-signed on the court's attestation alone).
+- `VERIFIER_BUNDLES=<rulesetId>=<file.verifier.tgz>` is the publisher's
+  side: hold and serve this file (with its `.json` sidecar beside it).
+- `/health.settlement.verifiers.runner` shows runs, agreements,
+  disagreements, skips and the day's budget.
+
 ## Services: running a studio's backend on this node
 
 `SERVICES=<bundle.json>,...` runs a studio's long-lived backend (API,

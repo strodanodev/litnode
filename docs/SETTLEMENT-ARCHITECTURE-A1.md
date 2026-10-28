@@ -144,7 +144,7 @@ level.
 
 | Step | What | Release | Unblocks |
 |---|---|---|---|
-| B1 | **Verifier runner**: witnesses and custodians run `verify` (rev 2 §14 item 1) | 0.13.0 | FLOOD CONTROL, then AFC and PB |
+| B1 | **Verifier runner**: witnesses and custodians run `verify` (rev 2 §14 item 1). **Built 28 Oct, unreleased:** it runs under protocol 4 and adds disputes; the proof-level upgrade waits for 0.13.0 | next release; proof level in 0.13.0 | FLOOD CONTROL, then AFC and PB |
 | B2 | **Shell heads to custodians** and **log chunks** (C2, C3) | 0.13.0 (protocol 5) | host death mid-match |
 | B3 | **Custodian settle after `settleGraceS`** (C5) | 0.13.0 + MatchBook gen-5 | host death after the match |
 | B4 | **Generic drill + gate** (C6) | node-only, any release | per-title proof |

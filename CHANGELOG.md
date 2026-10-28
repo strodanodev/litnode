@@ -5,6 +5,37 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **The verifier runner: witnesses and custodians re-run an attested result's log** (`node/verifier.js`,
+  `node/verifier-child.mjs`; docs/SETTLEMENT-ARCHITECTURE.md Amendment 1, step B1). Until now a node only checked
+  that a court's verifier bundle was registered (that earned `checkable`); nobody ran it.
+  - **What a witness does now:** for an attested result whose report names a log, a `finalHash` and a verifier, it
+    holds the log (fetched from the host if needed), fetches the verifier by hash, runs `verify(log, report)` and
+    compares the `finalHash` with the court's. Agreement co-signs, marked `verified: 'verifier'`. A different hash,
+    or a log the verifier refuses, is a **signed dispute** with reason `verifier: …`, on the custody path and on the
+    MatchBook seats alike. Anything it can't check (no log, no verifier, untrusted, over budget, a run killed at its
+    deadline) co-signs on the attestation alone, as before.
+  - **Protocol 4, unchanged:** no result hash or proof level changes, so a node without the runner co-signs as
+    before and one with it can only add disputes. Raising a re-run result's proof level is protocol 5 (0.13.0).
+  - **Bundles travel like server bundles:** held by hash under `<DATA_DIR>/verifiers/`, never evicted, served at
+    `GET /verifier/<rulesetId>?build=<hash>`, advertised in the heartbeat (`verifiers`, an optional field older
+    nodes forward). A node fetches one only when the title's publisher registered it on TitleRegistry (or
+    `VERIFIERS` accepts it), and checks that again before every run. The publisher's node serves its own file with
+    `VERIFIER_BUNDLES=<rulesetId>=<file.verifier.tgz>`.
+  - **Isolation:** each `verify()` runs in its own process with the permission model on (read access to the
+    bundle's directory only), an empty environment, network builtins refused at resolve time (`import` and
+    `require` alike) and the network globals removed, the manifest's `runtime.memoryMb` / `timeoutS` (defaults
+    512 MB / 120 s, ceilings 2048 MB / 900 s; a bundle asking for more is refused). One run at a time;
+    `VERIFY_BUDGET_MIN` (60) caps a day's runs in minutes, `0` turns the runner off. `/health.settlement.verifiers.runner`
+    reports runs, agreements, disagreements, skips and the day's budget.
+  - **FLOOD CONTROL first:** its registered verifier `56cfff04` reproduces a real Storm of the Day run's `finalHash`
+    under the runner (about 26 s on the desktop) and disputes a forged one. Its runs are re-checked once a node
+    serves the bundle (`VERIFIER_BUNDLES` on the publisher's node, a user step).
+  - Tests: `demo/verifier.test.mjs` (the judge, the ceilings, the child's isolation, the budget and trust gates, a
+    two-node mesh that co-signs an honest result and disputes a forged one, and the real FLOOD CONTROL bundle on
+    `demo/fixtures/flood-control-run.json` when the game checkout is present, `FC_ROOT`).
+
 ### Changed
 
 - **`/ro3/hosts` lists RO3Emu servers from bonded nodes only.** (Not in the published 0.12.3, which was cut from `34f4c12`.)

@@ -29,6 +29,7 @@ import { createTunnel } from './tunnel.js';
 import { createRo3Host, ro3Entry, ro3Name } from './ro3.js';
 import { createGauntlets } from './gauntlet.js';
 import { openBundle, writeFiles, configFromBundle, runtimeOk, permanent, MANIFEST_NAME, MAX_BUNDLE_BYTES } from './server-bundle.js';
+import { createVerifiers, DEFAULT_BUDGET_MIN } from './verifier.js';
 import { createServices as createPublisherServices } from './publisher-services.js';
 import { policyOf, scanDataDir } from './secrets.js';
 import { keepMapped } from './upnp.js';
@@ -167,6 +168,9 @@ export async function createNode({
   // Courts this operator authorizes for attested titles: rulesetId → [pubkeys].
   courts = {},
   verifiers = {}, // rulesetId → [verifierHash] the operator accepts as registered (VERIFIERS); TitleRegistry is the normal source
+  // The verifier runner (node/verifier.js): { rulesetId: '<path>.verifier.tgz' } is the publisher's own bundle, served
+  // to peers (VERIFIER_BUNDLES); verifyBudgetMin caps a day's verify() runs in minutes, 0 turns the runner off.
+  verifierBundles = {}, verifyBudgetMin = DEFAULT_BUDGET_MIN,
   // Relay keys whose signed submissions this host accepts as 'relay' provenance.
   relayKeys = [],
   // Universal login (docs/UNIVERSAL-LOGIN.md): verify AIR Kit session tokens
@@ -523,10 +527,18 @@ export async function createNode({
     profile: async (playerKey) => { await refreshProfiles([playerKey]).catch(() => {}); return profileCache.get(playerKey) ?? null; },
   } : null;
   let mbook = null; // the MatchBook driver, created below once the settlement exists
+  // Settlement v4: a court's verifier bundle grants `checkable` only while it is registered and active for the title.
+  const verifierActive = async (rulesetId, hash) => (verifiers[rulesetId] ?? []).includes(hash) || (await buildRegistered(rulesetId, hash))?.ok === true;
+  // The verifier runner (node/verifier.js): a witness or custodian re-runs an attested result's committed log with the
+  // title's verifier, fetched by hash from a peer that advertises it.
+  const verifierRunner = createVerifiers({
+    dataDir, verifierActive, local: verifierBundles, budgetMin: verifyBudgetMin, log, emit,
+    peersFor: (rid, hash) => [...heartbeats.values()].filter((b) => b.nodeId !== nodeId && b.addr && b.verifiers?.[rid]?.includes(hash)).map((b) => b.addr),
+  });
   const settlement = createSettlement({
-    dataDir, nodeId, identity, loaded, builds, sandbox, log, registry, courts, relayKeys,
-    // Settlement v4: a court's verifier bundle grants `checkable` only while it is registered and active for the title.
-    verifierActive: async (rulesetId, hash) => (verifiers[rulesetId] ?? []).includes(hash) || (await buildRegistered(rulesetId, hash))?.ok === true,
+    dataDir, nodeId, identity, loaded, builds, sandbox, log, registry, courts, relayKeys, verifierActive,
+    // the log comes from the host when this node doesn't hold it yet (the MatchBook seats fetch only delta and ledger)
+    verifyAttested: (delta, ledger, logs) => verifierRunner.check(delta, ledger, { logs, logFrom: [heartbeats.get(delta.hostId)?.addr].filter(Boolean) }),
     onSettled: async (delta, ledger) => {
       const e = matchBook.get(delta.matchId);
       if (e) { e.settled = true; if (e.committed && !e.commitTx) await Promise.race([e.committed, new Promise((r) => setTimeout(r, 15_000))]); } // a match settled within seconds of placement: let the commit go first
@@ -581,7 +593,7 @@ export async function createNode({
   const settlementStatus = () => {
     if (Date.now() - logTotals.at > 60_000) { try { logTotals = { at: Date.now(), value: settlement.logStats() }; } catch { /* unreadable */ } }
     return { v: 4, proofLevels: ['verified', 'checkable', 'attested', 'host'], logs: { maxBytes: MAX_LOG_BYTES, ...(logTotals.value ?? {}) }, custody: CUSTODY_K,
-      verifiers: { registry: !!titleRegistry && !offline, operator: Object.fromEntries(Object.entries(verifiers).map(([k, v]) => [k, v.length])) } };
+      verifiers: { registry: !!titleRegistry && !offline, operator: Object.fromEntries(Object.entries(verifiers).map(([k, v]) => [k, v.length])), runner: verifierRunner.status() } };
   };
   const witnessed = new Set(); // matchIds this node already answered (bounded below)
   const markWitnessed = (id) => { witnessed.add(id); if (witnessed.size > 20_000) { let n = 0; for (const k of witnessed) { witnessed.delete(k); if (++n >= 5_000) break; } } };
@@ -784,6 +796,8 @@ export async function createNode({
     ...(Object.keys(gauntlets).length ? { gauntlets: Object.keys(gauntlets).sort() } : {}),
     // Server bundles this node holds and runs (node/server-bundle.js), by title: a peer that opted in fetches the hash from GET /server/<id>?build=.
     ...(serverCurrent.size ? { servers: Object.fromEntries([...serverCurrent].map(([rid, e]) => [rid, e.hash]).sort()) } : {}),
+    // Verifier bundles this node holds (node/verifier.js), by title: a witness fetches one from GET /verifier/<id>?build=.
+    ...(verifierRunner.advertised() ? { verifiers: verifierRunner.advertised() } : {}),
     // Publisher services this node runs (reachable at <wsAddr>/svc/<name>): how a game client finds its backend.
     ...(serviceBundles.length ? { services: serviceBundles.flatMap((b) => Object.keys(b.services).map((n) => `${b.prefix}.${n}`)).sort() } : {}),
     // A witness that takes custody before settle (0.12.2): a host waits for such seats only. Not in the snapshot root.
@@ -1521,6 +1535,14 @@ export async function createNode({
         if (url.searchParams.get('manifest') === '1') return json(res, 200, { rulesetId: e.rulesetId, serverHash: e.hash, manifest: e.manifest, publisher: e.publisher, origin: e.origin, bytes: e.bytes, files: e.files });
         res.writeHead(200, { 'content-type': 'application/gzip', 'x-build-hash': e.hash, ...(e.publisher ? { 'x-build-publisher': e.publisher, 'x-build-sig': e.sig } : {}), ...CORS });
         return res.end(readFileSync(e.file));
+      }
+      // A title's verifier bundle, by hash (node/verifier.js): the gzipped archive. The hash is the whole claim: a
+      // reader checks the bytes against it and the title's registration before it runs anything.
+      if (req.method === 'GET' && url.pathname.startsWith('/verifier/')) {
+        const bytes = verifierRunner.serve(decodeURIComponent(url.pathname.slice(10)), url.searchParams.get('build'));
+        if (!bytes) return json(res, 404, { error: 'verifier bundle not held' });
+        res.writeHead(200, { 'content-type': 'application/gzip', 'x-build-hash': url.searchParams.get('build'), ...CORS });
+        return res.end(bytes);
       }
       if (req.method === 'GET' && url.pathname.startsWith('/ruleset/')) {
         const rid = decodeURIComponent(url.pathname.slice(9));

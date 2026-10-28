@@ -301,8 +301,24 @@ logFormat, runtime, source }`, entry exporting `verify(logBytes, spec) →
 `verifierHash = sha256('verifier' NUL tar)` — the kind is in the hash
 domain, so it never verifies as a ruleset or a server. Registered with
 the existing `setBuild` (`npm run publish:title -- set-build
-verifiers/<id>.verifier.json`). **In v4 the node only checks the hash is
-registered and active; it does not run it.**
+verifiers/<id>.verifier.json`). The registered and active hash is what
+grants `checkable`.
+
+**The runner (built after 0.12.3, unreleased; `node/verifier.js`).** A
+witness or custodian that holds an attested result's log runs the verifier
+the report names, `verify(log, report)`, and compares its `finalHash` with
+`report.commitments.finalHash`:
+
+- **agree:** co-sign (`verified: 'verifier'`);
+- **a different hash, or a throw:** a signed dispute, reason `verifier: …`;
+  on the MatchBook path a dissenting attestation;
+- **can't check** (no log, no verifier, untrusted, over `VERIFY_BUDGET_MIN`,
+  killed at its deadline): co-sign on the attestation alone, as before.
+
+Only the commitment is compared: a report's other numbers need not share
+the verifier's units (FLOOD CONTROL's `keptDry` is a whole percent in the
+report and a share in `result`). Under protocol 4 nothing changes a result's
+hash or proof level; a re-run raising the proof level is protocol 5.
 
 The verifier contract, settled with the Pickle Brawl and FLOOD CONTROL
 hand-backs (22 Oct 2026):
@@ -331,9 +347,10 @@ hand-backs (22 Oct 2026):
   verifier serves it by hash (`GET /verifier/<rulesetId>?build=<hash>`,
   advertised in the heartbeat), the publisher's node first, and a
   challenge seat fetches it from any peer and checks the hash before it runs
-  anything. The route and `VERIFIER_BUNDLES=<rulesetId>=<file.tgz>` land with
-  the phase-2 runner. Until then the publisher keeps the `.tgz` and its
-  sidecar beside the registration (for example, release assets).
+  anything. The publisher's node serves its own file with
+  `VERIFIER_BUNDLES=<rulesetId>=<file.verifier.tgz>`; a node that fetched a
+  bundle serves it on. A node fetches only a hash the title registered (or
+  `VERIFIERS` accepts) and checks that again before every run.
 - **Committing before registering.** A court may name `verifierHash` from
   its first deploy. Results settled before the hash is registered and
   active settle `attested` and stay so; results after it are `checkable`. A

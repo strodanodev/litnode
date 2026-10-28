@@ -63,6 +63,7 @@ import { createHash } from 'node:crypto';
 import { PROTOCOL_VERSION } from '../protocol/version.js';
 import { matchIdBytes32 } from '../protocol/matchbook.js';
 import { matchIdFor } from '../protocol/pairing.js';
+import { disputeHash } from './verifier.js';
 
 export const COSIGN_TAG = 'cosign';
 export const DISPUTE_TAG = 'dispute';
@@ -115,6 +116,7 @@ export function createSettlement({
   onSettled = null,                    // (delta, storedLedger) → after a RANKED, PLACED result settled here (MatchBook.settle)
   chatStamp = null,                    // () → this node's chat ring at settle time (docs/NODE-CHAT.md §2.5); stored as ledger `meta.chat`, outside the result
   verifierActive = async () => false,  // (rulesetId, verifierHash) → that verifier bundle is registered and active for the title (TitleRegistry, or VERIFIERS)
+  verifyAttested = null,               // (delta, ledger, logs) → null | { ok, reason, fields, finalHash } — the verifier runner (node/verifier.js check), witness side
 }) {
   if (!sandbox) throw new Error('settlement needs the title sandbox');
   /** The build a submission names, or the current one when it names none. */
@@ -394,7 +396,18 @@ export function createSettlement({
       const body = { matchId: delta.matchId, resultHash: delta.resultHash, witnessId: nodeId, reason: diff.join(',') || 'commitment', ours: mine };
       return { ok: false, reason: `result differs: ${diff.join(', ') || 'commitment'}`, ours: mine, theirs: delta.resultHash, fields: diff, dispute: { ...body, sig: await sign(DISPUTE_TAG, body, identity.privateKey) } };
     }
-    return { ok: true, matchId: delta.matchId, witnessId: nodeId, sig: await sign(COSIGN_TAG, cosignBody(delta), identity.privateKey), verified: delta.kind === 'attested' ? 'attestation-only' : 'replay' };
+    // An attested result whose report names a verifier and a log: re-run it (node/verifier.js). The court's report
+    // passed its rules above; a re-run that doesn't reproduce it is a dispute, the same as a different replay.
+    let verdict = null;
+    if (delta.kind === 'attested' && verifyAttested) {
+      try { verdict = await verifyAttested(delta, ledger, { hasLog, readLog, holdLog }); } catch (e) { log(`verifier for ${delta.matchId}: ${e.message} (co-signing on the attestation alone)`); }
+    }
+    if (verdict && !verdict.ok) {
+      const ours = disputeHash(delta.resultHash, verdict.finalHash);
+      const body = { matchId: delta.matchId, resultHash: delta.resultHash, witnessId: nodeId, reason: `verifier: ${verdict.reason}`, ours };
+      return { ok: false, reason: body.reason, ours, theirs: delta.resultHash, fields: verdict.fields, verifier: verdict, dispute: { ...body, sig: await sign(DISPUTE_TAG, body, identity.privateKey) } };
+    }
+    return { ok: true, matchId: delta.matchId, witnessId: nodeId, sig: await sign(COSIGN_TAG, cosignBody(delta), identity.privateKey), verified: delta.kind === 'attested' ? (verdict ? 'verifier' : 'attestation-only') : 'replay' };
   };
 
   const acceptCosign = async ({ matchId, witnessId, sig }) => {

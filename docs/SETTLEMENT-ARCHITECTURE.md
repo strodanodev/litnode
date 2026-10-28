@@ -191,8 +191,10 @@ verifier.** Both feed the same machinery.
 
 **Load.** Each result is replayed three times. With N verifying operators,
 each one replays about 3/N of all results. A 15-minute PB match costs about
-45–60 CPU-seconds and 1 GB per replay; a FLOOD CONTROL run costs well under
-a second.
+45–60 CPU-seconds and 1 GB per replay. A FLOOD CONTROL run took about
+26 s with its real verifier on the desktop (measured 28 Oct; this page said
+"well under a second" before), so a 60-minute budget covers about 130 runs
+a day per node.
 
 - With 4 operators, each one replays about three quarters of all matches.
   With 20, about one in seven.
@@ -952,6 +954,17 @@ Amendment 1's open items (the user's, approved 28 Oct with these open):
   ships.
 - **A1-5 AF casual.** Wait for the relay split (row 9), or bring the
   generic relay (B5) forward?
+- **A1-6 Binding the report's numbers to the re-run** (found building B1,
+  28 Oct). The runner compares only `finalHash`, so a court could commit an
+  honest hash and sign other points. A name-for-name check would dispute
+  honest runs (FLOOD CONTROL's report carries `keptDry` as a whole percent,
+  its verifier the share). Proposal: the title states the mapping, for
+  example a ruleset hook that checks a report against the verifier's
+  `result` in the sandbox.
+
+**B1 status (28 Oct):** the runner is built and tested (`node/verifier.js`,
+`demo/verifier.test.mjs`), unreleased. It runs under protocol 4 and adds
+disputes only; the proof-level upgrade waits for protocol 5.
 
 Facts to check during the build (not decisions):
 

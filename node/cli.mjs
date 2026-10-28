@@ -151,6 +151,15 @@ node = await createNode({
   // VERIFIERS=<rulesetId>:<verifierHash>[,<hash>];… — verifier bundles this operator accepts as registered (settlement
   // v4 `checkable`) where TitleRegistry is unset or not yet updated; the registry is the normal source.
   verifiers: Object.fromEntries((env.VERIFIERS ?? '').split(';').map((x) => x.trim()).filter(Boolean).map((x) => { const [rid, hashes] = x.split(':'); return [rid, list(hashes)]; })),
+  // VERIFIER_BUNDLES=<rulesetId>=<file.verifier.tgz>,… — the publisher's own verifier bundles, held and served to peers
+  // (node/verifier.js). VERIFY_BUDGET_MIN (60) caps a day's verifier runs in minutes; 0 turns the runner off.
+  verifierBundles: Object.fromEntries(list(env.VERIFIER_BUNDLES).map((x) => {
+    const i = x.indexOf('=');
+    if (i < 1) throw new Error(`VERIFIER_BUNDLES: ${JSON.stringify(x)} is not <rulesetId>=<file.verifier.tgz>`);
+    const file = x.slice(i + 1).trim();
+    return [x.slice(0, i).trim(), file.startsWith('/') || /^[A-Za-z]:/.test(file) ? file : join(root, file)];
+  })),
+  verifyBudgetMin: env.VERIFY_BUDGET_MIN != null && env.VERIFY_BUDGET_MIN !== '' ? Math.max(0, Number(env.VERIFY_BUDGET_MIN) || 0) : undefined,
   // RELAY_KEYS=<pubkey>,… — relays whose signed submissions this host settles as 'relay' provenance (`npm run bridge -- key` prints the line).
   relayKeys: list(env.RELAY_KEYS),
   // GAUNTLETS=<rulesetId>=<config.json>,… — per-match headless servers this node runs for
