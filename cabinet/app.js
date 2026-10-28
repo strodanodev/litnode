@@ -1132,10 +1132,17 @@ function renderDownload() {
 }
 
 // ═══════════════════════════════════════════════ RO3 on LITNODE launcher ══
-const R3 = { params: null, busy: '', error: '', done: null };
+const R3 = { params: null, listed: null, checking: false, busy: '', error: '', done: null };
 const r3Profile = () => { const p = ro3.signedProfile(Ai.me.session, player?.id); return p.ok ? p : null; };
 function renderRo3() {
-  if (R3.params?.state !== route.ro3?.state) Object.assign(R3, { params: route.ro3, busy: '', error: '', done: null });
+  if (R3.params?.state !== route.ro3?.state) Object.assign(R3, { params: route.ro3, listed: null, checking: false, busy: '', error: '', done: null });
+  // The server to link on is checked against this page's own node, never taken from the URL (cabinet/ro3.js).
+  if (R3.params?.realm && !R3.listed && !R3.checking && !R3.error) {
+    R3.checking = true;
+    ro3.listedRealm({ nodeUrl: nodeUrl(), realm: R3.params.realm, serverId: R3.params.serverId })
+      .then((l) => { R3.listed = l; }, (e) => { R3.error = e.message; })
+      .finally(() => { R3.checking = false; if (route.name === 'ro3') renderRo3(); });
+  }
   view('ro3').innerHTML = ro3.ro3View({ ...R3, profile: r3Profile() });
   $('ro3-signin')?.addEventListener('click', ro3SignIn);
   $('ro3-back')?.addEventListener('click', () => ro3Return(null));
@@ -1150,9 +1157,10 @@ async function ro3SignIn() {
   renderRo3();
 }
 async function ro3Link() {
-  R3.error = ''; R3.busy = `Linking your account on ${R3.params.server || 'the server'}…`; renderRo3();
+  if (!R3.listed) return;
+  R3.error = ''; R3.busy = `Linking your account on ${R3.listed.name}…`; renderRo3();
   try {
-    const account = await ro3.linkAccount({ realm: R3.params.realm, account: $('ro3-account')?.value.trim(), password: $('ro3-password')?.value ?? '', player: { id: player.id, privateKey: player.kp.privateKey } });
+    const account = await ro3.linkAccount({ realm: R3.listed.url, serverId: R3.listed.serverId, account: $('ro3-account')?.value.trim(), password: $('ro3-password')?.value ?? '', player: { id: player.id, privateKey: player.kp.privateKey } });
     R3.busy = ''; return ro3Return(account);
   } catch (e) { R3.error = e?.message ?? String(e); }
   R3.busy = ''; renderRo3();

@@ -11,12 +11,24 @@
  *       Http/ArcadeLinkEndpoints.cs);
  *    3. sends the browser back to http://127.0.0.1:<port>/ro3/return with public facts only: the profile's name,
  *       number and address, and the linked account's name. No AIR token or key leaves this page.
- *  The password goes from this page to the RO3 server only (over its https tunnel); the arcade keeps nothing. */
+ *  The password goes from this page to the RO3 server only (over its https tunnel); the arcade keeps nothing.
+ *
+ *  What the URL says about the server is never trusted (anyone can send a player a #/ro3 link):
+ *    - the server must be one this page's own node lists at GET /ro3/hosts, with the same node id and address, and its
+ *      name is taken from that listing, never from the URL;
+ *    - its challenge's aud must be `ro3.<the first 32 hex of that node id>` (the server's Ro3Emu:ArcadeLink:Audience),
+ *      so a server that passes on another server's challenge gets no proof that counts there;
+ *    - https only (plain http only to this machine, for development). */
 import { signKeyProof, NONCE_RE, AUD_RE } from './protocol/challenge.js';
 
 export const RO3_RULESET = 'ro3.v1';
 const STATE_RE = /^[0-9a-f]{32}$/;
 const NODE_RE = /^[0-9a-f]{64}$/;
+
+/** The aud a server must name in its challenge: tied to its LITNODE node id, the identity the mesh lists it under. */
+export const ro3Audience = (nodeId) => `ro3.${nodeId.slice(0, 32)}`;
+
+const LOCAL = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i;
 
 /** The launcher's request from `#/ro3?…`, or null when it is not one. */
 export function ro3Params(hash) {
@@ -24,12 +36,10 @@ export function ro3Params(hash) {
   const port = Number(q.get('return'));
   const state = q.get('state') ?? '';
   if (!Number.isInteger(port) || port < 1024 || port > 65535 || !STATE_RE.test(state)) return null;
-  const realm = (q.get('realm') ?? '').replace(/\/$/, '');
-  const okRealm = /^https?:\/\/[a-z0-9.-]+(:\d+)?$/i.test(realm) ? realm : null;   // a bare origin: a server's tunnel
-  return {
-    port, state, realm: okRealm, server: okRealm ? (q.get('server') ?? '').slice(0, 32) : null,
-    serverId: okRealm && NODE_RE.test(q.get('serverId') ?? '') ? q.get('serverId') : null,
-  };
+  const realm = (q.get('realm') ?? '').replace(/\/$/, '').toLowerCase();
+  // A bare origin (a server's tunnel), https only; and its node id. Who it is comes from the mesh: listedRealm().
+  const okRealm = (/^https:\/\/[a-z0-9.-]+(:\d+)?$/.test(realm) || LOCAL.test(realm)) && NODE_RE.test(q.get('serverId') ?? '') ? realm : null;
+  return { port, state, realm: okRealm, serverId: okRealm ? q.get('serverId') : null };
 }
 
 /** The profile the node's /air/session answer names, once it bound this page's key to it (else the link cannot work). */
@@ -52,14 +62,26 @@ const REASONS = {
   ChainUnavailable: 'The server could not read litVM just now. Try again in a minute.',
 };
 
-/** Link `account` on the server at `realm` to the signed-in profile. Resolves to the account; throws with a readable reason. */
-export async function linkAccount({ realm, account, password, player, fetchImpl = fetch }) {
+/** The server as this page's own node lists it (GET /ro3/hosts): same node id and address, or it is refused. */
+export async function listedRealm({ nodeUrl, realm, serverId, fetchImpl = fetch }) {
+  const r = await fetchImpl(`${nodeUrl}/ro3/hosts`, { signal: AbortSignal.timeout(10000) }).catch(() => null);
+  const hosts = r?.ok ? (await r.json().catch(() => ({}))).hosts : null;
+  if (!Array.isArray(hosts)) throw new Error("The arcade's node does not list RO3 servers right now, so the server cannot be checked. Try again later.");
+  const h = hosts.find((x) => x?.nodeId === serverId && String(x.url ?? '').replace(/\/$/, '').toLowerCase() === realm);
+  if (!h) throw new Error('That server is not on LITNODE (or moved). Open Link account again from the launcher.');
+  return { name: String(h.name ?? '').slice(0, 32) || `server ${serverId.slice(0, 12)}`, url: realm, serverId };
+}
+
+/** Link `account` on the listed server to the signed-in profile. Resolves to the account; throws with a readable reason. */
+export async function linkAccount({ realm, serverId, account, password, player, fetchImpl = fetch }) {
   if (!account || !password) throw new Error('Enter the name and password you use in the game on this server.');
   let r = await fetchImpl(`${realm}/ro3emu/arcade/challenge`, { signal: AbortSignal.timeout(15000) }).catch(() => null);
   if (!r) throw new Error('The server does not answer. Is it still online?');
   if (r.status === 404) throw new Error('This server does not link arcade accounts (its host has not turned it on).');
   const c = await r.json();
   if (c?.rulesetId !== RO3_RULESET || !AUD_RE.test(c?.aud ?? '') || !NONCE_RE.test(c?.nonce ?? '')) throw new Error('The server sent a malformed challenge.');
+  // The challenge must be this server's own: a server passing on another's would get a proof that counts there.
+  if (c.aud !== ro3Audience(serverId)) throw new Error("This server's challenge is not its own (its aud does not name its LITNODE node), so nothing was signed.");
   const sig = await signKeyProof({ aud: c.aud, nonce: c.nonce, player: player.id, rulesetId: RO3_RULESET }, player.privateKey);
   const body = new URLSearchParams({ player: player.id, nonce: c.nonce, sig, account, password });
   r = await fetchImpl(`${realm}/ro3emu/arcade/link`, { method: 'POST', body, signal: AbortSignal.timeout(20000) }).catch(() => null);
@@ -78,7 +100,7 @@ export function returnUrl(params, profile, account = null) {
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-/** The page. `st` = { params, profile, busy, error, done }. */
+/** The page. `st` = { params, listed (listedRealm's answer), profile, busy, error, done }. */
 export function ro3View(st) {
   const head = '<div class="panel-h"><h3>RO3 on LITNODE</h3></div>';
   const wrap = (inner) => `<section class="panel hi s12">${head}${inner}</section>`;
@@ -89,8 +111,9 @@ export function ro3View(st) {
   if (!st.profile) return wrap(`<div class="sub">Sign in to link RO3 on LITNODE to your arcade profile.</div><button class="btn primary" id="ro3-signin">Sign in</button> <span class="dim">email or Google · no wallet</span>${error}`);
   const who = `<div class="sub">Signed in as <b>${esc(st.profile.name ?? `profile #${st.profile.tokenId}`)}</b> · profile #${esc(st.profile.tokenId)}</div>`;
   if (!st.params.realm) return wrap(`${who}<button class="btn primary" id="ro3-back">Back to the launcher</button>${error}`);
+  if (!st.listed) return wrap(`${who}<div class="sub dim">${st.error ? '' : 'Checking the server on LITNODE…'}</div><button class="btn" id="ro3-back">Back to the launcher</button>${error}`);
   return wrap(`${who}
-    <div class="sub">Link your account on <b>${esc(st.params.server || st.params.realm)}</b>: the name and password you use in the game's login box there. It is checked by that server and not kept here.</div>
+    <div class="sub">Link your account on <b>${esc(st.listed.name)}</b>: the name and password you use in the game's login box there. It is checked by that server and not kept here.</div>
     <form id="ro3-link" class="sub" autocomplete="off">
       <input id="ro3-account" placeholder="In-game account name" maxlength="64" required>
       <input id="ro3-password" type="password" placeholder="Password" required>
