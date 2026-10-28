@@ -34,6 +34,7 @@ import { CONTRACTS } from './contracts.js';
 import { readFleet, describeEvent, checklist as fleetChecklist, ago } from './fleet.js';
 import { arcadeBanner, downloadPage } from './download.js';
 import { renderBuild } from './build.js';
+import * as ro3 from './ro3.js';
 import { loadReceipt, renderReceipt } from './receipt.js';
 
 const $ = (id) => document.getElementById(id);
@@ -1130,6 +1131,40 @@ function renderDownload() {
   for (const c of v.querySelectorAll('[data-copy-now]')) c.addEventListener('click', () => { navigator.clipboard?.writeText(c.dataset.copyNow).then(() => { const t = c.textContent; c.textContent = 'copied ✓'; setTimeout(() => { c.textContent = t; }, 1200); }).catch(() => {}); });
 }
 
+// ═══════════════════════════════════════════════ RO3 on LITNODE launcher ══
+const R3 = { params: null, busy: '', error: '', done: null };
+const r3Profile = () => { const p = ro3.signedProfile(Ai.me.session, player?.id); return p.ok ? p : null; };
+function renderRo3() {
+  if (R3.params?.state !== route.ro3?.state) Object.assign(R3, { params: route.ro3, busy: '', error: '', done: null });
+  view('ro3').innerHTML = ro3.ro3View({ ...R3, profile: r3Profile() });
+  $('ro3-signin')?.addEventListener('click', ro3SignIn);
+  $('ro3-back')?.addEventListener('click', () => ro3Return(null));
+  $('ro3-link')?.addEventListener('submit', (e) => { e.preventDefault(); ro3Link(); });
+}
+async function ro3SignIn() {
+  R3.error = '';
+  await signInWithAir();   // the arcade's own AIR flow: the profile, and this page's player key bound to it
+  const p = ro3.signedProfile(Ai.me.session, player?.id);
+  if (!p.ok) R3.error = Ai.error || p.why;
+  else if (!R3.params.realm) return ro3Return(null);
+  renderRo3();
+}
+async function ro3Link() {
+  R3.error = ''; R3.busy = `Linking your account on ${R3.params.server || 'the server'}…`; renderRo3();
+  try {
+    const account = await ro3.linkAccount({ realm: R3.params.realm, account: $('ro3-account')?.value.trim(), password: $('ro3-password')?.value ?? '', player: { id: player.id, privateKey: player.kp.privateKey } });
+    R3.busy = ''; return ro3Return(account);
+  } catch (e) { R3.error = e?.message ?? String(e); }
+  R3.busy = ''; renderRo3();
+}
+function ro3Return(account) {
+  const p = r3Profile();
+  if (!p) { R3.error = 'Sign in first.'; return renderRo3(); }
+  R3.done = ro3.returnUrl(R3.params, p, account);
+  renderRo3();
+  location.href = R3.done;   // to the launcher on 127.0.0.1 (a top-level navigation, as desktop apps' sign-ins do)
+}
+
 // ═══════════════════════════════════════════════ router ══
 let route = { name: 'games' };
 function parseRoute() {
@@ -1140,6 +1175,7 @@ function parseRoute() {
   if (mr) return { name: 'match', matchId: mr[1] };
   const name = (h.match(/^#\/(\w+)/)?.[1]) ?? 'games';
   if (name === 'characters' || name === 'inventory') return { name: 'cards', legacy: true };   // the old pages, merged into Cards
+  if (name === 'ro3') return { name, ro3: ro3.ro3Params(h) };   // the RO3 on LITNODE launcher's sign-in (cabinet/ro3.js)
   return ['home', 'games', 'leaderboards', 'cards', 'node', 'build', 'download'].includes(name) ? { name } : { name: 'games' };
 }
 function render() {
@@ -1154,6 +1190,7 @@ function render() {
     case 'build': renderBuild(view('build')); break;
     case 'match': renderMatch(route.matchId); break;
     case 'download': renderDownload(); break;
+    case 'ro3': renderRo3(); break;
   }
 }
 function navigate() {
