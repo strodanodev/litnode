@@ -156,42 +156,49 @@ export function returnUrl(params, profile, account = null, credited = null) {
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+
+const field = (id, label, attrs) => `<label class="ro3-field"><span>${label}</span><input id="${id}" class="ask-input" ${attrs}></label>`;
+
 /** The shop part: price, an amount, Buy; then the payment's claim (repeatable with the same transaction). */
 function shopView(st) {
-  if (!st.shop) return `<div class="sub dim">${st.error ? '' : 'Asking the server for its prices…'}</div><button class="btn" id="ro3-back">Back to the launcher</button>`;
+  if (!st.shop) return `<p class="ro3-note">${st.error ? '' : 'Asking the server for its prices…'}</p><div class="ro3-actions"><button class="btn" id="ro3-back">Back to the launcher</button></div>`;
   const per = Number(st.shop.priceWeiPer100) / 1e18;
   const wei = zkltcToWei(st.amount ?? '');
   const gets = wei ? shopAmount(wei, st.shop.priceWeiPer100) : 0;
-  const pending = st.tx ? `<div class="sub">Payment <span class="mono">${esc(st.tx.slice(0, 10))}…</span> is kept for you. <button class="btn" id="ro3-claim">Claim again</button></div>` : '';
-  return `<div class="sub">Buy Sacred Relic Crystals on <b>${esc(st.listed.name)}</b> with zkLTC on litVM testnet (no real value): <b>${per} zkLTC = 100</b>.
-      They arrive by in-game mail to your linked account's most recently played character.</div>
-    <form id="ro3-shop" class="sub" autocomplete="off">
-      <input id="ro3-zkltc" inputmode="decimal" placeholder="zkLTC, e.g. ${per}" value="${esc(st.amount ?? '')}">
-      <span class="dim" id="ro3-gets">${gets > 0 ? `= ${gets} Sacred Relic Crystals` : ''}</span>
-      <button class="btn primary" type="submit" ${gets > 0 ? '' : 'disabled'}>Buy with my wallet</button>
-      <button class="btn" type="button" id="ro3-back">Back to the launcher</button>
+  const pending = st.tx ? `<p class="ro3-note">Payment <span class="mono">${esc(st.tx.slice(0, 10))}…</span> is kept for you. <button class="btn sm" id="ro3-claim">Claim again</button></p>` : '';
+  return `<p class="ro3-lead">Buy Sacred Relic Crystals on <b>${esc(st.listed.name)}</b> with zkLTC on litVM testnet (no real value): <b>${per} zkLTC = 100</b>.
+      They arrive by in-game mail to your linked account's most recently played character.</p>
+    <form id="ro3-shop" class="ro3-form" autocomplete="off">
+      ${field('ro3-zkltc', 'Amount (zkLTC)', `inputmode="decimal" placeholder="${per}" value="${esc(st.amount ?? '')}"`)}
+      <p class="ro3-note" id="ro3-gets">${gets > 0 ? `= ${gets} Sacred Relic Crystals` : ''}</p>
+      <div class="ro3-actions">
+        <button class="btn primary" type="submit" ${gets > 0 ? '' : 'disabled'}>Buy with my wallet</button>
+        <button class="btn" type="button" id="ro3-back">Back to the launcher</button>
+      </div>
     </form>${pending}`;
 }
 
 /** The page. `st` = { params, listed (listedRealm's answer), profile, shop, amount, tx, busy, error, done }. */
 export function ro3View(st) {
-  const head = '<div class="panel-h"><h3>RO3 on LITNODE</h3></div>';
-  const wrap = (inner) => `<section class="panel hi s12">${head}${inner}</section>`;
+  const wrap = (inner) => `<div class="ro3"><section class="panel hi"><div class="panel-h"><h3>RO3 on LITNODE</h3></div><div class="panel-b">${inner}</div></section></div>`;
   if (!st.params) return wrap('<div class="empty">Open this page from the RO3 on LITNODE launcher: its Profile tab adds what this page needs.</div>');
-  const error = st.error ? `<div class="sub" style="color:var(--bad,#ff7b8a)">${esc(st.error)}</div>` : '';
-  if (st.busy) return wrap(`<div class="sub dim">${esc(st.busy)}</div>${error}`);
-  if (st.done) return wrap(`<div class="sub">Done. Your browser goes back to the launcher; if it does not, <a href="${esc(st.done)}">click here</a>.</div>`);
-  if (!st.profile) return wrap(`<div class="sub">Sign in to link RO3 on LITNODE to your arcade profile.</div><button class="btn primary" id="ro3-signin">Sign in</button> <span class="dim">email or Google · no wallet</span>${error}`);
-  const who = `<div class="sub">Signed in as <b>${esc(st.profile.name ?? `profile #${st.profile.tokenId}`)}</b> · profile #${esc(st.profile.tokenId)}</div>`;
-  if (!st.params.realm) return wrap(`${who}<button class="btn primary" id="ro3-back">Back to the launcher</button>${error}`);
-  if (!st.listed) return wrap(`${who}<div class="sub dim">${st.error ? '' : 'Checking the server on LITNODE…'}</div><button class="btn" id="ro3-back">Back to the launcher</button>${error}`);
+  const error = st.error ? `<p class="ro3-error" role="alert">${esc(st.error)}</p>` : '';
+  if (st.busy) return wrap(`<p class="ro3-note ro3-busy">${esc(st.busy)}</p>${error}`);
+  if (st.done) return wrap(`<p class="ro3-lead">Done. Your browser goes back to the launcher; if it does not, <a class="link" href="${esc(st.done)}">click here</a>.</p>`);
+  if (!st.profile) return wrap(`<p class="ro3-lead">Sign in to link RO3 on LITNODE to your arcade profile.</p><div class="ro3-actions"><button class="btn primary" id="ro3-signin">Sign in</button><span class="dim">email or Google · no wallet</span></div>${error}`);
+  const who = `<div class="ro3-who"><span class="dim">Signed in as</span> <b>${esc(st.profile.name ?? `profile #${st.profile.tokenId}`)}</b><span class="tag">profile #${esc(st.profile.tokenId)}</span></div>`;
+  if (!st.params.realm) return wrap(`${who}${error}<div class="ro3-actions"><button class="btn primary" id="ro3-back">Back to the launcher</button></div>`);
+  if (!st.listed) return wrap(`${who}<p class="ro3-note">${st.error ? '' : 'Checking the server on LITNODE…'}</p>${error}<div class="ro3-actions"><button class="btn" id="ro3-back">Back to the launcher</button></div>`);
   if (st.params.shop) return wrap(`${who}${shopView(st)}${error}`);
   return wrap(`${who}
-    <div class="sub">Link your account on <b>${esc(st.listed.name)}</b>: the name and password you use in the game's login box there. It is checked by that server and not kept here.</div>
-    <form id="ro3-link" class="sub" autocomplete="off">
-      <input id="ro3-account" placeholder="In-game account name" maxlength="64" required>
-      <input id="ro3-password" type="password" placeholder="Password" required>
-      <button class="btn primary" type="submit">Link and go back</button>
-      <button class="btn" type="button" id="ro3-back">Skip</button>
-    </form>${error}`);
+    <p class="ro3-lead">Link your account on <b>${esc(st.listed.name)}</b>: the name and password you use in the game's login box there. It is checked by that server and not kept here.</p>
+    <form id="ro3-link" class="ro3-form" autocomplete="off">
+      ${field('ro3-account', 'In-game account', 'placeholder="the name you log in with" maxlength="64" required spellcheck="false" autocapitalize="off" autocomplete="off"')}
+      ${field('ro3-password', 'Password', 'type="password" placeholder="••••••••" required autocomplete="off"')}
+      ${error}
+      <div class="ro3-actions">
+        <button class="btn primary" type="submit">Link and go back</button>
+        <button class="btn" type="button" id="ro3-back">Skip</button>
+      </div>
+    </form>`);
 }

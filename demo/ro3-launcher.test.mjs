@@ -174,3 +174,12 @@ test('ro3 shop: the page shows the price and returns what was credited', () => {
   assert.equal(back.searchParams.get('credited'), '100');
   assert.equal(back.searchParams.get('serverId'), serverId);
 });
+
+test('ro3 page: the same state draws the same markup, so a node poll does not redraw (and wipe) the form', () => {
+  // cabinet/app.js renderRo3 leaves the page alone when the markup is unchanged; anything time- or random-dependent
+  // in the view would redraw it every 5 s and erase what the player is typing.
+  const st = { params: ro3Params(req(realm)), profile: { name: 'Pat', tokenId: '7' }, listed: { name: 'New Prontera' } };
+  assert.equal(ro3View(st), ro3View({ ...st }));
+  assert.match(ro3View(st), /id="ro3-account"[^>]*placeholder=/, 'a placeholder keeps the empty required field from showing as invalid');
+  assert.notEqual(ro3View({ ...st, error: 'x' }), ro3View(st), 'an error does redraw');
+});

@@ -1133,6 +1133,7 @@ function renderDownload() {
 
 // ═══════════════════════════════════════════════ RO3 on LITNODE launcher ══
 const R3 = { params: null, listed: null, checking: false, shop: null, amount: '', tx: null, busy: '', error: '', done: null };
+let r3Html = '';   // the page last drawn (renderRo3)
 const r3Profile = () => { const p = ro3.signedProfile(Ai.me.session, player?.id); return p.ok ? p : null; };
 function renderRo3() {
   if (R3.params?.state !== route.ro3?.state) Object.assign(R3, { params: route.ro3, listed: null, checking: false, shop: null, amount: '', tx: null, busy: '', error: '', done: null });
@@ -1146,7 +1147,16 @@ function renderRo3() {
       }, (e) => { R3.error = e.message; })
       .finally(() => { R3.checking = false; if (route.name === 'ro3') renderRo3(); });
   }
-  view('ro3').innerHTML = ro3.ro3View({ ...R3, profile: r3Profile() });
+  // render() runs on every 5-s node poll: an unchanged page is left alone, so typing in its fields survives the poll;
+  // a changed one (an error, sign-in done) keeps what was typed and where the cursor was.
+  const html = ro3.ro3View({ ...R3, profile: r3Profile() });
+  if (html === r3Html && view('ro3').firstChild) return;
+  r3Html = html;
+  const typed = ['ro3-account', 'ro3-password'].map((id) => [id, $(id)?.value]).filter(([, v]) => v);
+  const focus = document.activeElement?.id;
+  view('ro3').innerHTML = html;
+  for (const [id, v] of typed) if ($(id)) $(id).value = v;
+  if (focus?.startsWith('ro3-')) $(focus)?.focus();
   $('ro3-signin')?.addEventListener('click', ro3SignIn);
   $('ro3-back')?.addEventListener('click', () => ro3Return(null));
   $('ro3-link')?.addEventListener('submit', (e) => { e.preventDefault(); ro3Link(); });
