@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeypair } from '../protocol/keys.js';
 import { verifyKeyProof } from '../protocol/challenge.js';
-import { ro3Params, ro3Audience, listedRealm, signedProfile, linkAccount, returnUrl, ro3View, RO3_RULESET } from '../cabinet/ro3.js';
+import { ro3Params, ro3Audience, listedRealm, signedProfile, linkAccount, returnUrl, ro3View, RO3_RULESET, shopInfo, zkltcToWei, shopAmount, pay, claim } from '../cabinet/ro3.js';
 
 const state = 'ab'.repeat(16);
 const serverId = 'cd'.repeat(32);
@@ -17,8 +17,8 @@ const nodeUrl = 'https://node.example';
 const req = (r, id = serverId) => `#/ro3?return=50123&state=${state}&realm=${encodeURIComponent(r)}&server=Official%20RO3&serverId=${id}`;
 
 test('ro3: only a well-formed launcher request is read; a server needs https and a node id', () => {
-  assert.deepEqual(ro3Params(`#/ro3?return=50123&state=${state}`), { port: 50123, state, realm: null, serverId: null });
-  assert.deepEqual(ro3Params(req(realm + '/')), { port: 50123, state, realm, serverId });
+  assert.deepEqual(ro3Params(`#/ro3?return=50123&state=${state}`), { port: 50123, state, realm: null, serverId: null, shop: false });
+  assert.deepEqual(ro3Params(req(realm + '/')), { port: 50123, state, realm, serverId, shop: false });
   assert.equal(ro3Params(req('http://evil.example')).realm, null, 'plain http would carry the password in the clear');
   assert.equal(ro3Params(req('http://127.0.0.1:5480')).realm, 'http://127.0.0.1:5480', 'this machine, for development');
   assert.equal(ro3Params(`#/ro3?return=50123&state=${state}&realm=${encodeURIComponent(realm)}`).realm, null, 'no node id');
@@ -108,4 +108,60 @@ test('ro3: the launcher gets public facts only, and the page names the listed se
   assert.doesNotMatch(ro3View({ params, profile }), /ro3-link/, 'no form before the server is checked');
   assert.match(ro3View({ params: null }), /Open this page from the RO3 on LITNODE launcher/);
   assert.doesNotMatch(ro3View({ params, profile: { name: '<b>x</b>', tokenId: '7' }, listed: { name: 'y' } }), /<b>x<\/b>/);
+});
+
+// ---------------------------------------------------------------- shop
+const treasury = '0x' + 'aa'.repeat(20);
+const price = 400000000000000000n; // 0.4 zkLTC per 100
+
+test('ro3 shop: zkLTC is read exactly and buys what the server will credit', () => {
+  assert.equal(zkltcToWei('0.4'), price);
+  assert.equal(zkltcToWei(' 1 '), 10n ** 18n);
+  assert.equal(zkltcToWei('0.000000000000000001'), 1n);
+  for (const bad of ['', '0', '-1', '1e3', 'abc', '0.1234567890123456789']) assert.equal(zkltcToWei(bad), null, bad);
+  assert.equal(shopAmount(price, price), 100);
+  assert.equal(shopAmount(10n ** 18n, price), 250);
+  assert.equal(shopAmount(1n, price), 0);
+});
+
+test('ro3 shop: only a well-formed litVM price list is used', async () => {
+  const answer = (body) => async () => Response.json(body);
+  assert.deepEqual(await shopInfo({ realm, fetchImpl: answer({ treasury, priceWeiPer100: String(price), currencyItem: 3, chainId: 4441 }) }), { treasury, priceWeiPer100: price, currencyItem: 3 });
+  assert.equal(await shopInfo({ realm, fetchImpl: answer({ treasury, priceWeiPer100: String(price), chainId: 1 }) }), null, 'another chain');
+  assert.equal(await shopInfo({ realm, fetchImpl: answer({ treasury: 'nope', priceWeiPer100: String(price), chainId: 4441 }) }), null);
+  assert.equal(await shopInfo({ realm, fetchImpl: async () => new Response('', { status: 404 }) }), null, 'a server that sells nothing');
+});
+
+test('ro3 shop: the payment goes to the treasury and names this page\'s key', async () => {
+  const sent = [];
+  const wallet = { connect: async () => '0xbuyer', pay: async (...a) => { sent.push(a); return '0x' + '11'.repeat(32); } };
+  const key = 'cd'.repeat(32);
+  assert.equal(await pay({ info: { treasury }, wei: price, playerKey: key, wallet }), '0x' + '11'.repeat(32));
+  assert.deepEqual(sent, [['0xbuyer', treasury, price, '0x' + key]]);
+});
+
+test('ro3 shop: a claim waits for litVM, and says why it cannot credit', async () => {
+  const tx = '0x' + '11'.repeat(32);
+  const answers = [{ code: 202, reason: 'Pending' }, { code: 0, amount: 250, already: false }];
+  const fetchImpl = async (url, init) => {
+    assert.equal(url, `${realm}/ro3emu/shop/claim`);
+    assert.equal(new URLSearchParams(init.body).get('tx'), tx);
+    return Response.json(answers.shift());
+  };
+  assert.deepEqual(await claim({ realm, tx, fetchImpl, wait: async () => {} }), { amount: 250, already: false });
+  const notLinked = async () => Response.json({ code: 409, reason: 'NotLinked' });
+  await assert.rejects(claim({ realm, tx, fetchImpl: notLinked, wait: async () => {} }), /Link one, then press Claim again/);
+  const never = async () => Response.json({ code: 202, reason: 'Pending' });
+  await assert.rejects(claim({ realm, tx, fetchImpl: never, tries: 2, wait: async () => {} }), /kept for you/);
+});
+
+test('ro3 shop: the page shows the price and returns what was credited', () => {
+  const params = ro3Params(req(realm) + '&shop=1');
+  assert.equal(params.shop, true);
+  const html = ro3View({ params, profile: { name: 'Pat', tokenId: '7' }, listed: { name: 'New Prontera' }, shop: { priceWeiPer100: price }, amount: '0.4' });
+  assert.match(html, /0\.4 zkLTC = 100/);
+  assert.match(html, /= 100 Sacred Relic Crystals/);
+  const back = new URL(returnUrl(params, { name: 'Pat', tokenId: '7' }, null, 100));
+  assert.equal(back.searchParams.get('credited'), '100');
+  assert.equal(back.searchParams.get('serverId'), serverId);
 });

@@ -61,6 +61,21 @@ export const register = (from, playerKey, name) => send(from, registerCalldata(p
 export const bindKey = (from, playerKey) => send(from, bindKeyCalldata(playerKey));
 export const revokeKey = (from, playerKey) => send(from, revokeKeyCalldata(playerKey));
 
+/** A zkLTC payment (a value transfer with `data`, e.g. an RO3 shop purchase naming the buyer's key). Returns the tx hash. */
+export const pay = async (from, to, valueWei, data) =>
+  eth().request({ method: 'eth_sendTransaction', params: [{ from, to, value: hex(valueWei), data, ...(await fees()) }] });
+
+/** Poll until the transaction is mined: true when it succeeded, false when it reverted, null on timeout. */
+export async function waitForReceipt(txHash, { timeoutMs = 120_000, intervalMs = 2000 } = {}) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    const r = await rpc('eth_getTransactionReceipt', [txHash]).catch(() => null);
+    if (r) return r.status === '0x1';
+    await new Promise((res) => setTimeout(res, intervalMs));
+  }
+  return null;
+}
+
 /** Poll until the chain shows the key bound (or give up). */
 export async function waitForBinding(playerKey, { timeoutMs = 60_000, intervalMs = 1500 } = {}) {
   const t0 = Date.now();

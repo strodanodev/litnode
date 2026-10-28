@@ -39,7 +39,7 @@ export function ro3Params(hash) {
   const realm = (q.get('realm') ?? '').replace(/\/$/, '').toLowerCase();
   // A bare origin (a server's tunnel), https only; and its node id. Who it is comes from the mesh: listedRealm().
   const okRealm = (/^https:\/\/[a-z0-9.-]+(:\d+)?$/.test(realm) || LOCAL.test(realm)) && NODE_RE.test(q.get('serverId') ?? '') ? realm : null;
-  return { port, state, realm: okRealm, serverId: okRealm ? q.get('serverId') : null };
+  return { port, state, realm: okRealm, serverId: okRealm ? q.get('serverId') : null, shop: !!okRealm && q.get('shop') === '1' };
 }
 
 /** The profile the node's /air/session answer names, once it bound this page's key to it (else the link cannot work). */
@@ -91,16 +91,86 @@ export async function linkAccount({ realm, serverId, account, password, player, 
   throw new Error(REASONS[a.reason] ?? `The server refused the link (${a.code ?? r.status} ${a.reason ?? ''}).`);
 }
 
+// ---------------------------------------------------------------- shop: premium currency for zkLTC (RO3Emu Http/ShopEndpoints.cs)
+const ADDRESS_RE = /^0x[0-9a-f]{40}$/;
+export const LITVM_CHAIN_ID = 4441;
+
+/** The server's price list (GET /ro3emu/shop): its treasury, the price of 100 in wei, the item mailed. Null when it sells nothing. */
+export async function shopInfo({ realm, fetchImpl = fetch }) {
+  const r = await fetchImpl(`${realm}/ro3emu/shop`, { signal: AbortSignal.timeout(10000) }).catch(() => null);
+  if (!r?.ok) return null;
+  const i = await r.json().catch(() => null);
+  if (!ADDRESS_RE.test(i?.treasury ?? '') || !/^[1-9][0-9]{0,40}$/.test(i?.priceWeiPer100 ?? '') || i?.chainId !== LITVM_CHAIN_ID) return null;
+  return { treasury: i.treasury, priceWeiPer100: BigInt(i.priceWeiPer100), currencyItem: i.currencyItem };
+}
+
+/** zkLTC typed by the player ("0.4") into wei, exactly (18 decimals); null when it is not a positive amount. */
+export function zkltcToWei(text) {
+  const m = /^\s*(\d{1,9})(?:\.(\d{1,18}))?\s*$/.exec(String(text ?? ''));
+  if (!m) return null;
+  const wei = BigInt(m[1]) * 10n ** 18n + BigInt((m[2] ?? '').padEnd(18, '0'));
+  return wei > 0n ? wei : null;
+}
+
+/** What `wei` buys: floor(wei × 100 / price), as the server computes it. */
+export const shopAmount = (wei, priceWeiPer100) => Number((wei * 100n) / priceWeiPer100);
+
+/** Pay with the browser's wallet: zkLTC to the treasury, this page's player key as the data (who the currency is for). */
+export async function pay({ info, wei, playerKey, wallet }) {
+  const from = await wallet.connect();
+  return wallet.pay(from, info.treasury, wei, '0x' + playerKey);
+}
+
+const SHOP_REASONS = {
+  NotLinked: 'Your profile has no RO3 account linked on this server yet. Link one, then press Claim again: the payment is kept for you.',
+  NoCharacter: 'Your linked account has no character on this server yet. Make one in the game, then press Claim again.',
+  TooSmall: 'That payment is too small to buy anything.',
+  NotToTreasury: 'That payment did not go to this server.',
+  Failed: 'That payment failed on litVM, so nothing was charged.',
+  NoBuyer: 'That payment does not name a buyer.',
+  Unbound: 'The key in that payment is not on an arcade profile.',
+};
+
+/** Ask the server to credit a mined payment; waits while litVM has not shown it yet. Resolves to { amount, already }. */
+export async function claim({ realm, tx, fetchImpl = fetch, tries = 10, wait = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+  for (let i = 0; i < tries; i++) {
+    const r = await fetchImpl(`${realm}/ro3emu/shop/claim`, { method: 'POST', body: new URLSearchParams({ tx }), signal: AbortSignal.timeout(20000) }).catch(() => null);
+    const a = r ? await r.json().catch(() => ({})) : {};
+    if (a.code === 0) return { amount: a.amount, already: !!a.already };
+    if (a.code !== 202 && r) throw new Error(SHOP_REASONS[a.reason] ?? `The server refused the claim (${a.reason ?? r.status}).`);
+    await wait(3000);
+  }
+  throw new Error('The server has not seen the payment on litVM yet. Press Claim again in a minute: it is kept for you.');
+}
+
 /** Where the browser goes back to: the launcher's loopback port, with public facts only. */
-export function returnUrl(params, profile, account = null) {
+export function returnUrl(params, profile, account = null, credited = null) {
   const q = new URLSearchParams({ state: params.state, name: profile.name ?? '', tokenId: profile.tokenId, address: profile.address ?? '' });
   if (account && params.serverId) { q.set('account', account); q.set('serverId', params.serverId); }
+  if (credited && params.serverId) { q.set('credited', String(credited)); q.set('serverId', params.serverId); }
   return `http://127.0.0.1:${params.port}/ro3/return?${q}`;
 }
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-/** The page. `st` = { params, listed (listedRealm's answer), profile, busy, error, done }. */
+/** The shop part: price, an amount, Buy; then the payment's claim (repeatable with the same transaction). */
+function shopView(st) {
+  if (!st.shop) return `<div class="sub dim">${st.error ? '' : 'Asking the server for its prices…'}</div><button class="btn" id="ro3-back">Back to the launcher</button>`;
+  const per = Number(st.shop.priceWeiPer100) / 1e18;
+  const wei = zkltcToWei(st.amount ?? '');
+  const gets = wei ? shopAmount(wei, st.shop.priceWeiPer100) : 0;
+  const pending = st.tx ? `<div class="sub">Payment <span class="mono">${esc(st.tx.slice(0, 10))}…</span> is kept for you. <button class="btn" id="ro3-claim">Claim again</button></div>` : '';
+  return `<div class="sub">Buy Sacred Relic Crystals on <b>${esc(st.listed.name)}</b> with zkLTC on litVM testnet (no real value): <b>${per} zkLTC = 100</b>.
+      They arrive by in-game mail to your linked account's most recently played character.</div>
+    <form id="ro3-shop" class="sub" autocomplete="off">
+      <input id="ro3-zkltc" inputmode="decimal" placeholder="zkLTC, e.g. ${per}" value="${esc(st.amount ?? '')}">
+      <span class="dim" id="ro3-gets">${gets > 0 ? `= ${gets} Sacred Relic Crystals` : ''}</span>
+      <button class="btn primary" type="submit" ${gets > 0 ? '' : 'disabled'}>Buy with my wallet</button>
+      <button class="btn" type="button" id="ro3-back">Back to the launcher</button>
+    </form>${pending}`;
+}
+
+/** The page. `st` = { params, listed (listedRealm's answer), profile, shop, amount, tx, busy, error, done }. */
 export function ro3View(st) {
   const head = '<div class="panel-h"><h3>RO3 on LITNODE</h3></div>';
   const wrap = (inner) => `<section class="panel hi s12">${head}${inner}</section>`;
@@ -112,6 +182,7 @@ export function ro3View(st) {
   const who = `<div class="sub">Signed in as <b>${esc(st.profile.name ?? `profile #${st.profile.tokenId}`)}</b> · profile #${esc(st.profile.tokenId)}</div>`;
   if (!st.params.realm) return wrap(`${who}<button class="btn primary" id="ro3-back">Back to the launcher</button>${error}`);
   if (!st.listed) return wrap(`${who}<div class="sub dim">${st.error ? '' : 'Checking the server on LITNODE…'}</div><button class="btn" id="ro3-back">Back to the launcher</button>${error}`);
+  if (st.params.shop) return wrap(`${who}${shopView(st)}${error}`);
   return wrap(`${who}
     <div class="sub">Link your account on <b>${esc(st.listed.name)}</b>: the name and password you use in the game's login box there. It is checked by that server and not kept here.</div>
     <form id="ro3-link" class="sub" autocomplete="off">
