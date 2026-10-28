@@ -34,6 +34,7 @@ import { CONTRACTS } from './contracts.js';
 import { readFleet, describeEvent, checklist as fleetChecklist, ago } from './fleet.js';
 import { arcadeBanner, downloadPage } from './download.js';
 import { renderBuild } from './build.js';
+import * as ro3 from './ro3.js';
 import { loadReceipt, renderReceipt } from './receipt.js';
 
 const $ = (id) => document.getElementById(id);
@@ -1130,6 +1131,84 @@ function renderDownload() {
   for (const c of v.querySelectorAll('[data-copy-now]')) c.addEventListener('click', () => { navigator.clipboard?.writeText(c.dataset.copyNow).then(() => { const t = c.textContent; c.textContent = 'copied ✓'; setTimeout(() => { c.textContent = t; }, 1200); }).catch(() => {}); });
 }
 
+// ═══════════════════════════════════════════════ RO3 on LITNODE launcher ══
+const R3 = { params: null, listed: null, checking: false, shop: null, amount: '', tx: null, busy: '', error: '', done: null };
+const r3Profile = () => { const p = ro3.signedProfile(Ai.me.session, player?.id); return p.ok ? p : null; };
+function renderRo3() {
+  if (R3.params?.state !== route.ro3?.state) Object.assign(R3, { params: route.ro3, listed: null, checking: false, shop: null, amount: '', tx: null, busy: '', error: '', done: null });
+  // The server to link on is checked against this page's own node, never taken from the URL (cabinet/ro3.js).
+  if (R3.params?.realm && !R3.listed && !R3.checking && !R3.error) {
+    R3.checking = true;
+    ro3.listedRealm({ nodeUrl: nodeUrl(), realm: R3.params.realm, serverId: R3.params.serverId })
+      .then(async (l) => {
+        R3.listed = l;
+        if (R3.params.shop && !(R3.shop = await ro3.shopInfo({ realm: l.url }))) R3.error = 'This server does not sell anything right now.';
+      }, (e) => { R3.error = e.message; })
+      .finally(() => { R3.checking = false; if (route.name === 'ro3') renderRo3(); });
+  }
+  view('ro3').innerHTML = ro3.ro3View({ ...R3, profile: r3Profile() });
+  $('ro3-signin')?.addEventListener('click', ro3SignIn);
+  $('ro3-back')?.addEventListener('click', () => ro3Return(null));
+  $('ro3-link')?.addEventListener('submit', (e) => { e.preventDefault(); ro3Link(); });
+  $('ro3-shop')?.addEventListener('submit', (e) => { e.preventDefault(); ro3Buy(); });
+  $('ro3-claim')?.addEventListener('click', ro3Claim);
+  $('ro3-zkltc')?.addEventListener('input', (e) => {   // update the quote without re-rendering the field
+    R3.amount = e.target.value;
+    const wei = ro3.zkltcToWei(R3.amount), gets = wei && R3.shop ? ro3.shopAmount(wei, R3.shop.priceWeiPer100) : 0;
+    $('ro3-gets').textContent = gets > 0 ? `= ${gets} Sacred Relic Crystals` : '';
+    e.target.form.querySelector('button[type=submit]').disabled = !(gets > 0);
+  });
+}
+async function ro3SignIn() {
+  R3.error = '';
+  await signInWithAir();   // the arcade's own AIR flow: the profile, and this page's player key bound to it
+  const p = ro3.signedProfile(Ai.me.session, player?.id);
+  if (!p.ok) R3.error = Ai.error || p.why;
+  else if (!R3.params.realm) return ro3Return(null);
+  renderRo3();
+}
+async function ro3Link() {
+  if (!R3.listed) return;
+  R3.error = ''; R3.busy = `Linking your account on ${R3.listed.name}…`; renderRo3();
+  try {
+    const account = await ro3.linkAccount({ realm: R3.listed.url, serverId: R3.listed.serverId, account: $('ro3-account')?.value.trim(), password: $('ro3-password')?.value ?? '', player: { id: player.id, privateKey: player.kp.privateKey } });
+    R3.busy = ''; return ro3Return(account);
+  } catch (e) { R3.error = e?.message ?? String(e); }
+  R3.busy = ''; renderRo3();
+}
+// The shop: pay with the browser's wallet (wallet.js), wait for litVM, then the server credits it (claim, repeatable).
+async function ro3Buy() {
+  const wei = ro3.zkltcToWei(R3.amount);
+  if (!wei || !R3.shop) return;
+  R3.error = '';
+  try {
+    if (!wallet.hasWallet()) throw new Error('No wallet in this browser. Install MetaMask (or another), add litVM testnet, and get test zkLTC from the faucet.');
+    R3.busy = 'Confirm the payment in your wallet…'; renderRo3();
+    R3.tx = await ro3.pay({ info: R3.shop, wei, playerKey: player.id, wallet });
+    R3.busy = 'Waiting for litVM to confirm the payment…'; renderRo3();
+    const ok = await wallet.waitForReceipt(R3.tx);
+    if (ok === false) { R3.tx = null; throw new Error('The payment failed on litVM, so nothing was charged.'); }
+    return await ro3Claim();
+  } catch (e) { R3.error = e?.message ?? String(e); }
+  R3.busy = ''; renderRo3();
+}
+async function ro3Claim() {
+  if (!R3.tx) return;
+  R3.error = ''; R3.busy = `Crediting your purchase on ${R3.listed.name}…`; renderRo3();
+  try {
+    const { amount } = await ro3.claim({ realm: R3.listed.url, tx: R3.tx });
+    R3.busy = ''; return ro3Return(null, amount);
+  } catch (e) { R3.error = e?.message ?? String(e); }
+  R3.busy = ''; renderRo3();
+}
+function ro3Return(account, credited = null) {
+  const p = r3Profile();
+  if (!p) { R3.error = 'Sign in first.'; return renderRo3(); }
+  R3.done = ro3.returnUrl(R3.params, p, account, credited);
+  renderRo3();
+  location.href = R3.done;   // to the launcher on 127.0.0.1 (a top-level navigation, as desktop apps' sign-ins do)
+}
+
 // ═══════════════════════════════════════════════ router ══
 let route = { name: 'games' };
 function parseRoute() {
@@ -1140,6 +1219,7 @@ function parseRoute() {
   if (mr) return { name: 'match', matchId: mr[1] };
   const name = (h.match(/^#\/(\w+)/)?.[1]) ?? 'games';
   if (name === 'characters' || name === 'inventory') return { name: 'cards', legacy: true };   // the old pages, merged into Cards
+  if (name === 'ro3') return { name, ro3: ro3.ro3Params(h) };   // the RO3 on LITNODE launcher's sign-in (cabinet/ro3.js)
   return ['home', 'games', 'leaderboards', 'cards', 'node', 'build', 'download'].includes(name) ? { name } : { name: 'games' };
 }
 function render() {
@@ -1154,6 +1234,7 @@ function render() {
     case 'build': renderBuild(view('build')); break;
     case 'match': renderMatch(route.matchId); break;
     case 'download': renderDownload(); break;
+    case 'ro3': renderRo3(); break;
   }
 }
 function navigate() {
