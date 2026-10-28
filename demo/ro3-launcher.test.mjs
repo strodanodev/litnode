@@ -134,10 +134,19 @@ test('ro3 shop: only a well-formed litVM price list is used', async () => {
 
 test('ro3 shop: the payment goes to the treasury and names this page\'s key', async () => {
   const sent = [];
-  const wallet = { connect: async () => '0xbuyer', pay: async (...a) => { sent.push(a); return '0x' + '11'.repeat(32); } };
+  const wallet = { connect: async () => '0xbuyer', chainId: async () => 4441, pay: async (...a) => { sent.push(a); return '0x' + '11'.repeat(32); } };
   const key = 'cd'.repeat(32);
   assert.equal(await pay({ info: { treasury }, wei: price, playerKey: key, wallet }), '0x' + '11'.repeat(32));
   assert.deepEqual(sent, [['0xbuyer', treasury, price, '0x' + key]]);
+});
+
+test('ro3 shop: a wallet switched off litVM after connecting sends nothing', async () => {
+  let chain = 4441;
+  const sent = [];
+  // connect() puts the wallet on litVM; the player then switches to Ethereum mainnet before confirming.
+  const wallet = { connect: async () => { chain = 1; return '0xbuyer'; }, chainId: async () => chain, pay: async (...a) => { sent.push(a); return '0x'; } };
+  await assert.rejects(pay({ info: { treasury }, wei: price, playerKey: 'cd'.repeat(32), wallet }), /not on litVM/);
+  assert.deepEqual(sent, [], 'no transfer was attempted');
 });
 
 test('ro3 shop: a claim waits for litVM, and says why it cannot credit', async () => {

@@ -118,6 +118,9 @@ export const shopAmount = (wei, priceWeiPer100) => Number((wei * 100n) / priceWe
 /** Pay with the browser's wallet: zkLTC to the treasury, this page's player key as the data (who the currency is for). */
 export async function pay({ info, wei, playerKey, wallet }) {
   const from = await wallet.connect();
+  // Checked here too, right before paying (wallet.pay checks again and pins chainId): a player may switch networks in
+  // between, and the same transfer on another chain moves real value.
+  if (await wallet.chainId() !== LITVM_CHAIN_ID) throw new Error('Your wallet is not on litVM testnet. Switch it back and try again; nothing was sent.');
   return wallet.pay(from, info.treasury, wei, '0x' + playerKey);
 }
 

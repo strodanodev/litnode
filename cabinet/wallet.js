@@ -61,9 +61,16 @@ export const register = (from, playerKey, name) => send(from, registerCalldata(p
 export const bindKey = (from, playerKey) => send(from, bindKeyCalldata(playerKey));
 export const revokeKey = (from, playerKey) => send(from, revokeKeyCalldata(playerKey));
 
-/** A zkLTC payment (a value transfer with `data`, e.g. an RO3 shop purchase naming the buyer's key). Returns the tx hash. */
-export const pay = async (from, to, valueWei, data) =>
-  eth().request({ method: 'eth_sendTransaction', params: [{ from, to, value: hex(valueWei), data, ...(await fees()) }] });
+/** The chain the wallet is on right now, as a number. */
+export const chainId = async () => Number(await eth().request({ method: 'eth_chainId' }));
+
+/** A zkLTC payment on litVM (a value transfer with `data`, e.g. an RO3 shop purchase naming the buyer's key). Returns the
+ *  tx hash. The chain is checked again right before sending and pinned in the transaction (`chainId`), so a wallet the
+ *  player switched to another network after connect() sends nothing there: that would be a real-value transfer. */
+export async function pay(from, to, valueWei, data) {
+  if (await chainId() !== CHAIN.chainId) throw new Error(`Your wallet is not on litVM (chain ${CHAIN.chainId}). Switch it back and try again; nothing was sent.`);
+  return eth().request({ method: 'eth_sendTransaction', params: [{ from, to, value: hex(valueWei), data, chainId: hex(CHAIN.chainId), ...(await fees()) }] });
+}
 
 /** Poll until the transaction is mined: true when it succeeded, false when it reverted, null on timeout. */
 export async function waitForReceipt(txHash, { timeoutMs = 120_000, intervalMs = 2000 } = {}) {
