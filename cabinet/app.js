@@ -609,8 +609,8 @@ const coverArt = (g) => g.cover
 // built once — render() runs on every node poll, and rewriting the frame's
 // HTML would reload the game — so only the parts around it re-render.
 const playableGames = () => GAMES.filter((g) => g.playable && g.url);
-let arcadePick = null;   // picked this session; otherwise the featured title (config.js order) loads
-const arcadeGame = () => { const list = playableGames(); return list.find((g) => g.id === arcadePick) ?? list[0] ?? null; };
+let arcadePick = null;   // picked this session; otherwise the featured title (config.js `featured`, else the first) loads
+const arcadeGame = () => { const list = playableGames(); return list.find((g) => g.id === arcadePick) ?? list.find((g) => g.featured) ?? list[0] ?? null; };
 const inWindow = () => current && frame !== overlayFrame;
 // The Arcade tab is the landing page: entering it with nothing running loads
 // the featured title. A remembered AIR session is restored first (capped), so

@@ -104,6 +104,7 @@ export const GAMES = [
     tags: ['THREE.JS', 'DECKWRIGHT'],
     badge: 'chess.litvm.games',
     playable: true,
+    featured: true, // the title the Arcade page opens with (app.js arcadeGame), whatever the list order
   },
   {
     id: 'ro3',
