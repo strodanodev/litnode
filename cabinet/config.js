@@ -94,13 +94,14 @@ export const GAMES = [
     title: 'RAPTURE CHESS',
     accent: '#e2b46a',
     tagline: 'by LitVM Games',
-    description: '3D chess on litVM where the Rapture ARC 1 champions take the board, by LitVM Games. Built with Deckwright and three.js, it runs at chess.litvm.games, which this arcade opens in its window; its matches are not settled by the mesh yet.',
+    description: '3D chess on litVM where the Rapture ARC 1 champions take the board, by LitVM Games: Alliance is White, Horde is Black. Built with Deckwright and three.js, it runs at chess.litvm.games, which this arcade opens in its window. Its games are replayable rulesets on the mesh (rapture-chess.v1).',
     controls: ['Select a piece: click', 'Move: click a highlighted square', 'Orbit the board: drag', 'Zoom: scroll'],
     modes: ['vs AI', 'online'],
     players: '1P / 2P online',
     url: 'https://chess.litvm.games/', // its CSP lets arcade.litvm.games frame it
     cover: './covers/rapture-chess.jpg',
-    status: 'external',
+    rulesetId: 'rapture-chess.v1', // the published mesh title (its own listing points at rapture-chess.vercel.app, the same build): one card, not two
+    status: 'mesh',
     tags: ['THREE.JS', 'DECKWRIGHT'],
     badge: 'chess.litvm.games',
     playable: true,
