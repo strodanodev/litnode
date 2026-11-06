@@ -129,6 +129,7 @@ function renderWorking() {
   const t = Ai.busy || Wl.busy || Op.busy || '';
   $('working').hidden = !t; $('working-text').textContent = t;
   $('me-chip').classList.toggle('busy-chip', !!Ai.busy);
+  $('login-btn').classList.toggle('busy-chip', !!(Ai.busy || Wl.busy));
 }
 const setName = async () => { const v = await ask({ title: 'profile', label: 'Display name', value: player.name, maxlength: 24, hint: 'shown in the arcade and on ladders' }); if (v && v.trim()) { player.name = v.trim().slice(0, 24); store('cabinet.name', player.name); renderChrome(); render(); } };
 $('avatar-file').addEventListener('change', async (e) => {
@@ -153,7 +154,7 @@ async function findSeed() {
 const Wl = { binding: null, account: null, profile: null, busy: '', error: '' };
 async function refreshBinding() {
   if (!wallet.configured() || !player?.kp) return;
-  try { Wl.binding = await wallet.bindingOf(player.id); } catch { /* chain unreachable; keep what we had */ }
+  try { Wl.binding = await wallet.bindingOf(player.id); store('cabinet.bound', Wl.binding?.active ? Wl.binding.owner : undefined); } catch { /* chain unreachable; keep what we had */ }
 }
 let misses = 0, polls = 0;
 async function pollNode() {
@@ -161,6 +162,7 @@ async function pollNode() {
   try {
     S.health = await api('/health');
     S.online = true; misses = 0;
+    if (Ai.me.loggedIn && !Ai.me.session?.address && !Ai.busy && !Ai.autoTried) { Ai.autoTried = true; finishAirProfile(); }
     // /deltas carries every settled match (ledgers excluded) — poll it every third tick.
     const wantDeltas = polls++ % 3 === 0;
     for (const g of GAMES) {
@@ -263,13 +265,19 @@ function titleStats() {
 
 // ═══════════════════════════════════════════════ chrome ══
 function renderChrome() {
-  $('me-avatar').src = player.avatar;
-  const signedIn = !!Ai.me.session?.address;
-  $('me-name').textContent = signedIn ? (Ai.me.session.name || player.name) : air.configured() && player.kp ? `${player.name} · SIGN IN` : player.name;
-  $('me-chip').title = signedIn ? `AIR ${Ai.me.email ?? ''} · litVM ${Ai.me.session.address}` : air.configured() ? 'Sign in with AIR' : '';
-  const t = myTotals();
-  const xp = t.wins * 60 + (t.matches - t.wins) * 20;
-  $('me-level').textContent = `LV ${levelOf(xp).level}`;
+  const acct = account();
+  const signedIn = !!acct;
+  $('login-btn').hidden = signedIn; $('me').hidden = !signedIn;
+  $('login-btn').textContent = Ai.busy || Wl.busy ? 'SIGNING IN…' : 'LOGIN';
+  if (signedIn) {
+    $('me-avatar').src = player.avatar;
+    $('me-name').textContent = acct.name;
+    $('me-chip').title = 'Account';
+    $('me-chip').classList.toggle('pending', !!acct.pending);
+    $('me-level').textContent = `LV ${myLevel().level}`;
+    if (!$('me-menu').hidden) setHtml($('me-menu'), meMenu(acct));
+  } else closeMenu();
+  renderLogin();
   $('node-pill').classList.toggle('on', S.online);
   const h = S.health;
   $('node-text').textContent = S.online ? `${S.viaSeed && nodeUrl() === seedUrl ? 'SEED' : 'NODE'} ${h.bonded ? 'BONDED' : h.bonded === false ? 'UNBONDED' : 'ONLINE'} · ${h.peers} PEER${h.peers === 1 ? '' : 'S'}` : S.checked ? 'NODE OFFLINE' : 'CONNECTING…';
@@ -282,8 +290,7 @@ function renderChrome() {
   const lock = $('dash-lock');
   lock.hidden = !locked;
   if (locked) {
-    const canSignIn = air.configured() && player.kp && !signedIn;
-    lock.innerHTML = `<span class="dash-lock-msg">Node offline${signedIn ? ' — reconnect your node to resume the dashboard' : ' — sign in to activate the dashboard'}</span>${canSignIn ? '<button id="dash-lock-btn" class="btn primary sm">Sign in with AIR</button>' : ''}`;
+    lock.innerHTML = `<span class="dash-lock-msg">Node offline${signedIn ? ' — reconnect your node to resume the dashboard' : ' — sign in to activate the dashboard'}</span>${signedIn ? '' : '<button id="dash-lock-btn" class="btn primary sm">Login</button>'}`;
   }
 }
 
@@ -412,23 +419,132 @@ function airLine() {
   if (Ai.me.loggedIn) return `<div class="sub">AIR <b>${esc(Ai.me.email ?? Ai.me.id?.slice(0, 8) ?? '')}</b> · <button class="btn sm" id="air-link">Get my litVM profile</button> <button class="link" id="air-out">sign out</button>${Ai.error ? `<div class="dim">${esc(Ai.error)}</div>` : ''}</div>`;
   return `<div class="sub"><button class="btn sm" id="air-btn">Sign in with AIR</button> <span class="dim">Google, email or a wallet · a litVM profile is made for you</span>${Ai.error ? `<div class="dim">${esc(Ai.error)}</div>` : ''}</div>`;
 }
-/** AIR dialog → node session (proxy wallet + profile + this key bound). */
+/** AIR dialog → node session (proxy wallet + profile + this key bound). AIR's own dialog cannot sit under ours
+ *  (a modal <dialog> is top layer), so the login dialog steps aside while it is open and comes back for the
+ *  litVM profile step, or with what went wrong. */
 async function signInWithAir() {
-  Ai.error = '';
+  Ai.error = ''; Ai.note = '';
+  const wasOpen = Lg.open; closeLogin();
   try {
     Ai.busy = 'opening AIR…'; render();
     if (!Ai.me.loggedIn) await air.login();
     Ai.me = air.current();
+    store('cabinet.signedOut', undefined);
     pushAir();   // a title waiting on this sign-in can go on now; the litVM profile below can take a while
-    if (!S.online) throw new Error('no node to ask — the profile is minted by your node (or the seed)');
-    Ai.busy = 'your node is setting up your litVM profile (first time: three transactions)…'; render();
+  } catch (e) {
+    Ai.busy = ''; Ai.error = /did not complete|closed|cancel/i.test(e?.message ?? '') ? 'Sign-in was cancelled.' : (e?.message ?? String(e));
+    if (wasOpen) openLogin(); render(); return;
+  }
+  if (wasOpen) openLogin();
+  await finishAirProfile();
+}
+/** The node mints (first time) or finds the account's litVM profile and binds this browser's key. With no node
+ *  in reach the player stays signed in and it runs on the first poll that finds one. */
+async function finishAirProfile() {
+  if (!S.online) { Ai.busy = ''; Ai.note = 'You are signed in. Your litVM profile is made by a node, and it will be set up as soon as one is reachable.'; render(); return; }
+  Ai.error = ''; Ai.note = '';
+  Ai.busy = 'setting up your litVM profile (first time: three transactions)…'; render();
+  try {
     Ai.me.session = await air.nodeSession(nodeUrl(), { playerKey: player.id, name: player.name.replace(/[^A-Za-z0-9 _.-]/g, '').slice(0, 32) || null });
-    if (Ai.me.session.name && !load('cabinet.name')) { player.name = Ai.me.session.name; renderChrome(); }
+    if (Ai.me.session.name && !load('cabinet.name')) player.name = Ai.me.session.name;
     await refreshBinding();
-  } catch (e) { Ai.error = e?.message ?? String(e); }
+    Ai.busy = ''; render();
+    if (Lg.open) setTimeout(() => { if (account() && !Ai.busy && !Ai.error) closeLogin(); }, 1400);
+    return;
+  } catch (e) { Ai.error = `Your litVM profile could not be set up: ${e?.message ?? e}`; }
   Ai.busy = ''; render();
 }
-async function signOutAir() { Ai.busy = 'signing out…'; render(); await air.logout(); Ai.me = air.current(); Ai.busy = ''; render(); pushAir(); }
+/** Sign out of this browser: AIR's session ends, and a key bound with a wallet stops showing as this player
+ *  until LOGIN (the binding itself is on chain; only its owner can revoke it). */
+async function signOut() {
+  closeMenu();
+  Ai.busy = 'signing out…'; render();
+  try { if (Ai.me.loggedIn || Ai.me.session) await air.logout(); } catch { /* already out */ }
+  Ai.me = air.current(); Ai.busy = ''; Ai.error = ''; Ai.note = ''; Ai.autoTried = false;
+  store('cabinet.signedOut', '1');
+  render(); pushAir();
+}
+const signOutAir = signOut;
+
+// ---- who is signed in, and the header's LOGIN button / account menu / login dialog
+/** The signed-in account, or null. AIR (with or without its litVM profile yet), else a key bound with a wallet. */
+function account() {
+  if (load('cabinet.signedOut') === '1') return null;
+  const s = Ai.me.session;
+  if (s?.address) return { via: 'AIR', name: s.name || player.name, email: Ai.me.email, address: s.address, tokenId: s.tokenId ?? null, elsewhere: s.custody === 'elsewhere' };
+  if (Ai.me.loggedIn) return { via: 'AIR', name: player.name, email: Ai.me.email, address: null, pending: true };
+  const bound = Wl.binding ? (Wl.binding.active ? Wl.binding.owner : null) : load('cabinet.bound');
+  if (bound) return { via: 'wallet', name: Wl.profile?.name ?? player.name, address: bound, tokenId: Wl.binding?.tokenId ?? null };
+  return null;
+}
+const myLevel = () => { const t = myTotals(); return progressLine(PRIMARY.rulesetId) ?? levelOf(t.wins * 60 + (t.matches - t.wins) * 20); };
+const shortAddr = (a) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+function meMenu(a) {
+  const L = myLevel();
+  const id = a.via === 'AIR' ? (a.email ? esc(a.email) : 'Signed in with AIR') : 'Signed in with a wallet';
+  const addr = a.address
+    ? `<div class="mm-row"><span class="k">litVM</span><a class="mono" href="${esc(nfts.explorerAddress(a.address))}" target="_blank" rel="noopener" title="${esc(a.address)}">${shortAddr(a.address)}</a><button class="link" data-copy="${esc(a.address)}" title="copy address">copy</button></div>`
+    : `<div class="mm-row pending"><span class="spin"></span>${Ai.busy ? 'setting up your litVM profile…' : 'litVM profile waits for a node'}</div>`;
+  return `<div class="mm-head"><img src="${player.avatar}" alt="" /><div><div class="mm-name">${esc(a.name)}</div><div class="mm-id">${id}</div></div></div>
+    <div class="mm-lvl"><div class="row"><span>LEVEL ${L.level} · ${esc(tierOf(L.level))}</span><span>${L.xp} / ${L.next} XP</span></div><div class="bar"><i style="width:${pct(L.xp, L.next)}%"></i></div></div>
+    ${addr}
+    <nav class="mm-links"><a href="#/home" role="menuitem">Profile</a><a href="#/cards" role="menuitem">My cards</a><a href="#/leaderboards" role="menuitem">Ranks</a><button type="button" role="menuitem" id="mm-rename">Rename</button></nav>
+    <button type="button" class="mm-out" role="menuitem" id="mm-out">Sign out</button>`;
+}
+function openMenu() { const a = account(); if (!a) return; const m = $('me-menu'); setHtml(m, meMenu(a)); m.hidden = false; $('me-chip').setAttribute('aria-expanded', 'true'); }
+function closeMenu() { const m = $('me-menu'); if (m && !m.hidden) { m.hidden = true; $('me-chip').setAttribute('aria-expanded', 'false'); } }
+$('me-chip').addEventListener('click', (e) => { e.stopPropagation(); $('me-menu').hidden ? openMenu() : closeMenu(); });
+$('me-menu').addEventListener('click', async (e) => {
+  const t = e.target.closest('a,button'); if (!t) return;
+  if (t.dataset.copy) { e.stopPropagation(); try { await navigator.clipboard.writeText(t.dataset.copy); t.textContent = 'copied'; setTimeout(() => { t.textContent = 'copy'; }, 1200); } catch { /* no clipboard */ } return; }
+  if (t.id === 'mm-out') { signOut(); return; }
+  closeMenu();
+  if (t.id === 'mm-rename') setName();
+});
+document.addEventListener('click', (e) => { if (!e.target.closest('#me')) closeMenu(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+window.addEventListener('hashchange', closeMenu);
+
+const Lg = { open: false };
+function openLogin() { const d = $('login'); Lg.open = true; renderLogin(); if (!d.open) d.showModal(); }
+function closeLogin() { const d = $('login'); Lg.open = false; if (d.open) d.close(); }
+$('login').addEventListener('close', () => { Lg.open = false; });
+$('login').addEventListener('click', (e) => {
+  if (e.target === $('login')) { closeLogin(); return; }            // a click on the backdrop
+  const t = e.target.closest('button'); if (!t) return;
+  if (t.id === 'lg-air') signInWithAir();
+  else if (t.id === 'lg-wallet') { closeLogin(); signInWithWallet(); }
+  else if (t.id === 'lg-resume') { store('cabinet.signedOut', undefined); closeLogin(); render(); }
+  else if (t.id === 'lg-retry') finishAirProfile();
+  else if (t.id === 'lg-close') closeLogin();
+});
+$('login-btn').addEventListener('click', () => { if (!Ai.busy && !Wl.busy) openLogin(); });
+/** The login dialog's content: the choices, or where an AIR sign-in is (profile step, done, error). */
+function renderLogin() {
+  if (!Lg.open) return;
+  const a = account();
+  const close = '<button type="button" class="lg-x" id="lg-close" aria-label="close">✕</button>';
+  let body;
+  if (a && Ai.busy) body = `<div class="lg-steps"><div class="lg-step ok">Signed in${a.email ? ` as <b>${esc(a.email)}</b>` : ''}</div><div class="lg-step on"><span class="spin"></span>Setting up your litVM profile<small>first time only: the node mints it and binds this device, about a minute</small></div></div>`;
+  else if (a && Ai.error) body = `<div class="lg-steps"><div class="lg-step ok">Signed in${a.email ? ` as <b>${esc(a.email)}</b>` : ''}</div><div class="lg-step bad">${esc(Ai.error)}</div></div><div class="lg-actions"><button type="button" class="btn primary" id="lg-retry">Try again</button><button type="button" class="btn" id="lg-close">Later</button></div>`;
+  else if (a) body = `<div class="lg-steps"><div class="lg-step ok">Signed in${a.email ? ` as <b>${esc(a.email)}</b>` : ''}</div>${a.address ? `<div class="lg-step ok">litVM profile <b>${esc(a.name)}</b> · <span class="mono">${shortAddr(a.address)}</span></div>` : `<div class="lg-step">${esc(Ai.note || 'Your litVM profile will be set up when a node is reachable.')}</div>`}</div><div class="lg-actions"><button type="button" class="btn primary" id="lg-close">Let’s play</button></div>`;
+  else {
+    const bound = Wl.binding?.active ? Wl.binding.owner : load('cabinet.bound');
+    const resume = bound ? `<button type="button" class="lg-opt" id="lg-resume"><span class="lg-ico">◆</span><span><b>Continue as ${esc(Wl.profile?.name ?? player.name)}</b><small>this device is bound to wallet ${shortAddr(bound)}</small></span></button>` : '';
+    const airOpt = air.configured() && player.kp ? `<button type="button" class="lg-opt primary" id="lg-air" ${Ai.busy ? 'disabled' : ''}><span class="lg-ico">✦</span><span><b>${Ai.busy ? esc(Ai.busy) : 'Continue with AIR'}</b><small>Google, email or a wallet. Your litVM profile is made for you: no gas, no seed phrase.</small></span></button>` : '';
+    const walletOpt = wallet.configured() && player.kp && !bound ? (wallet.hasWallet()
+      ? `<button type="button" class="lg-opt" id="lg-wallet"><span class="lg-ico">⬡</span><span><b>Use my own wallet</b><small>MetaMask on litVM: one transaction mints a soulbound profile that owns this device.</small></span></button>`
+      : '<div class="lg-note dim">Have MetaMask? Install it to sign in with your own wallet instead.</div>') : '';
+    const none = !airOpt && !resume && !walletOpt ? '<div class="lg-note">Sign-in needs a secure page (https) in a browser that keeps local storage.</div>' : '';
+    body = `<p class="lg-lead">Your level, rank, match history and Cards follow your account to any device.</p>
+      ${Ai.error ? `<div class="lg-err">${esc(Ai.error)}</div>` : ''}${Wl.error ? `<div class="lg-err">${esc(Wl.error)}</div>` : ''}
+      <div class="lg-opts">${resume}${airOpt}${walletOpt}${none}</div>
+      <div class="lg-foot dim">Playing without an account works too: results settle under this browser’s key.</div>`;
+  }
+  setHtml($('login-body'), `<div class="lg"><div class="ask-h"><span class="ask-title" id="login-title">${a ? 'Signed in' : 'Sign in to LIT GAMES'}</span>${close}</div>${body}</div>`);
+}
+/** innerHTML only when it changed: a redraw on every node poll must not reset focus or a 'copied' label. */
+function setHtml(el, html) { if (el._html !== html) { el._html = html; el.innerHTML = html; } }
 
 /** The wallet row under the key: bound → who owns it; unbound → sign in. */
 function walletLine() {
@@ -464,6 +580,7 @@ async function signInWithWallet() {
     Wl.binding = await wallet.waitForBinding(player.id);
     Wl.profile = Wl.binding ? await wallet.profileOf(Wl.binding.owner) : Wl.profile;
     if (!Wl.binding) Wl.error = 'the transaction did not land in 60 s — check the explorer, then reload';
+    else store('cabinet.signedOut', undefined);
   } catch (e) { Wl.error = e?.message ?? String(e); }
   Wl.busy = ''; render();
 }
@@ -493,7 +610,7 @@ function profilePanel() {
     </div>
     <div class="two">
       <div class="big"><div class="icon">◆</div><div><div class="k">Skill rating</div><div class="v">${rating}<small> ${row ? 'SR' : 'unrated'}</small></div></div></div>
-      <a class="big" href="#/cards"><div class="icon">▣</div><div><div class="k">Cards</div><div class="v">${Nf.groups ? Nf.groups.reduce((n, g) => n + Math.max(g.amount, g.onChain ?? 0), 0) : '—'}<small> NFTs</small></div></div></a>
+      <a class="big" href="#/cards"><div class="icon">▣</div><div><div class="k">Cards</div><div class="v">${Nf.groupsFor && Nf.groups ? Nf.groups.reduce((n, g) => n + Math.max(g.amount, g.onChain ?? 0), 0) : '—'}<small> NFTs</small></div></div></a>
     </div>
     ${titleStats()}
     <div class="source">${S.online ? `Derived from ${t.matches} settled match${t.matches === 1 ? '' : 'es'} on the mesh. Account XP and cards sync with Agent Fighter.` : 'Start a node to load your mesh record.'}</div>
@@ -523,6 +640,15 @@ function chartSvg(series) {
   </svg>`;
 }
 
+/** Home, signed out: what an account gives, and the way in. No player data is shown. */
+function welcomePanel() {
+  return panel('Welcome', `<div class="welcome">
+      <h2 class="chrome">Play as yourself</h2>
+      <p>Sign in to keep your level, rank, match history and Cards on every device. Every match you play settles on the litVM mesh under your name.</p>
+      <div class="welcome-cta"><button type="button" class="btn primary" data-login>Login</button><span class="dim">Google, email or a wallet</span></div>
+      <ul class="welcome-perks"><li><b>Level & XP</b> from every settled match</li><li><b>Global rank</b> on each title’s ladder</li><li><b>Cards</b>: your litVM NFTs in one place</li></ul>
+    </div>`, '', 's9');
+}
 function statsPanel() {
   const rid = PRIMARY.rulesetId;
   const hist = rid ? history(rid) : [];
@@ -593,8 +719,8 @@ function cardsOwner() {
   const fromHash = location.hash.match(/^#\/cards\/(0x[0-9a-fA-F]{40})/)?.[1];
   if (fromHash) return { addr: fromHash, src: 'link' };
   if (Nf.typed) return { addr: Nf.typed, src: 'address' };
-  if (Wl.binding?.active) return { addr: Wl.binding.owner, src: 'profile wallet' };
-  if (Ai.me?.session?.address) return { addr: Ai.me.session.address, src: 'AIR wallet' };
+  const a = account();
+  if (a?.address) return { addr: a.address, src: a.via === 'AIR' ? 'AIR wallet' : 'profile wallet' };
   if (Nf.connected) return { addr: Nf.connected, src: 'connected wallet' };
   return null;
 }
@@ -670,7 +796,7 @@ function cardsPanel() {
 
 // ═══════════════════════════════════════════════ views ══
 function renderHome() {
-  view('home').innerHTML = nodePanel() + profilePanel() + statsPanel() + gamesPanel() + leaderboardPanel() + cardsPanel();
+  view('home').innerHTML = nodePanel() + (account() ? profilePanel() + statsPanel() : welcomePanel()) + gamesPanel() + leaderboardPanel() + cardsPanel();
 }
 const coverArt = (g) => g.cover
   ? `<img class="bgimg" src="${esc(g.cover)}" alt="${esc(g.title)} title screen" />${g.logo ? `<img class="logo" src="${esc(g.logo)}" alt="" />` : ''}`
@@ -1374,6 +1500,7 @@ function parseRoute() {
 }
 function render() {
   renderWorking();
+  if (player) renderChrome();
   switch (route.name) {
     case 'home': renderHome(); break;
     case 'games': renderGames(); break;
@@ -1404,7 +1531,7 @@ window.addEventListener('hashchange', navigate);
 
 // One delegated click handler for everything rendered from templates.
 document.addEventListener('click', (e) => {
-  const t = e.target.closest('[data-aw-start],[data-aw-pick],[data-aw-fs],[data-aw-tab],[data-play],[data-queue],[data-mm-stop],[data-mm-reset],[data-mm-launch],[data-lb],[data-node-tab],#name-btn,#avatar-btn,#wallet-btn,#air-btn,#air-link,#air-out,#me-chip,#dash-lock-btn');
+  const t = e.target.closest('[data-aw-start],[data-aw-pick],[data-aw-fs],[data-aw-tab],[data-play],[data-queue],[data-mm-stop],[data-mm-reset],[data-mm-launch],[data-lb],[data-node-tab],[data-login],#name-btn,#avatar-btn,#wallet-btn,#air-btn,#air-link,#air-out,#dash-lock-btn');
   if (!t) return;
   if (t.id === 'wallet-btn') { signInWithWallet(); return; }
   if (t.dataset.awStart) { e.preventDefault(); const g = GAMES.find((x) => x.id === t.dataset.awStart); if (g) { pickArcade(g.id); play(g, null, 'window'); $('aw')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }
@@ -1421,8 +1548,8 @@ document.addEventListener('click', (e) => {
   else if (t.dataset.lb) { lbTab = t.dataset.lb; render(); }
   else if (t.dataset.nodeTab) { nodeTab = t.dataset.nodeTab; store('cabinet.nodeTab', nodeTab); render(); }
   else if (t.id === 'name-btn') setName();
-  else if (t.id === 'air-btn' || t.id === 'air-link' || t.id === 'dash-lock-btn') signInWithAir();
-  else if (t.id === 'me-chip' && air.configured() && player.kp && !Ai.me.session?.address) { e.preventDefault(); signInWithAir(); }
+  else if (t.id === 'air-btn' || t.id === 'air-link') signInWithAir();
+  else if (t.id === 'dash-lock-btn' || 'login' in t.dataset) openLogin();
   else if (t.id === 'air-out') signOutAir();
   else if (t.id === 'avatar-btn') $('avatar-file').click();
 });

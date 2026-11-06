@@ -28,7 +28,11 @@
     <div class="spacer"></div>
     <a href="#/download" id="dl-btn" class="dl-btn" title="Download the LITNODE Control Plane for Windows"><svg class="dl-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v8.2m0 0L4.8 6.5M8 9.7l3.2-3.2M2.5 11.5v2.5h11v-2.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="square"/></svg><span>DOWNLOAD</span></a>
     <a href="#/node" id="node-pill" class="node-pill off" title="litnode status"><span class="dot"></span><span id="node-text">NODE OFFLINE</span></a>
-    <a href="#/home" class="me-chip" id="me-chip"><img id="me-avatar" alt="" /><span class="me-name" id="me-name">…</span><span class="me-level" id="me-level">LV 1</span></a>
+    <button type="button" class="login-btn" id="login-btn" hidden>LOGIN</button>
+    <div class="me" id="me" hidden>
+      <button type="button" class="me-chip" id="me-chip" aria-haspopup="menu" aria-expanded="false"><img id="me-avatar" alt="" /><span class="me-name" id="me-name"></span><span class="me-level" id="me-level">LV 1</span><svg class="me-caret" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
+      <div class="me-menu" id="me-menu" role="menu" hidden></div>
+    </div>
   </header>
 
   <main class="content">
@@ -64,6 +68,7 @@
   <input type="file" id="avatar-file" accept="image/*" hidden />
 
   <script type="module" src="./app.js"></script>
+  <dialog id="login" class="ask login-dlg" aria-labelledby="login-title"><div id="login-body"></div></dialog>
   <dialog id="ask" class="ask">
     <form method="dialog" id="ask-form">
       <div class="ask-h"><span class="ask-title" id="ask-title">—</span></div>
