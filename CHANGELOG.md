@@ -3,7 +3,11 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.12.4] — 2026-11-07 — witnesses re-run attested results with the title's verifier; the arcade's #/ro3 page; bonded-only /ro3/hosts
+
+Protocol 4, unchanged: 0.12.0 through 0.12.4 nodes are peers. The heartbeat gains an optional `verifiers` field,
+which older nodes forward as part of the signed envelope. No contract, result hash or proof level changes. The
+cabinet changed: redeploy the arcade with this release.
 
 ### Added
 
@@ -54,7 +58,7 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
-- **`/ro3/hosts` lists RO3Emu servers from bonded nodes only.** (Not in the published 0.12.3, which was cut from `34f4c12`.)
+- **`/ro3/hosts` lists RO3Emu servers from bonded nodes only.** (Fixed after 0.12.3, which was cut from `34f4c12`.)
   - **Bonded hosts only:** with NodeStake, `/ro3/hosts` lists a peer's server only once the chain shows that peer
     bonded. Until its standing is read, it is not listed. Players log in to the server they pick, so a node that
     staked nothing can't advertise a lookalike. A dev mesh with no chain lists everyone, as its snapshot does.
