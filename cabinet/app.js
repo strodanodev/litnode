@@ -7,8 +7,8 @@
  *    real   — node status, leaderboards, per-player stats, match history and
  *             the rating curve (all derived from the node's settled deltas),
  *             the player key (the node's own ed25519 module).
- *    sample — which cards (fighters, items, pets) the player holds, tickets:
- *             account data that arrives with the Agent Fighter sync. Labelled "sample". */
+ *             Cards: the NFTs a wallet holds on litVM testnet, read from the
+ *             explorer and the chain (nfts.js). */
 import { loadPlayer as loadKeypair, createClient, IDENTITY_KEY } from './client.js';
 import { roomCodeFor } from './protocol/pairing.js';
 import { chainHead, ledgerBody, signLedger } from './protocol/log.js';
@@ -18,7 +18,7 @@ const RUN_TAG = 'run'; // sdk/court RUN_TAG: a player's signature over a single-
 import { applyDelta, sortDeltas } from './protocol/derive.js';
 import { levelOf as levelFromXp } from './protocol/progression.js';
 import { NODE_URL, GAMES as CONFIG_GAMES } from './config.js';
-import { deck, KINDS, COLLECTION_SAMPLE } from './roster.js';
+import * as nfts from './nfts.js';
 import { identicon, fileToAvatar } from './avatar.js';
 import { paintBackdrop } from './bg.js';
 import { sample, slots, uptimePct, fmtDuration, ring, strip, heatmap } from './uptime.js';
@@ -493,7 +493,7 @@ function profilePanel() {
     </div>
     <div class="two">
       <div class="big"><div class="icon">◆</div><div><div class="k">Skill rating</div><div class="v">${rating}<small> ${row ? 'SR' : 'unrated'}</small></div></div></div>
-      <a class="big" href="#/cards"><div class="icon">▣</div><div><div class="k">Cards</div><div class="v">${DECK.filter((c) => c.held).length}<small> / ${DECK.length} sample</small></div></div></a>
+      <a class="big" href="#/cards"><div class="icon">▣</div><div><div class="k">Cards</div><div class="v">${Nf.groups ? Nf.groups.reduce((n, g) => n + Math.max(g.amount, g.onChain ?? 0), 0) : '—'}<small> NFTs</small></div></div></a>
     </div>
     ${titleStats()}
     <div class="source">${S.online ? `Derived from ${t.matches} settled match${t.matches === 1 ? '' : 'es'} on the mesh. Account XP and cards sync with Agent Fighter.` : 'Start a node to load your mesh record.'}</div>
@@ -581,21 +581,91 @@ let lbTab = PRIMARY.rulesetId;
 const lbTabs = () => `<div class="tabs">${GAMES.filter((g) => g.rulesetId).map((g) => `<button class="${g.rulesetId === lbTab ? 'active' : ''}" data-lb="${g.rulesetId}">${esc(g.title)}</button>`).join('')}</div>`;
 const leaderboardPanel = () => panel('Leaderboards', `${lbTabs()}<div style="margin-top:8px">${boardTable(lbTab, 8)}</div>`, moreLink('#/leaderboards'), 's5');
 
-// Cards are not live yet: greyed (.soon), inert, "coming soon" on hover. Every fighter, item and pet is one
-// card in one collection (roster.js deck); the sample stands in for the player's own until the account sync.
-const SOON_TAG = '<span class="tag soon-tag">coming soon</span>';
-const DECK = deck();
-const nftCard = (c) => `<article class="nft ${c.held ? '' : 'locked'}" style="--cc:${c.color}" title="${esc(c.name)} · ${esc(c.badge)}">
-    <div class="nft-top"><span>${c.kind}</span><span class="nft-badge">${esc(c.badge)}</span></div>
-    <div class="nft-art">${c.img ? `<img src="${esc(c.img)}" alt="" loading="lazy" />` : `<span class="nft-glyph">${c.glyph}</span>`}${c.held ? '' : '<span class="nft-lock">🔒</span>'}</div>
-    <div class="nft-name">${esc(c.name)}</div>
-    <div class="nft-stat">${esc(c.stat)}</div>
-    <div class="nft-foot"><span>${c.held > 1 ? `×${c.held}` : c.held ? 'held' : 'not held'}</span>${c.flag ? `<span class="nft-flag">${c.flag}</span>` : ''}</div>
-  </article>`;
+// ---- Cards: the NFTs a wallet holds on litVM LiteForge (testnet), read by cabinet/nfts.js — the explorer lists,
+// the chain counts (balanceOf) and describes (tokenURI). Whose: an address typed on the page (or #/cards/0x…),
+// else the wallet bound to this key, else the AIR wallet, else a wallet connected for this page. With none of
+// those, the featured collection's newest mints.
+const NFT_COLLECTIONS = nfts.NFT_COLLECTIONS, FEATURED = NFT_COLLECTIONS[0];
+const CARDS_PAGE = 60;
+const Nf = { typed: null, connected: null, key: null, groups: null, groupsFor: null, browse: null, info: null, pick: 'all', shown: CARDS_PAGE, allChips: false, busy: '', error: '', ver: 0, drawn: -1 };
+try { const a = localStorage.getItem('cabinet.cardsOwner'); if (nfts.isAddress(a)) Nf.typed = a; } catch { /* storage blocked: nothing remembered */ }
+function cardsOwner() {
+  const fromHash = location.hash.match(/^#\/cards\/(0x[0-9a-fA-F]{40})/)?.[1];
+  if (fromHash) return { addr: fromHash, src: 'link' };
+  if (Nf.typed) return { addr: Nf.typed, src: 'address' };
+  if (Wl.binding?.active) return { addr: Wl.binding.owner, src: 'profile wallet' };
+  if (Ai.me?.session?.address) return { addr: Ai.me.session.address, src: 'AIR wallet' };
+  if (Nf.connected) return { addr: Nf.connected, src: 'connected wallet' };
+  return null;
+}
+let nfFrame = 0;
+const nfChanged = () => { Nf.ver++; if (nfFrame) return; nfFrame = requestAnimationFrame(() => { nfFrame = 0; if (route.name === 'cards') drawCards(); else if (route.name === 'home') renderHome(); }); };
+/** Load what the page shows, once per owner (force: read again). Safe to call on every render. */
+async function loadCards(force = false) {
+  const o = cardsOwner();
+  const key = o ? o.addr.toLowerCase() : 'browse';
+  if (Nf.key === key && !force) return;
+  Object.assign(Nf, { key, error: '', pick: 'all', shown: CARDS_PAGE, busy: o ? 'reading the wallet…' : 'reading the collection…' });
+  if (Nf.groupsFor !== key) { Nf.groups = null; Nf.groupsFor = null; }
+  nfChanged();
+  try {
+    if (o) { const g = await nfts.holdings(o.addr, NFT_COLLECTIONS.map((c) => c.address)); if (Nf.key !== key) return; Nf.groups = g; Nf.groupsFor = key; }
+    else { Nf.info ??= await nfts.collectionInfo(FEATURED.address); const p = await nfts.latest(FEATURED.address, Nf.info); if (Nf.key !== key) return; Nf.browse = p; }
+  } catch (e) { if (Nf.key !== key) return; Nf.error = `The litVM explorer did not answer (${e.message}). Try again in a moment.`; }
+  Nf.busy = ''; nfChanged();
+}
+/** The tokens on screen: the picked collection's (or every collection's) for an owner, else the newest mints. */
+function cardsList() {
+  if (Nf.groupsFor && Nf.groups) return Nf.pick === 'all' ? Nf.groups.flatMap((g) => g.tokens) : (Nf.groups.find((g) => g.contract.toLowerCase() === Nf.pick)?.tokens ?? []);
+  if (Nf.key === 'browse') return Nf.browse?.tokens ?? [];
+  return [];
+}
+const describeShown = (list) => nfts.describe(list.filter((t) => !t.meta && !t.pending).map((t) => Object.assign(t, { pending: true })), nfChanged);
+// Art: the first gateway that has not failed on this page (nfts.GATEWAYS order); a failing <img> moves to the next.
+const badGw = new Set();
+const pickSrc = (urls) => urls.find((u) => !nfts.GATEWAYS.some((g) => u.startsWith(g) && badGw.has(g))) ?? urls[0];
+document.addEventListener('error', (e) => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement) || !img.dataset.srcs) return;
+  const urls = img.dataset.srcs.split(' '), at = urls.indexOf(img.getAttribute('src'));
+  const gw = nfts.GATEWAYS.find((g) => urls[at]?.startsWith(g)); if (gw) badGw.add(gw);
+  if (at >= 0 && at + 1 < urls.length) img.src = urls[at + 1];
+  else img.replaceWith(Object.assign(document.createElement('span'), { className: 'nft-glyph', textContent: '◇' }));
+}, true);
+const ELEMENT_COLOR = { fire: 'var(--peach2)', water: 'var(--cyan)', earth: 'var(--gold)', air: '#d7f0ff', wind: '#d7f0ff', lightning: 'var(--purple)', light: '#fff2b8', dark: 'var(--purple)', shadow: 'var(--purple)', nature: 'var(--green)', ice: '#bfe9ff', metal: 'var(--fg2)' };
+const hue = (s) => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) % 360; return `hsl(${h} 70% 72%)`; };
+/** Rapture-style ids (setId << 32 | serial) read as set·serial; other long ids are cut to their tail. */
+const tokenLabel = (id) => { const n = BigInt(id); return n >= 2n ** 32n ? `${n >> 32n}·${n & 0xffffffffn}` : id.length > 8 ? `…${id.slice(-6)}` : id; };
+const kfmt = (v) => (v >= 10000 ? `${(v / 1000).toFixed(1)}k` : String(v));
+const nftToken = (t) => {
+  const m = t.meta && !t.meta.error ? t.meta : null;
+  const el = (m?.badge ?? '').split(' · ')[1]?.toLowerCase();
+  const color = ELEMENT_COLOR[el] ?? hue(t.contract.toLowerCase());
+  const name = m?.name ?? `${t.collection ?? 'Token'} #${tokenLabel(t.id)}`;
+  const srcs = m?.image ?? [];
+  const art = srcs.length ? `<img src="${esc(pickSrc(srcs))}" data-srcs="${esc(srcs.join(' '))}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
+    : `<span class="nft-glyph">${t.meta ? '◇' : '<span class="nft-wait">…</span>'}</span>`;
+  const stat = m?.stats ? Object.entries(m.stats).map(([k, v]) => `${k} ${kfmt(v)}`).join(' · ') : (t.meta?.error ? 'no metadata' : m?.set ?? t.type);
+  const title = [name, m?.badge, m?.faction, m?.stats && Object.entries(m.stats).map(([k, v]) => `${k} ${v}`).join(' '), `${t.collection ?? t.contract} #${t.id}`].filter(Boolean).join('\n');
+  return `<a class="nft" href="${esc(nfts.explorerToken(t.contract, t.id))}" target="_blank" rel="noopener" style="--cc:${color}" title="${esc(title)}">
+    <div class="nft-top"><span>${esc(t.symbol ?? t.collection ?? t.type)}</span><span class="nft-badge">${esc(m?.badge ?? '')}</span></div>
+    <div class="nft-art">${art}${m?.unrevealed ? '<span class="nft-lock">sealed</span>' : ''}</div>
+    <div class="nft-name">${esc(name)}</div>
+    <div class="nft-stat">${esc(stat)}</div>
+    <div class="nft-foot"><span>#${esc(tokenLabel(t.id))}</span>${t.amount > 1 ? `<span class="nft-flag">×${t.amount}</span>` : m?.faction ? `<span>${esc(m.faction)}</span>` : ''}</div>
+  </a>`;
+};
 function cardsPanel() {
-  const held = DECK.filter((c) => c.held);
-  const lead = [...held.filter((c) => c.flag), ...held.filter((c) => !c.flag)].slice(0, 6);   // the main fighter and the equipped pet first
-  return panel('Cards', `<div class="deck sm">${lead.map(nftCard).join('')}</div><div class="source">${held.length} of ${DECK.length} cards held · <span class="tag sample">sample</span></div>`, moreLink('#/cards', 'collection'), 's7 soon');
+  loadCards();
+  const list = cardsList().slice(0, 6);
+  describeShown(list);
+  const o = cardsOwner();
+  const total = Nf.groupsFor && Nf.groups ? Nf.groups.reduce((n, g) => n + g.amount, 0) : null;
+  const body = Nf.error ? `<div class="empty">${esc(Nf.error)}</div>`
+    : !list.length ? `<div class="empty">${Nf.busy ? esc(Nf.busy) : o ? 'This wallet holds no NFTs on litVM yet.' : 'No tokens found.'}</div>`
+    : `<div class="deck sm">${list.map(nftToken).join('')}</div>`;
+  const src = o ? `${total ?? '…'} NFT${total === 1 ? '' : 's'} on litVM · ${esc(o.src)}` : `${esc(FEATURED.name)} · newest mints · connect a wallet on Cards to see yours`;
+  return panel('Cards', `${body}<div class="source">${src} · <span class="tag sample">testnet</span></div>`, moreLink('#/cards', 'collection'), 's7');
 }
 
 // ═══════════════════════════════════════════════ views ══
@@ -794,17 +864,85 @@ function renderLeaderboards() {
     ${panel(g?.title ?? 'Leaderboard', `${lbTabs()}<div style="margin-top:8px">${boardTable(lbTab, 100, lbQuery, 4)}</div>`)}`;
   const q = $('lb-q'); q.addEventListener('input', () => { lbQuery = q.value.trim(); const pos = q.selectionStart; renderLeaderboards(); const q2 = $('lb-q'); q2.focus(); q2.setSelectionRange(pos, pos); });
 }
-let cardKind = 'all', cardHeld = false;
+// The Cards page: its header (with the address box) is written once, so a node poll never erases what is being
+// typed; only #nft-body redraws, and only when the NFT state changed (Nf.ver).
 function renderCards() {
-  const list = DECK.filter((c) => (cardKind === 'all' || c.kind === cardKind) && (!cardHeld || c.held));
-  const tally = (k) => { const all = DECK.filter((c) => c.kind === k); return `${all.filter((c) => c.held).length}<small> / ${all.length}</small>`; };
-  view('cards').innerHTML = `<div class="page-h"><h1 class="chrome">Cards</h1><span class="dim">Every fighter, item and pet becomes an NFT card you own.</span>${SOON_TAG}</div>
-    <div class="soon soon-page">
-      <div class="stats4 deck-sum">${Object.entries(KINDS).map(([k, label]) => `<div class="stat"><div class="k">${label}</div><div class="v">${tally(k)}</div></div>`).join('')}<div class="stat"><div class="k">Tickets</div><div class="v">${COLLECTION_SAMPLE.tickets}</div></div></div>
-      <div class="chips deck-filter">${[['all', 'All'], ...Object.entries(KINDS)].map(([k, label]) => `<button class="chip ${cardKind === k ? 'active' : ''}" data-cards="${k}">${label}</button>`).join('')}<span class="spacer"></span><button class="chip ${cardHeld ? 'active' : ''}" data-cards-held>Held only</button></div>
-      <div class="deck">${list.map(nftCard).join('') || '<div class="empty">No cards here.</div>'}</div>
-      <div class="source">A sample collection until the Agent Fighter sync. Tickets are won in wager matches, cannot be transferred, and redeem for esports qualification, merch and vouchers.</div>
-    </div>`;
+  if (!$('nft-owner')) {
+    view('cards').innerHTML = `<div class="page-h"><h1 class="chrome">Cards</h1><span class="dim">NFTs on litVM LiteForge (testnet), read from the chain</span>
+        <div class="right nft-ownerbar"><input class="search" id="nft-owner" placeholder="0x… any wallet address" spellcheck="false" autocomplete="off" /><button class="btn sm" id="nft-go">View</button><button class="btn sm" id="nft-mine">My wallet</button></div></div>
+      <div id="nft-body"></div>`;
+    const inp = $('nft-owner');
+    inp.value = Nf.typed ?? '';
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') cardsSetOwner(inp.value); });
+    $('nft-go').addEventListener('click', () => cardsSetOwner(inp.value));
+    $('nft-mine').addEventListener('click', cardsConnect);
+    $('nft-body').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-nft-pick],[data-nft-more],[data-nft-older],[data-nft-clear],[data-nft-retry],[data-nft-chips]'); if (!b) return;
+      if (b.dataset.nftPick) { Nf.pick = b.dataset.nftPick; Nf.shown = CARDS_PAGE; nfChanged(); }
+      else if ('nftMore' in b.dataset) { Nf.shown += CARDS_PAGE; nfChanged(); }
+      else if ('nftOlder' in b.dataset) cardsOlder();
+      else if ('nftClear' in b.dataset) cardsSetOwner('');
+      else if ('nftRetry' in b.dataset) loadCards(true);
+      else if ('nftChips' in b.dataset) { Nf.allChips = !Nf.allChips; nfChanged(); }
+    });
+    Nf.drawn = -1;
+  }
+  loadCards();
+  drawCards();
+}
+function cardsSetOwner(a) {
+  a = String(a ?? '').trim();
+  if (a && !nfts.isAddress(a)) { Nf.error = 'That is not a wallet address (0x and 40 hex characters).'; nfChanged(); return; }
+  Nf.typed = a || null;
+  try { if (a) localStorage.setItem('cabinet.cardsOwner', a); else localStorage.removeItem('cabinet.cardsOwner'); } catch { /* not remembered */ }
+  if (/^#\/cards\/0x/i.test(location.hash)) window.history.replaceState(null, '', '#/cards');   // `history` here is the match-history fold
+  if (!a) { const inp = $('nft-owner'); if (inp) inp.value = ''; }
+  loadCards();
+}
+async function cardsConnect() {
+  try { Nf.connected = await nfts.walletAccount(); cardsSetOwner(''); }
+  catch (e) { Nf.error = e.message; nfChanged(); }
+}
+async function cardsOlder() {
+  if (!Nf.browse?.next || Nf.busy) return;
+  Nf.busy = 'reading older mints…'; nfChanged();
+  try { const p = await nfts.latest(FEATURED.address, Nf.info, Nf.browse.next); Nf.browse = { tokens: [...Nf.browse.tokens, ...p.tokens], next: p.next }; Nf.shown = Nf.browse.tokens.length; }
+  catch (e) { Nf.error = e.message; }
+  Nf.busy = ''; nfChanged();
+}
+function drawCards() {
+  const body = $('nft-body'); if (!body || Nf.drawn === Nf.ver) return;
+  Nf.drawn = Nf.ver;
+  const o = cardsOwner();
+  const all = cardsList(), list = all.slice(0, Nf.shown);
+  describeShown(list);
+  const short = (a) => `${a.slice(0, 6)}…${a.slice(-4)}`;
+  const who = o ? `<div class="nft-who">Showing <a class="mono" href="${esc(nfts.explorerAddress(o.addr))}" target="_blank" rel="noopener" title="${esc(o.addr)}">${short(o.addr)}</a> <span class="tag">${esc(o.src)}</span>${o.src === 'address' || o.src === 'link' ? ' <button class="link" data-nft-clear>clear</button>' : ''}</div>`
+    : `<div class="nft-who">No wallet yet: these are the newest <b>${esc(FEATURED.name)}</b> mints. Press <b>My wallet</b> or paste any address to see what it holds.</div>`;
+  let sum = '', chips = '';
+  if (Nf.groupsFor && Nf.groups) {
+    const total = Nf.groups.reduce((n, g) => n + g.amount, 0);
+    const feat = Nf.groups.find((g) => g.contract.toLowerCase() === FEATURED.address.toLowerCase());
+    const lag = Nf.groups.filter((g) => g.onChain != null && g.onChain > g.amount);
+    sum = `<div class="stats4 deck-sum"><div class="stat"><div class="k">NFTs</div><div class="v">${total}</div></div><div class="stat"><div class="k">Collections</div><div class="v">${Nf.groups.filter((g) => g.amount).length}</div></div><div class="stat"><div class="k">${esc(FEATURED.name)}</div><div class="v">${feat?.onChain ?? feat?.amount ?? 0}<small> on chain</small></div></div><div class="stat"><div class="k">Network</div><div class="v nft-v">LiteForge<small> testnet</small></div></div></div>`
+      + (lag.length ? `<div class="dim nft-note">The explorer has not indexed ${lag.slice(0, 3).map((g) => `${g.onChain - g.amount} of ${esc(g.name ?? 'a collection')}`).join(', ')}${lag.length > 3 ? ` and ${lag.length - 3} more collection${lag.length === 4 ? '' : 's'}` : ''} yet: the chain counts them, and they show here once indexed.</div>` : '');
+    // featured first, then the biggest (holdings' order); past CHIPS, a "+N more" chip opens the rest
+    const CHIPS = 8, held = Nf.groups.filter((g) => g.amount);
+    const shownChips = Nf.allChips ? held : held.filter((g, i) => i < CHIPS || g.contract.toLowerCase() === Nf.pick);
+    const chip = (g) => `<button class="chip ${Nf.pick === g.contract.toLowerCase() ? 'active' : ''}" data-nft-pick="${esc(g.contract.toLowerCase())}" title="${esc(g.contract)}">${esc(g.name ?? short(g.contract))} · ${g.amount}</button>`;
+    const toggle = held.length > CHIPS ? `<button class="chip" data-nft-chips>${Nf.allChips ? 'fewer' : `+${held.length - shownChips.length} more`}</button>` : '';
+    chips = `<div class="chips deck-filter"><button class="chip ${Nf.pick === 'all' ? 'active' : ''}" data-nft-pick="all">All · ${total}</button>${shownChips.map(chip).join('')}${toggle}</div>`;
+  } else if (Nf.key === 'browse' && Nf.info) {
+    sum = `<div class="stats4 deck-sum"><div class="stat"><div class="k">Collection</div><div class="v nft-v">${esc(Nf.info.name ?? FEATURED.name)}</div></div><div class="stat"><div class="k">Supply</div><div class="v">${Nf.info.supply ?? '—'}</div></div><div class="stat"><div class="k">Holders</div><div class="v">${Nf.info.holders}</div></div><div class="stat"><div class="k">Standard</div><div class="v nft-v">${esc(Nf.info.type)}</div></div></div>`;
+  }
+  const grid = Nf.error && !all.length ? `<div class="empty">${esc(Nf.error)} <button class="link" data-nft-retry>retry</button></div>`
+    : !all.length ? `<div class="empty">${Nf.busy ? esc(Nf.busy) : o ? 'This wallet holds no NFTs on litVM yet.' : 'No tokens found.'}</div>`
+    : `<div class="deck">${list.map(nftToken).join('')}</div>`;
+  const more = all.length > list.length ? `<button class="btn sm" data-nft-more>Show ${Math.min(CARDS_PAGE, all.length - list.length)} more</button>`
+    : Nf.key === 'browse' && Nf.browse?.next ? `<button class="btn sm" data-nft-older ${Nf.busy ? 'disabled' : ''}>${Nf.busy ? esc(Nf.busy) : 'Older mints'}</button>` : '';
+  const about = FEATURED.about ? ` <a class="link" href="${esc(FEATURED.about)}" target="_blank" rel="noopener">${esc(FEATURED.name)} on Tessaract</a>.` : '';
+  body.innerHTML = `${who}${Nf.error && all.length ? `<div class="dim nft-note">${esc(Nf.error)}</div>` : ''}${sum}${chips}${grid}${more ? `<div class="nft-more">${more}</div>` : ''}
+    <div class="source">Listed by the <a class="link" href="${esc(CHAIN.explorer)}" target="_blank" rel="noopener">litVM explorer</a>, counted (balanceOf) and described (tokenURI) by the chain itself; art from IPFS. Testnet tokens, no value. Click a card to open it on the explorer.${about}</div>`;
 }
 const isLoopbackNode = () => /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(nodeUrl());
 /** POST /update on the node (loopback only), then wait for it to come back on the new version. */
@@ -1266,7 +1404,7 @@ window.addEventListener('hashchange', navigate);
 
 // One delegated click handler for everything rendered from templates.
 document.addEventListener('click', (e) => {
-  const t = e.target.closest('[data-aw-start],[data-aw-pick],[data-aw-fs],[data-aw-tab],[data-play],[data-queue],[data-mm-stop],[data-mm-reset],[data-mm-launch],[data-lb],[data-cards],[data-cards-held],[data-node-tab],#name-btn,#avatar-btn,#wallet-btn,#air-btn,#air-link,#air-out,#me-chip,#dash-lock-btn');
+  const t = e.target.closest('[data-aw-start],[data-aw-pick],[data-aw-fs],[data-aw-tab],[data-play],[data-queue],[data-mm-stop],[data-mm-reset],[data-mm-launch],[data-lb],[data-node-tab],#name-btn,#avatar-btn,#wallet-btn,#air-btn,#air-link,#air-out,#me-chip,#dash-lock-btn');
   if (!t) return;
   if (t.id === 'wallet-btn') { signInWithWallet(); return; }
   if (t.dataset.awStart) { e.preventDefault(); const g = GAMES.find((x) => x.id === t.dataset.awStart); if (g) { pickArcade(g.id); play(g, null, 'window'); $('aw')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }
@@ -1281,8 +1419,6 @@ document.addEventListener('click', (e) => {
   // node will require, the participant order the log is recorded in.
   else if ('mmLaunch' in t.dataset) { if (MM.game && MM.check?.ok) play(MM.game, { matchId: MM.match.matchId, host: MM.match.host, hostAddr: MM.host?.addr ?? null, witness: MM.check.witness, wsAddr: MM.relay ?? MM.host?.wsAddr ?? null, beacon: MM.match.beacon, beaconSource: MM.match.beaconSource ?? null, participants: MM.match.participants, mode: MM.match.mode ?? null, buildHash: MM.match.buildHash ?? null, rulesetId: MM.match.rulesetId ?? MM.game.rulesetId ?? null, descriptor: MM.match.envelope ?? null }); }
   else if (t.dataset.lb) { lbTab = t.dataset.lb; render(); }
-  else if (t.dataset.cards) { cardKind = t.dataset.cards; render(); }
-  else if ('cardsHeld' in t.dataset) { cardHeld = !cardHeld; render(); }
   else if (t.dataset.nodeTab) { nodeTab = t.dataset.nodeTab; store('cabinet.nodeTab', nodeTab); render(); }
   else if (t.id === 'name-btn') setName();
   else if (t.id === 'air-btn' || t.id === 'air-link' || t.id === 'dash-lock-btn') signInWithAir();

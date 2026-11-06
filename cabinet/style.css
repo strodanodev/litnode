@@ -318,6 +318,19 @@ tr:hover td { background: rgba(255,255,255,.03); }
 .nft.locked .nft-foot { color: var(--faint); }
 .deck.sm .nft { padding: 6px; } .deck.sm .nft-name { font-size: 11.5px; } .deck.sm .nft-stat { display: none; }
 .deck-sum { margin: 0 0 14px; }
+a.nft { color: inherit; text-decoration: none; }
+.nft-lock:not(:empty) { font-family: var(--mono); font-size: 8px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.nft-wait { font-size: 22px; color: var(--dim); animation: nft-pulse 1.2s ease-in-out infinite; }
+@keyframes nft-pulse { 50% { opacity: .3; } }
+.nft-ownerbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.nft-ownerbar .search { width: 300px; max-width: 100%; }
+.nft-who { margin: 0 0 12px; font-size: 13px; color: var(--fg2); }
+.nft-who a { color: var(--cyan); }
+.nft-who .tag { padding: 2px 7px; font-size: 9px; margin-left: 4px; }
+.nft-note { margin: -6px 0 12px; font-size: 12px; }
+.nft-v { font-size: 16px !important; }
+.nft-more { display: flex; justify-content: center; margin-top: 16px; }
+@media (max-width: 760px) { .nft-ownerbar { width: 100%; } .nft-ownerbar .search { flex: 1; width: auto; min-width: 0; } }
 .deck-filter { margin-bottom: 14px; align-items: center; }
 .section-h { display: flex; align-items: center; gap: 10px; margin: 18px 0 10px; }
 .section-h h4 { font-family: var(--mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); font-weight: 400; }
