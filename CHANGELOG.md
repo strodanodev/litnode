@@ -3,6 +3,31 @@
 All notable changes to litnode and the LIT GAMES cabinet. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+Cabinet only: no node, protocol, contract or ruleset change. Redeploy the arcade with the release that carries it.
+
+### Added
+
+- **Cards are live litVM testnet NFTs** (`cabinet/nfts.js`). `#/cards` reads a wallet's tokens from the explorer, counts
+  them on chain (`balanceOf`) and describes each (`tokenURI` / ERC-1155 `uri`), with IPFS art and gateway fallback.
+  Whose cards: `#/cards/0x…`, a typed address, the profile or AIR wallet, or "My wallet" (`eth_requestAccounts` only);
+  with none, the newest Rapture Cards mints. The explorer's index lag against `balanceOf` is shown. The Home panel and
+  the profile tile use the same data; Cards is no longer "coming soon".
+- **Login and account menu.** Signed out, the header shows LOGIN; signed in, the avatar, name and level open an account
+  menu (address with copy and explorer link, Profile / My cards / Ranks / Rename, Sign out). The login dialog offers
+  AIR, a device already bound to a wallet, or the player's own wallet. No player info is shown while signed out.
+
+### Removed
+
+- `cabinet/roster.js` (the Agent Fighter sample deck): nothing has imported it since Cards read the chain.
+
+### Docs
+
+- README, `cabinet/README.md`, SPEC §3–4 and `docs/DATA-OWNERSHIP.md` brought up to date: build hashes as registered on
+  TitleRegistry (Pickle Brawl verifier `e9e95239`, FLOOD CONTROL ruleset `aec46ce9`, AFC registered), Rapture Chess and
+  RO3 in the roster, the cabinet's views and files, `arcade.litvm.games` as the deploy, 69 test suites.
+
 ## [0.12.4] — 2026-11-07 — witnesses re-run attested results with the title's verifier; the arcade's #/ro3 page; bonded-only /ro3/hosts
 
 Protocol 4, unchanged: 0.12.0 through 0.12.4 nodes are peers. The heartbeat gains an optional `verifiers` field,

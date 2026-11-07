@@ -43,7 +43,7 @@ Each title owns its own database. Nobody's sits behind the node.
 | Pickle Brawl | Postgres on Supabase, through its own API (`services/api`, 11 migrations) | accounts, friends, open play + payouts, orders (PayPal), collection, **inventory**, wallet links, court results |
 | FLOOD CONTROL | **Neon** (`daily_entries`) | daily runs and their rich stats |
 | AFC | Supabase (6 migrations) | AIR identity, ledger, **inventory**, matches, `litnode_settlements` (settle status per match) |
-| Arcade | none | Cards / inventory pages show sample data (`cabinet/roster.js INVENTORY_SAMPLE`) |
+| Arcade | none | The Cards page reads the wallet's NFTs from litVM (`cabinet/nfts.js`); nothing is stored |
 
 **Credits.** The real soft currencies live here (AF credits, PB payouts).
 The node also derives a per-title credit balance from deltas

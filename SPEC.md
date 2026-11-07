@@ -217,31 +217,41 @@ kind of key and gets the same answers from a node.
 |---|---|
 | `config.js` | `NODE_URL` default, the `GAMES` roster, `CHAIN` addresses — the file to edit for content changes |
 | `client.js` | the isomorphic client: player key under `litnode.player`, signed queue entries, `/match` polling, `verifyPlacement` (recompute from a snapshot the page can hash; refuse any other host); the same file drives `demo/client.test.mjs` |
-| `roster.js` | Agent Fighter fighter/item/pet reference data + `INVENTORY_SAMPLE` (placeholder until account sync) |
-| `app.js` | router (`#/`, `#/games`, `#/game/:id`, `#/leaderboards`, `#/characters`, `#/inventory`, `#/node`), node polling, derived profile (level/XP, rating curve via `applyDelta`), the Find-match panel, play overlay |
+| `app.js` | router (`#/`, `#/home`, `#/games`, `#/game/:id`, `#/leaderboards`, `#/cards`, `#/match/:id`, `#/node`, `#/build`, `#/download`, `#/ro3`; the old `#/characters` and `#/inventory` land on `#/cards`), node polling, derived profile (level/XP, rating curve via `applyDelta`), login and account menu, the Find-match panel, play overlay |
+| `air.js`, `wallet.js` | sign-in: AIR (universal login) and the player's own wallet |
+| `nfts.js` | `#/cards`: litVM testnet NFTs (explorer list, `balanceOf`, `tokenURI`, IPFS art), read-only |
+| `receipt.js` | `#/match/:id`: each on-chain step of a match, re-checked against the chain |
+| `ro3.js` | `#/ro3`: the RO3 on LITNODE launcher's sign-in, account link and zkLTC shop |
+| `seeds.js`, `fleet.js`, `quorum.js`, `nodeops.js` | NodeDirectory seeds, signed `/fleet` telemetry, ranked-quorum check, operator wallet actions |
+| `build.js`, `download.js` | `#/build` developer docs, `#/download` Control Plane download |
 | `chain.js` | read-only litVM: `NodeStake.standingOf`, `TestLITVM.balanceOf` |
 | `uptime.js` | client-observed node uptime (localStorage, 10-min slots, 7-day window) + ring/strip/heatmap renderers |
 | `avatar.js` | identicon from the player's public key; photo upload resize |
 | `bg.js` | procedural sky + wireframe backdrop (swap in `bg.jpg` for real key art) |
 | `sdk-client.js` | the postMessage SDK a game imports (see 3.3) |
-| `protocol/` | generated copies of eight protocol modules + `MANIFEST.json` — `npm run vendor:cabinet`; never edited by hand |
+| `protocol/`, `contracts.js` | generated copies of the protocol modules + `MANIFEST.json`, and the deployed addresses — `npm run vendor:cabinet`; never edited by hand |
+| `version.js` | the litnode release the files were cut with; `demo/cabinet.test.mjs` checks it equals `package.json` |
 | `sw.js` | service worker, network-first, never caches API responses |
 | `serve.mjs` | dependency-free dev static server |
 
-### 3.2 What's real vs. placeholder
+### 3.2 Where each figure comes from
 
-| Real (from the node) | Placeholder (until account sync) |
+| From the node | From the chain (litVM, read-only) |
 |---|---|
-| Node online/offline, peers, epoch | Which fighters are unlocked / equipped |
-| Leaderboard, per-player stats | Items, pets, tickets (`roster.js INVENTORY_SAMPLE`, tagged "sample" in the UI) |
-| Match history + rating curve (`/deltas` walked with `protocol/derive.js applyDelta`) | — |
-| Bond amount, operator wallet balance (litVM, read-only) | — |
-| Mesh work — matches settled as host, witness co-signatures — counted from deltas | — |
+| Node online/offline, peers, epoch | Bond amount, operator wallet balance |
+| Leaderboard, per-player stats | Seed list (NodeDirectory) |
+| Match history + rating curve (`/deltas` walked with `protocol/derive.js applyDelta`) | Match receipts (MatchBook) |
+| Mesh work — matches settled as host, witness co-signatures — counted from deltas | Cards: the wallet's NFTs (tagged "testnet") |
 | Node process uptime (`/health.uptimeMs`) + client-observed uptime history (labelled as observed by this dashboard) | — |
 
-There is no reward figure. There is no rewards contract, and a number
-nothing can pay is a claim; the bond is a cost of misbehaviour, not a yield
-(whitepaper §5.4, BUILD-SPEC §2.2).
+Nothing on the page is sample data. Game inventories (fighters, items,
+pets) stay in each title's own database and are not shown until they are
+NFTs.
+
+There is no reward figure. There is no rewards contract (Season Zero is
+points only, docs/REWARDS.md), and a number nothing can pay is a claim; the
+bond is a cost of misbehaviour, not a yield (whitepaper §5.4, BUILD-SPEC
+§2.2).
 
 ### 3.3 Cabinet <-> game contract (postMessage, version 1)
 
@@ -268,9 +278,15 @@ relay is also passed as `?ws=` on the iframe URL. **No title consumes
 | Agent Fighter | `agentfighter.wtf` | `agent-fighter.v1` | Yes (iframe) |
 | Pickle Brawl | `picklebrawl.live` | `pickle-brawl.v1` | Yes (iframe) |
 | Robot Fighting Championship (AFC) | `rfc.litvm.games` | `afc.v1` (casual, attested) | Yes (iframe) |
+| Rapture Chess (featured) | `chess.litvm.games` | `rapture-chess.v1` (replayable, published from its own node) | Yes (iframe) |
+| Ragnarok Online 3 | desktop launcher | No (prototype; `#/ro3` signs the launcher in) | No |
 
-None of the three games read or write litnode state today; PLAY only opens
-the game's existing hosted build in an iframe.
+FLOOD CONTROL (`flood-control.v1`, `play.bagyo.app`) is on the mesh but not
+in `GAMES`; the arcade lists it from its ruleset's `display` when the node
+serves it. PLAY opens each web title's own hosted build in an iframe; a
+title that settles on the mesh does so from its own court or match server,
+and a first-party title can borrow the arcade's AIR session through
+`cabinet:air`.
 
 ## 4. Known gaps and honest zeroes
 
@@ -292,12 +308,16 @@ One list, kept here. BUILD-SPEC §16 has the reasoning behind each.
   `demo/custody.test.mjs` cover records surviving a host shutdown; they do
   not cover gameplay.
 - **No peer-to-peer transport.** Play goes through the title's relay; nodes
-  place, verify and settle. WebRTC with nodes as signalling is roadmap item 3
-  and the gate on retiring Railway.
-- **AFC has no ruleset.** Roadmap item 2.
-- **Pickle Brawl results are attested, not verified**, and no live court has
-  reported yet.
-- **No rewards, no economics.** Credits reconcile against nothing.
+  place, verify and settle. WebRTC with nodes as signalling is roadmap item 3.
+- **Attested titles are judged by their own court.** Pickle Brawl, FLOOD
+  CONTROL and AFC settle `checkable` at best: a witness re-runs the court's
+  log with the registered verifier (0.12.4) and disputes a mismatch, but a
+  re-run result's proof level is not raised until protocol 5, and the
+  challenge path (docs/SETTLEMENT-ARCHITECTURE.md) is unbuilt.
+- **No rewards, no economics.** Season Zero is points only
+  (docs/REWARDS.md); credits reconcile against nothing.
+- **Escalation needs 13 operators.** With fewer bonded operators a disputed
+  match is voided rather than decided.
 - **No publisher on chain.** Any bonded node may host any title; a publisher owns nothing, stakes nothing, grants nothing and has no seat in a dispute. Spec: docs/PUBLISHER-BONDS.md.
 - **Delta gossip is by advertisement, not replication.** A host gone before
   a witness saw its delta leaves one signature; no obligatory custody.
@@ -313,9 +333,10 @@ One list, kept here. BUILD-SPEC §16 has the reasoning behind each.
   trusted publisher's signature. Permissionless title intake stays gated on
   a track record of the sandbox (and ideally Wasm with a pinned runtime).
 - **The beacon is not secure against the sequencer**, by litVM's own docs.
-- **Contracts are unaudited testnet code.** The v2 set is live and every
-  authority on it is the rotated wallet (`npm run authority` → 0 holdings by
-  the exposed key), but no third party has reviewed the Solidity.
+- **Contracts are unaudited testnet code.** The generation-3 set
+  (`contracts/deployed.testnet.json`) is live and every authority on it is
+  the rotated wallet (`npm run authority` → 0 holdings by the exposed key),
+  but no third party has reviewed the Solidity.
 - **Registry hydration reads nothing yet.** ERC6699Registry v2 is deployed
   but has no minter, no progressor and no characters, and nodes do not set
   `ERC6699` until it does; until then every hydration is labelled

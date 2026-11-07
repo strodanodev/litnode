@@ -63,7 +63,7 @@ with, it gets ignored.
 
 ## 🏟️ Titles on the mesh
 
-Four games are on the mesh as of 0.12.3. Each one settles at a **proof
+Four games settle on the mesh as of 0.12.4. Each one settles at a **proof
 level** that says how much of the result anyone can check for themselves:
 
 | Level | Name | What it means |
@@ -77,9 +77,9 @@ level** that says how much of the result anyone can check for themselves:
 |---|---|---|---|---|
 | **What it is** | Browser fighting game, humans vs. AI agents | Pickleball | Single-player typhoon defence ("Storm of the Day") | Humanoid mech fighting |
 | **Play** | in the arcade | in the arcade | [play.bagyo.app](https://play.bagyo.app) | [rfc.litvm.games](https://rfc.litvm.games) |
-| **Ruleset** | `agent-fighter.v1` `7414ddf3…` (replayable) | `pickle-brawl.v1` `866bb9eb…` (attested) | `flood-control.v1` `b16bc0a2…` (attested) | `afc.v1` `e3725bd2…` (attested) |
-| **Status** | **Ranked live.** Ruleset and server bundle `e8d8f22b…` registered; casual play stays in the game's own database | **Live.** Results settle on chain; ruleset and verifier `e23358c4…` registered | **Live, casual.** Ruleset and verifier `56cfff04…` registered | **Casual only, not yet settling.** Shipped in 0.12.3; ruleset and verifier `14336181…` not registered yet |
-| **Proof level** | L3 `verified` (ranked) | L2 `checkable` when the node holds the log, else L1 | L2 `checkable` when the node holds the log, else L1 | L2 `checkable` once registered |
+| **Ruleset** | `agent-fighter.v1` `7414ddf3…` (replayable) | `pickle-brawl.v1` `866bb9eb…` (attested) | `flood-control.v1` `aec46ce9…` (attested) | `afc.v1` `e3725bd2…` (attested) |
+| **Status** | **Ranked live.** Ruleset and server bundle `e8d8f22b…` registered; casual play stays in the game's own database | **Live.** Results settle on chain; ruleset and verifier `e9e95239…` registered | **Live, casual.** Ruleset and verifier `56cfff04…` registered | **Casual only.** Ruleset and verifier `14336181…` registered 27 Oct; bouts against the house bot |
+| **Proof level** | L3 `verified` (ranked) | L2 `checkable` when the node holds the log, else L1 | L2 `checkable` when the node holds the log, else L1 | L2 `checkable` when the node holds the log, else L1 |
 | **Who runs the match** | Any bonded node that opts in (`GAUNTLET_SERVERS`) runs the hashed match server; the mesh draws the host | The studio's court and matchmaker, run as services on the publisher's nodes (desktop, with m16 on standby) | The game's own board, a Vercel function | The AFC match host, a Vercel function |
 | **How a match is decided** | Best of three rounds (first to 2), KO or time-out. Both players sign the input ledger; witnesses replay it | USA Pickleball rules: to 11, win by 2, side-out scoring, so no ties. A side that quits forfeits to the side that stayed; abandoned before play is a no-contest (no ladder movement) | One seat, no opponent. The run's score is its points; the board replays the run's command log and signs only if it reproduces the claimed result | Three 45-second rounds, first to 2, by KO or decision; a draw is possible. The host re-simulates the bout from its match file before signing. Bouts vs the house bot have one participant |
 | **Who signs the result** | The two players (and the replaying witnesses) | Court key `09b2b849…` | Court key `f82a5ef3…` | Court key `040bc3d9…` |
@@ -99,8 +99,20 @@ a new build hash: old results are never relabelled. The contract is
 (one intake, no shared court keys, any bonded node hosting any title) is
 [docs/SETTLEMENT-ARCHITECTURE.md](docs/SETTLEMENT-ARCHITECTURE.md).
 
+Build hashes above are the ones active on TitleRegistry (read 7 Nov 2026);
+`npm run publish:title -- status <rulesetId>` reads them live. Since 0.12.4
+a witness also re-runs an attested result's log with the title's registered
+verifier and disputes a `finalHash` that doesn't match.
+
+The arcade also lists **Rapture Chess** (`rapture-chess.v1`, a replayable
+title published from its own node) and **Ragnarok Online 3** community
+servers hosted through litnode (`#/ro3`; a prototype, its results are not
+settled by the mesh).
+
 What stays off the mesh: inventory, credits and the economy live in each
-title's own database (Neon or Supabase), never on the node.
+title's own database (Neon or Supabase), never on the node. The arcade's
+Cards page reads NFTs straight from litVM; nothing about them is stored on a
+node.
 
 ## 📦 Run a node
 
@@ -155,9 +167,10 @@ Just the cabinet UI, pointed at some other node: `npm run cabinet`
 npm test
 ```
 
-Every suite in `demo/` (56 at 0.12.0; `demo/pack.test.mjs` fails when one is left out of the list), run one at a time on purpose (replaying a match spins up a
-real sandboxed process, so we don't parallelize it) — takes about seven
-minutes. This has to be green before anything ships.
+Every suite in `demo/` (69 at 0.12.4; `demo/pack.test.mjs` fails when one
+is left out of the list), run one at a time on purpose (replaying a match
+spins up a real sandboxed process, so we don't parallelize it). This has to
+be green before anything ships.
 
 ## 🗺️ Repo map
 
@@ -166,14 +179,21 @@ protocol/   the shared rules — hashing, keys, matchmaking, placement — used 
 node/       the daemon: identity, gossip, matchmaking, settlement, witnessing; serves cabinet/ at /
 cabinet/    the arcade frontend — plain HTML/CSS/JS, no build step
 sdk/        what a game developer imports to put a title on the mesh, plus the node-hosting harness
-titles/     the game adapters (Agent Fighter, Pickle Brawl, …)
-rulesets/   bundled, hash-pinned game logic
+titles/     the game adapters (Agent Fighter, Pickle Brawl, FLOOD CONTROL, AFC)
+rulesets/   bundled, hash-pinned game logic (npm run bundle)
 gauntlets/  per-title configs for match servers the node runs itself (GAUNTLETS=, node/gauntlet.js)
 contracts/  the on-chain pieces — staking, title ownership, settlement
 tools/      command-line scripts: create a title, bond a node, publish a release, and so on
 portable/   the zipped, double-click-and-go build for operators without a terminal
 demo/       the test suite
+docs/       guides for operators, publishers and game developers
+audit/      the build audits and their remediation notes
+handoff/    reports and hand-backs between work sessions, kept for the record
 ```
+
+Build output stays out of git: `dist/` (release zips, `npm run pack`),
+`servers/` and `verifiers/` (bundles; their hash is what gets registered),
+and `data/` (node identities and ledgers — private keys live there).
 
 ## 📚 Building something on top of it
 
@@ -197,9 +217,11 @@ could stay a page you'd actually want to read.
 Kept in one place and updated with every release:
 [SPEC.md §4 — Known gaps and honest zeroes](SPEC.md#4-known-gaps-and-honest-zeroes).
 The short version right now: matches replay and settle for real, nodes
-gossip and bond for real, but there's no rewards contract, the
-publisher-independence story isn't fully demonstrated yet, and the
-contracts haven't been through a third-party audit.
+gossip and bond for real, but there's no rewards contract (Season Zero is
+points only, [docs/REWARDS.md](docs/REWARDS.md)), a disputed match is voided
+until 13 operators can form an escalation panel, the publisher-independence
+story isn't fully demonstrated yet, and the contracts haven't been through a
+third-party audit.
 
 Live arcade if you just want to look around first: **https://arcade.litvm.games**
 
