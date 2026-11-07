@@ -1,12 +1,12 @@
 {
   "rulesetId": "flood-control.v1",
-  "buildHash": "b16bc0a2bb2f64597cd31566689c67eb451055478ed14dac82997447dc371977",
-  "bytes": 7901,
+  "buildHash": "aec46ce9d3f0344526e6579bda4827b073af519c3a78e8ce588423ad517660e0",
+  "bytes": 7205,
   "kind": "attested",
   "display": {
     "title": "FLOOD CONTROL",
     "url": "https://play.bagyo.app",
     "description": "Storm of the Day: hold the city against one seeded typhoon. Every run is replayed by the game before it settles."
   },
-  "builtAt": "2026-10-22T15:34:04.462Z"
+  "builtAt": "2026-10-27T15:25:11.471Z"
 }

@@ -31,7 +31,8 @@ export const RULESET_ID = 'flood-control.v1';
 const STORMS = 5;
 
 /** The run's integers, per player: points (the best run), the rest summed over runs. keptDry is the share of the
- *  defendable homes kept dry, in whole percent (0..100); stormsSurvived is 1 for a weathered storm. */
+ *  defendable homes kept dry, in whole percent (0..100); stormsSurvived is 1 for a weathered storm. Every one is
+ *  derived from the report body (stats() below): the report carries no stats of its own to disagree with it. */
 export const STATS = Object.freeze({ points: 'max', stars: 'sum', rescued: 'sum', casualties: 'sum', bestChain: 'max', keptDry: 'sum', stormsSurvived: 'sum' });
 
 /** A real calendar day from 2026 on (no clock in a ruleset: plain arithmetic). */
@@ -43,16 +44,6 @@ const isDate = (s) => {
   return y >= 2026 && m >= 1 && m <= 12 && d >= 1 && d <= days;
 };
 const nat = (n) => Number.isInteger(n) && n >= 0;
-
-/** What a court's stats line must say about the report it sits in. */
-const statsProblem = (r, line) => {
-  if (!line || typeof line !== 'object') return 'stats: one line per participant';
-  for (const k of Object.keys(line)) if (!(k in STATS)) return `stats: ${k} is not a FLOOD CONTROL stat`;
-  for (const k of ['points', 'stars', 'rescued', 'casualties', 'bestChain']) if (k in line && line[k] !== r[k]) return `stats: ${k} disagrees with the report`;
-  if ('stormsSurvived' in line && line.stormsSurvived !== (r.survived ? 1 : 0)) return 'stats: stormsSurvived disagrees with the report';
-  if ('keptDry' in line && (!nat(line.keptDry) || line.keptDry > 100)) return 'stats: keptDry is a whole percent, 0..100';
-  return null;
-};
 
 export const validateReport = (r) => {
   if (!r || typeof r !== 'object') return 'report missing';
@@ -66,13 +57,11 @@ export const validateReport = (r) => {
   if (!nat(r.points)) return 'points must be a non-negative integer';
   if (typeof r.survived !== 'boolean') return 'survived must be a boolean';
   if (!nat(r.rescued) || !nat(r.casualties) || !nat(r.bestChain)) return 'rescued, casualties and bestChain must be non-negative integers';
+  if (!nat(r.keptDry) || r.keptDry > 100) return 'keptDry must be a whole percent, 0..100';
   if (!r.survived && r.stars > 0) return 'a lost storm earns no stars';
   if (!nat(r.ticks) || r.ticks === 0) return 'ticks';
   if (r.commitments != null && r.commitments.logFormat !== 'arc-runlog@1') return 'commitments.logFormat must be arc-runlog@1';
-  if (r.stats != null) {
-    if (typeof r.stats !== 'object' || Array.isArray(r.stats)) return 'stats';
-    for (const line of Object.values(r.stats)) { const p = statsProblem(r, line); if (p) return p; }
-  }
+  if (r.stats !== undefined) return 'stats are derived from the report: send none';
   return null;
 };
 
@@ -94,15 +83,15 @@ export default defineAttestedTitle({
   services: { stats: { track: ['matches', 'wins', 'ticks'], schema: STATS } },
   validate: validateReport,
 
-  /** The run's stats for its one seat: the court's `report.stats`, kept to the schema's names. A report from before
-   *  settlement v4 has none: its own integers stand in (no keptDry, which those reports never carried). */
+  /** The run's stats for its one seat, every one from the report body. A report settled before keptDry joined the body
+   *  (on an older build of this ruleset) has none, and folds without it. */
   stats(report, participants) {
-    const out = {};
-    for (const p of participants) {
-      const line = report.stats?.[p] ?? { points: report.points, stars: report.stars, rescued: report.rescued, casualties: report.casualties, bestChain: report.bestChain, stormsSurvived: report.survived ? 1 : 0 };
-      out[p] = Object.fromEntries(Object.keys(STATS).filter((k) => nat(line[k])).map((k) => [k, line[k]]));
-    }
-    return out;
+    const line = {
+      points: report.points, stars: report.stars, rescued: report.rescued, casualties: report.casualties, bestChain: report.bestChain,
+      keptDry: report.keptDry, stormsSurvived: report.survived ? 1 : 0,
+    };
+    const kept = Object.fromEntries(Object.keys(STATS).filter((k) => nat(line[k])).map((k) => [k, line[k]]));
+    return Object.fromEntries(participants.map((p) => [p, { ...kept }]));
   },
 
   /** The run's points to its one player. */
