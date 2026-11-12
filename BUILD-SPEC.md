@@ -834,7 +834,7 @@ and blocks phase 2 parameters, not phase 2 code.
 | Network | litVM LiteForge testnet (Arbitrum Orbit) |
 | Chain ID | 4441 (confirmed by `eth_chainId`) |
 | Native currency | zkLTC |
-| RPC | `https://liteforge.rpc.caldera.xyz/http` · `wss://liteforge.rpc.caldera.xyz/ws` |
+| RPC | `https://rpc.testnet.liteforge.zeeve.net/` (from 11 Nov 2026; Caldera's `https://liteforge.rpc.caldera.xyz/http` · `wss://liteforge.rpc.caldera.xyz/ws` before) |
 | Explorer | `https://liteforge.explorer.caldera.xyz` |
 | Faucet | `https://liteforge.hub.caldera.xyz` |
 | EVM | Shanghai; effective gas cap 32M; ~250 ms on-demand blocks |
@@ -896,7 +896,7 @@ region       = "ap-southeast"
 port         = 7801
 seeds        = []                           # empty is a valid mesh
 rulesets     = ["./rulesets/agent-fighter.v1.js"]
-rpc          = "https://liteforge.rpc.caldera.xyz/http"
+rpc          = "https://rpc.testnet.liteforge.zeeve.net/"
 node_stake   = "0x…"                        # NodeStake address; unset = unbonded dev mesh, reported
 registry6699 = "0x…"                        # unset = fixtures, reported
 release_registry = "0x…"                    # ReleaseRegistry; unset = signature-only updates, reported

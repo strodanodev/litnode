@@ -75,7 +75,7 @@ the same signing bytes, the arcade's `contracts.json` with a generation-3 fallba
 
 - **Settling role.** FLOOD CONTROL required `settler`; any of `host`, `settler`, `relay` settles (the node's own `canSettle`).
 - **Proof of key.** `/whoami?nonce=` must be signed by the key the directory names (as `cabinet/seeds.js` and the bridge do); a `/health` that merely names the right node id is not enough.
-- **RPC fallback list.** One RPC became a list: `contracts.json`'s `rpc`, then `DEFAULT_RPCS` (Caldera `/http`, then `/infra-partner-http`). A transport failure moves to the next endpoint; a revert is an answer and does not; the endpoint that answered is preferred by later calls in the process.
+- **RPC fallback list.** One RPC became a list: `contracts.json`'s `rpc`, then `DEFAULT_RPCS` (Zeeve `https://rpc.testnet.liteforge.zeeve.net/`; Caldera `/http` froze on 11 Nov 2026 and is no longer listed). A transport failure moves to the next endpoint; a revert is an answer and does not; the endpoint that answered is preferred by later calls in the process.
 - **429 backoff.** HTTP 429 or a JSON-RPC "rate limit / bandwidth limit" error backs off (`Retry-After`, else jittered exponential) and rotates. The same for node probes and `POST /ledger`.
 - **Bounded concurrency.** FLOOD CONTROL read every key one call at a time; this reads `concurrency` at a time with a floor between RPC starts (`maxRps`, default 8: the public gateway 429s past ~25 req/s per IP, which a court shares with whatever else runs there). No standing is read for an entry that is not fresh.
 - **Paging.** On a generation-4 directory (`contracts.json` `generation >= 4`, or `keysPage: true`) keys are read with `keysPage(offset, limit)`, falling back to `keys()` if the call reverts.

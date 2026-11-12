@@ -30,6 +30,7 @@ private key anywhere but the shell that runs one command.
 | `TITLE_REGISTRY` | the TitleRegistry address (default: `contracts/deployed.testnet.json`). A title is an ERC-721; its holder registers builds with `npm run publish:title`. `/titles.published` = the holder runs a bonded host for it; unset → `null` |
 | `TRUSTED_PUBLISHERS` | comma list of publisher ed25519 keys (default: the litVM release key) — the operator's override when a build is not on chain. Sign your own builds with `npm run sign:build -- rulesets/<id>.js` |
 | `SANDBOX_TIMEOUT_MS`, `SANDBOX_MEMORY_MB` | the title sandbox's deadline (default 10 s) and heap ceiling (default 256 MB). `/health.sandbox` reports runs, kills and failures |
+| `LEDGERS_PER_MIN`, `MAX_REMOTE_INTAKES`, `CASUAL_STORE_MB` | what callers from the network may ask of `POST /ledger`: signed-looking submissions a minute per caller (default 60; unsigned is fixed at 10), submissions settling at once (8), and megabytes of unplaced player-signed casual ledgers kept before new ones are refused with 507 (1024). `/health.settlement.casualStore` reports the last. This machine is exempt from all three |
 | `RELAY_KEYS` | relay keys whose signed submissions this host settles as `relay` provenance. `npm run bridge -- key` prints a bridge's key and this line |
 | `COURTS` | `rulesetId:key[,key];rulesetId:key` — courts this operator authorizes for attested titles |
 | `ERC6699` | ERC6699Registry **v2** address; ranked characters are read from it at the placement's block. Unset until v2 is deployed |

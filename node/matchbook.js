@@ -48,11 +48,30 @@ import { selector } from '../protocol/keccak.js';
 import { decodeBytes32Array } from '../protocol/abi.js';
 
 const POLL_MS = 2000;
-// Blocks per eth_getLogs, adapted to what the gateway answers in time. Liteforge's cost is not linear in the
-// range: measured 21 Sep 2026 (0.25 s blocks), ≤20 blocks answer in 1–3 s, 25+ blocks take 10–16 s. A fixed 40
-// sat past that knee: both live nodes' cursors fell ~3.5 blocks/s behind the head and never caught up.
-const SCAN_MIN = 4, SCAN_MAX = 32, SCAN_START = 16;
-const SCAN_FAST_MS = 1000, SCAN_SLOW_MS = 3000; // grow the range under a fast answer, halve it under a slow one
+// Blocks per eth_getLogs, adapted to the THROUGHPUT the endpoint gives (blocks scanned per second), not to its
+// latency, because the two providers litVM has had cost in opposite shapes:
+//   Caldera (21 Sep 2026, 0.25 s blocks): ≤20 blocks answer in 1–3 s, 25+ take 10–16 s — a knee. A fixed 40 sat
+//     past it and both live nodes' cursors fell ~3.5 blocks/s behind the head for good.
+//   Zeeve (11 Nov 2026): ~2.7 s however small the range, plus ~0.02 s a block (32 blocks 3.1 s, 256 blocks 8.3 s).
+//     The old rule (halve past 3 s) pinned it at 4 blocks a call, ~1 block/s against the chain's ~4: the desktop's
+//     cursor fell behind within a minute of switching.
+// So: while the cursor is behind, grow the range as long as a bigger range scans more blocks a second; when growing
+// made it slower, step back and hold that size (the knee) for a while; past SCAN_SLOW_MS (under the RPC's 15 s
+// timeout) halve. A caught-up scan reads what is new and leaves the range alone.
+const SCAN_MIN = 4, SCAN_MAX = 256, SCAN_START = 16;
+const SCAN_SLOW_MS = 10_000, SCAN_KNEE_MS = 10 * 60_000;
+/** The next scan range after a read of `span` blocks that took `ms`. `st` = { range, knee, kneeAt, last } (mutated). */
+export function nextScanRange(st, { span, ms, now = Date.now() }) {
+  // Too slow: back to the size that was fine before this one, if growing got us here; else half.
+  if (ms > SCAN_SLOW_MS) { st.knee = st.last && st.range > st.last.range ? st.last.range : Math.max(SCAN_MIN, Math.floor(st.range / 2)); st.kneeAt = now; st.range = st.knee; st.last = null; return st.range; }
+  if (span < st.range) return st.range; // caught up: nothing to learn about the range
+  const rate = span / Math.max(ms, 1);
+  if (st.last && st.range > st.last.range && rate < st.last.rate) { st.knee = st.last.range; st.kneeAt = now; st.range = st.last.range; st.last = null; return st.range; }
+  st.last = { range: st.range, rate };
+  const cap = st.knee != null && now - st.kneeAt < SCAN_KNEE_MS ? st.knee : SCAN_MAX;
+  st.range = Math.max(SCAN_MIN, Math.min(cap, Math.ceil(st.range * 1.5)));
+  return st.range;
+}
 const SCAN_START_BEHIND = 400;  // a fresh node starts its ladder scan this far behind the head, not at the deploy block
 const HINT_TTL_MS = 24 * 3600_000;
 const HINT_MAX = 50;                 // matches per heartbeat hint list (newest first)
@@ -570,6 +589,7 @@ export function createMatchBook({
   /** The ladder's log scan: SCAN_RANGE blocks per poll from a persisted cursor. A fresh node starts a little behind
    *  the head; history before that is a backfill job for later, not something a live match waits on. */
   let scanRange = SCAN_START, scanning = false, scanMs = null;
+  const sizing = { range: SCAN_START, knee: null, kneeAt: 0, last: null };
   const read = async () => {
     const head = parseInt(await call('eth_blockNumber', []), 16);
     if (cursor === null) cursor = Math.max(fromBlock - 1, head - SCAN_START_BEHIND);
@@ -578,8 +598,7 @@ export function createMatchBook({
     const t0 = Date.now();
     const logs = await call('eth_getLogs', [mb.logsFilter(contract, cursor + 1, to)]);
     scanMs = Date.now() - t0;
-    if (scanMs < SCAN_FAST_MS) scanRange = Math.min(SCAN_MAX, Math.ceil(scanRange * 1.5));
-    else if (scanMs > SCAN_SLOW_MS) scanRange = Math.max(SCAN_MIN, Math.floor(scanRange / 2));
+    scanRange = nextScanRange(sizing, { span: to - cursor, ms: scanMs });
     for (const l of logs) { const e = mb.decodeLog(l); if (e) absorb(e); }
     cursor = to;
     try { writeFileSync(cursorPath, JSON.stringify({ cursor })); } catch { /* read-only data dir */ }
@@ -589,7 +608,7 @@ export function createMatchBook({
   const scan = async () => {
     if (scanning) return;
     scanning = true;
-    try { await read(); scanError = null; } catch (e) { scanError = String(e.message ?? e); }
+    try { await read(); scanError = null; } catch (e) { scanError = String(e.message ?? e); if (/timeout|timed out|aborted/i.test(scanError)) scanRange = nextScanRange(sizing, { span: scanRange, ms: Infinity }); }
     finally { scanning = false; }
   };
   /** Gossip hints: the transactions of every match this node touched in the last day — bounded by time, never by history. */

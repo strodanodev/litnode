@@ -5,7 +5,76 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-Cabinet only: no node, protocol, contract or ruleset change. Redeploy the arcade with the release that carries it.
+Protocol 4, unchanged: no contract, result hash, heartbeat or proof level changes, so 0.12.x nodes stay peers. The node
+changed (the security fixes below, from the audit of 10 Nov 2026, `audit/audit-2026-11-10.md` §3 P0) and so did the
+cabinet: redeploy the arcade with the release that carries this.
+
+### Changed
+
+- **litVM's RPC is Zeeve's `https://rpc.testnet.liteforge.zeeve.net/`** (`contracts/deployed.testnet.json`, so the
+  node, the tools, the arcade's `contracts.json` and every title that reads it). Same chain (4441), same contracts.
+  Caldera's `https://liteforge.rpc.caldera.xyz/http` stopped advancing at block 69,908,990 (03:50Z, 11 Nov 2026)
+  while still answering, so a node on it saw no new block, beacon or MatchBook event. Both Caldera endpoints are
+  dropped, `rpcFallback` included: the node fails over when an endpoint errors, not when its head stops, so a Caldera
+  fallback serves a frozen chain the first time Zeeve times out (seen on the desktop within a minute of switching). An
+  install with `RPC=` or `RPC_FALLBACK=` naming Caldera in `node.env` must change it by hand.
+- **The ladder's log scan sizes its range by throughput** (`nextScanRange`, `node/matchbook.js`). Zeeve answers
+  `eth_getLogs` in ~2.7 s however small the range (plus ~0.02 s a block); the old rule halved past 3 s, pinned it at
+  4 blocks a call and the cursor fell behind the chain within a minute. The range now grows while a bigger one scans
+  more blocks a second (up to 256), steps back and holds at a knee (Caldera's ~20 blocks) for ten minutes, and halves
+  past 10 s or a timeout. Zeeve times out on ranges it has not indexed yet (some of 10–11 Nov): a node whose cursor
+  sits there can be moved past by setting `matchbook-cursor.json` near the head and restarting; nothing live waits on
+  the scan. `sdk/court`'s `DEFAULT_RPCS`,
+  the cabinet's and tools' defaults and the docs follow.
+
+### Security
+
+- **`update.cmd` now asks ReleaseRegistry, as the running node always has** (`tools/update.mjs`, `registryFor` in
+  `node/update.js`). The manual updater built its updater with no registry, so it applied any release the release key
+  had signed: the leaked-key case the registry exists for. It now reads `statusOf(zipHash)` from the install's
+  `contracts/deployed.testnet.json` (or `RELEASE_REGISTRY` / `RPC` / `RPC_FALLBACK` in `node.env`) and refuses a release
+  that is unregistered, pending, revoked, or whose registry cannot be read. Ungated only where the node is too: no
+  registry in the install, or `OFFLINE`.
+- **A key rotation is taken only from a release the registry holds active** (`node/update.js`). `rotateTo` and `retire`
+  were applied as soon as the manifest's signature checked, before the registry was asked, so one leaked release key
+  could add its own successor and retire the pinned key on every node within the hour without registering anything.
+  Without a registry (tests, offline meshes) rotation works as before.
+- **Ledger intake from the network is budgeted per caller and bounded** (`POST /ledger`).
+  - Behind a tunnel every request arrives from cloudflared on 127.0.0.1, so the per-address budget was one bucket for
+    the whole internet. The caller is now cloudflared's `cf-connecting-ip`, believed only on a loopback socket.
+  - A submission that *claims* signatures, a relay or a court skipped the budget, though the claim is only checked
+    after the replay. Such submissions now have their own budget (`LEDGERS_PER_MIN`, default 60 a caller; unsigned
+    stays at 10).
+  - At most `MAX_REMOTE_INTAKES` (8) network submissions are in the sandbox or waiting on it at once; the next gets
+    503. Open intake can no longer queue ahead of the replays this node owes as a witness.
+  - Unplaced replayable results that players (not a relay, not a court) signed are counted against a store quota,
+    `CASUAL_STORE_MB` (default 1024). Past it a network caller gets 507 until the operator makes room; placed,
+    relay-signed and attested results are never counted or refused. `/health.settlement.casualStore` reports it.
+  - The operator's own machine has no budget, cap or quota, as before.
+- **A witness advert is followed only to the address its host's signed heartbeat carries** (`node/litnode.js`).
+  Adverts arrive unsigned in any gossip message; each one this node was drawn for made it GET an address the advert
+  named, loopback and LAN included, and buffer whatever came back. Now: no heartbeat from that host at that address,
+  no request; two adverts are worked at once with a queue of 64 (8 a host), the rest dropped until the host
+  advertises again; a peer's delta, ledger, log and build are read through `fetchCapped`, which stops at a size.
+- **`POST /update` and `POST /chat` refuse other sites' pages.** Both were loopback-only but took any `Origin`, and
+  CORS here is open: a page in the operator's browser could roll the node back and restart it, or speak with its key.
+  They now answer this machine's own pages (any port on localhost, so the cabinet and the Control Plane), the hosted
+  arcade, and callers with no `Origin`; `/restart` and `/bond-proof` already did.
+- **`POST /air/bond` answers this machine only.** Through the tunnel, any AIR account could have its node-custodied
+  proxy bind an unbonded node's key and stand as its operator.
+- **A host pays a MatchBook commit only for a placement the mesh could have made** (`absorbMatch`, `commitIfHost`).
+  One bonded key could sign ranked placements of its own invention naming any host, and that host committed each one:
+  its purse spent a commit at a time. Now a ranked placement naming this node is adopted only when its id is what its
+  beacon derives for its two players, and a placement another key computed is committed only when its beacon is this
+  node's own for the bucket, from the same source. A peer that pinned another beacon is still adopted into the book
+  (the earlier placement stands for the players) and shows `commitSkipped` on `GET /match`, so the players' pages
+  launch casual at once; its seats would have refused that descriptor on the same check.
+- Tests: `demo/hardening.test.mjs` (six new cases), `demo/update.test.mjs` (the gate and the rotation),
+  `demo/air.test.mjs`, `demo/matchbook-node.test.mjs` (the forged placement costs no commit).
+
+Not in this patch (same audit, P1): the AIR token is still a bearer credential any seed can replay; `cabinet:init`
+still posts the AIR email to every framed title; no CSP; transactions are not retried; the verifier child keeps
+`process`. An existing install whose scheduled task was registered elevated stays elevated until re-registered.
 
 ### Added
 

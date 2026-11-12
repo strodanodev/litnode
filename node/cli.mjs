@@ -94,7 +94,7 @@ node = await createNode({
   rulesets: list(env.RULESETS),
   // The preferred endpoint first, then RPC_FALLBACK and the release's own fallbacks: node/chain.js moves a call to
   // the next one while an endpoint is failing, and back once it answers again.
-  rpc: env.OFFLINE ? null : [...new Set([env.RPC ?? deployed.rpc ?? 'https://liteforge.rpc.caldera.xyz/http', ...list(env.RPC_FALLBACK), ...(deployed.rpcFallback ?? [])])],
+  rpc: env.OFFLINE ? null : [...new Set([env.RPC ?? deployed.rpc ?? 'https://rpc.testnet.liteforge.zeeve.net/', ...list(env.RPC_FALLBACK), ...(deployed.rpcFallback ?? [])])],
   offline: !!env.OFFLINE,
   nodeStake: env.NODE_STAKE ?? deployed.NodeStake?.address ?? null,
   playerProfile: env.PLAYER_PROFILE ?? deployed.PlayerProfile?.address ?? null,

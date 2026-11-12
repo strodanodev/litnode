@@ -154,6 +154,7 @@ export function createSettlement({
   /** A delta nobody but this host signed (`host` provenance, unplaced) is never official and never witnessed; it is
    *  kept a day for the casual tables, then dropped with its ledger, so an open intake cannot fill the disk. */
   const HOST_DELTA_TTL_MS = 24 * 60 * 60_000;
+  let quotaReady = false; // the casual-store count below is declared after the boot prune
   const prune = (now = Date.now()) => {
     let n = 0;
     for (const [id, d] of deltas) {
@@ -163,10 +164,21 @@ export function createSettlement({
       const lh = d.commitments?.inputsHash;
       if (lh && ![...deltas.values()].some((x) => x.commitments?.inputsHash === lh)) { try { unlinkSync(logFile(lh)); } catch { /* not held */ } }
     }
-    if (n) log(`pruned ${n} unsigned casual delta${n === 1 ? '' : 's'} older than a day`);
+    if (n) { log(`pruned ${n} unsigned casual delta${n === 1 ? '' : 's'} older than a day`); if (quotaReady) measureCasual(); }
     return n;
   };
   prune();
+  /** What an open intake can make this node keep for ever: replayable results the mesh never placed, signed by
+   *  whoever submitted them (two throwaway keys make a valid `players` ledger of up to 4 MB, and `prune` only ages
+   *  out the unsigned ones). Their ledgers are counted against a quota; past it a caller from the network is refused
+   *  until the operator makes room or raises CASUAL_STORE_MB. Placed, relay-signed and court-attested results are
+   *  never counted and never refused (audit of 10 Nov 2026). */
+  const CASUAL_STORE_MAX = Math.max(1, Number(process.env.CASUAL_STORE_MB) || 1024) * 1024 * 1024;
+  const openCasual = (d) => d.kind !== 'attested' && !d.placed && d.attestation !== 'relay';
+  let casualBytes = 0;
+  const measureCasual = () => { let n = 0; for (const d of deltas.values()) if (openCasual(d)) { try { n += statSync(join(dirs.ledgers, `${encodeURIComponent(d.matchId)}.json`)).size; } catch { /* ledger gone */ } } casualBytes = n; return n; };
+  measureCasual(); quotaReady = true;
+  const casualStore = () => ({ bytes: casualBytes, maxBytes: CASUAL_STORE_MAX, full: casualBytes >= CASUAL_STORE_MAX });
   const registryOn = !!registry?.configured;
 
   // ---------------------------------------------------------------- binding
@@ -302,6 +314,7 @@ export function createSettlement({
     put(dirs.ledgers, sub.matchId, stored);
     put(dirs.deltas, sub.matchId, delta);
     deltas.set(sub.matchId, delta);
+    if (openCasual(delta)) { try { casualBytes += statSync(join(dirs.ledgers, `${encodeURIComponent(sub.matchId)}.json`)).size; } catch { /* counted at the next measure */ } }
     // The ledger served by GET /ledger/:id is exactly `stored`: a witness hashes what it fetched and compares with the chain's ledgerHash.
     if (onSettled && body.mode === 'ranked' && body.placed) { try { await onSettled(delta, JSON.parse(JSON.stringify(stored))); } catch (e) { log(`settled ${sub.matchId} but the chain send failed: ${e.message}`); } }
     return delta;
@@ -310,7 +323,7 @@ export function createSettlement({
   const byChainKey = (key) => { for (const d of deltas.values()) if (matchIdBytes32(d.matchId) === key) return d.matchId; return null; };
 
   /** Host / settler side: bind, verify what can be verified, replay, sign. */
-  const intake = async (sub) => {
+  const intake = async (sub, { remote = false } = {}) => {
     if (!sub?.matchId || typeof sub.matchId !== 'string' || !Array.isArray(sub.participants) || !sub.rulesetId) throw new Error('malformed submission');
     // An id already settled answers with what it settled, marked so a court tells "already" from "just now".
     if (deltas.has(sub.matchId)) return { ...decorate(deltas.get(sub.matchId)), existing: true };
@@ -320,6 +333,8 @@ export function createSettlement({
     if (mode === 'ranked' && !sub.participants.every(isKey)) throw new Error('ranked: participants must be player keys');
     const binding = await bind({ ...sub, mode }, { envelope: sub.descriptor ?? null }); // `descriptor`: the envelope the client fetched from GET /match
     if (binding.placed && binding.descriptor.host !== nodeId) throw new Error(`placement names host ${binding.descriptor.host.slice(0, 12)}, not this node`);
+    // `remote`: the caller is not this machine. Checked before the replay, which is the expensive half.
+    if (remote && !binding.placed && sub.kind !== 'attested' && casualBytes >= CASUAL_STORE_MAX) throw Object.assign(new Error(`this node holds its quota of unplaced casual results (${Math.round(CASUAL_STORE_MAX / 1048576)} MB); a placed match still settles`), { status: 507 });
 
     if (sub.kind === 'attested') {
       if (sub.log != null && !sub.report?.commitments?.inputsHash) throw new Error('a log needs report.commitments.inputsHash');
@@ -505,7 +520,7 @@ export function createSettlement({
 
   return {
     intake, cosign, acceptCosign, acceptDispute, replay, derived, epoch, freeze, maybeFreeze, proof, list, prune,
-    hasLog, readLog, holdLog, logStats, statsProof,
+    hasLog, readLog, holdLog, logStats, statsProof, casualStore,
     delta: (id) => { const d = deltas.get(id) ?? deltas.get(byChainKey(id)); return d ? decorate(d) : null; }, ledger: (id) => get(dirs.ledgers, id) ?? (byChainKey(id) ? get(dirs.ledgers, byChainKey(id)) : null),
     verification: (d) => verification(d, { registry: registryOn }), official: officialOf,
   };

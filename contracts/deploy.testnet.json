@@ -1,7 +1,7 @@
 {
   "network": "litVM LiteForge",
   "chainId": 4441,
-  "rpc": "https://liteforge.rpc.caldera.xyz/http",
+  "rpc": "https://rpc.testnet.liteforge.zeeve.net/",
   "evmVersion": "shanghai",
   "admin": null,
   "adminNote": "The multisig behind a timelock that holds admin on NodeStake, ReleaseRegistry, EpochAnchor and ERC6699Registry. null = the deployer wallet, an EOA — the deploy tool warns and /health says admin: eoa (BUILD-SPEC v0.3 §2.3).",

@@ -33,8 +33,10 @@ export const LOG_PROTOCOL = 4;
 export const SETTLING_ROLES = Object.freeze(['host', 'settler', 'relay']);
 /** The arcade publishes the live contract set here: { generation, rpc, contracts: { NodeDirectory: { address }, … } }. */
 export const CONTRACTS_URL = 'https://arcade.litvm.games/contracts.json';
-/** litVM Liteforge (chain 4441) gateways, preferred first. The public /http gateway rate-limits per IP. */
-export const DEFAULT_RPCS = Object.freeze(['https://liteforge.rpc.caldera.xyz/http', 'https://liteforge.rpc.caldera.xyz/infra-partner-http']);
+/** litVM Liteforge (chain 4441) gateways, preferred first: Zeeve, litVM's endpoint since 11 Nov 2026. Caldera's public
+ *  /http is not listed: it stopped advancing at block 69,908,990 that day but still answers, and a transport failure on
+ *  Zeeve would otherwise move a read onto a chain that is hours old. */
+export const DEFAULT_RPCS = Object.freeze(['https://rpc.testnet.liteforge.zeeve.net/']);
 /** Generation-3 contracts: the fallback when contracts.json cannot be read. */
 export const DEFAULT_CONTRACTS = Object.freeze({ generation: 3, NodeDirectory: '0xac0C73008028E3eAA05Bc5C72f0C233F94b4E3df', NodeStake: '0x3CFe2D006d946A1E0E5Cf6B3E0958aFc3fF73717' });
 /** Function selectors, hard-coded (no keccak at runtime); demo/court.test.mjs checks them against protocol/keccak.js. */

@@ -3,10 +3,8 @@
 export const CONTRACTS = {
   "generation": 3,
   "chainId": 4441,
-  "rpc": "https://liteforge.rpc.caldera.xyz/http",
-  "rpcFallback": [
-    "https://liteforge.rpc.caldera.xyz/infra-partner-http"
-  ],
+  "rpc": "https://rpc.testnet.liteforge.zeeve.net/",
+  "rpcFallback": [],
   "explorer": "https://liteforge.explorer.caldera.xyz",
   "deployedAt": "2026-09-20T22:34:07.928Z",
   "contracts": {

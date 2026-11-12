@@ -45,7 +45,7 @@ Network details, for adding LiteForge to your wallet:
 |---|---|
 | Network | litVM LiteForge (testnet) |
 | Chain ID | 4441 |
-| RPC | `https://liteforge.rpc.caldera.xyz/http` |
+| RPC | `https://rpc.testnet.liteforge.zeeve.net/` (Caldera's `https://liteforge.rpc.caldera.xyz/http` stopped advancing on 11 Nov 2026: do not list it in `RPC` or `RPC_FALLBACK`) |
 | Explorer | `https://liteforge.explorer.caldera.xyz` |
 | Gas token | zkLTC ([faucet](https://liteforge.hub.caldera.xyz)) |
 | Stake token | tLITVM (faucet button on your node's Nodes page) |

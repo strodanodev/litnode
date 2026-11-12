@@ -17,7 +17,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createNode } from '../node/litnode.js';
-import { generateKeypair } from '../protocol/keys.js';
+import { generateKeypair, seal } from '../protocol/keys.js';
+import { matchIdFor } from '../protocol/pairing.js';
+import { PROTOCOL_VERSION } from '../protocol/version.js';
 import * as mb from '../protocol/matchbook.js';
 import { createSim, createRecorder, localSigner, settle, matchSeed, externalAgents } from '../sdk/client.js';
 import { createRpcEvm } from './lib/rpc-evm.mjs';
@@ -188,4 +190,18 @@ test('phase 2: commit → settle → three attests → final on the chain, and e
   assert.equal(lb.counts.official, 1, 'the final match is still on the ladder');
   assert.equal(lb.digest, boards[0].digest, 'the same digest as before the restart');
   assert.equal((await (await fetch(`${again.addr}/health`)).json()).matchBook.seated, 0, 'no duty outstanding for a final match');
+
+  // ---- a bonded key signs a ranked placement of its own invention naming the host: a beacon it chose, the id that
+  // beacon derives, a bucket the host has its own beacon for. The host adopts it into its book, and pays nothing.
+  const [x, y] = [await generateKeypair(), await generateKeypair()];
+  const beacon = 'c'.repeat(64);
+  const forged = { matchId: matchIdFor('tug.v1', x.publicKey, y.publicKey, beacon), rulesetId: 'tug.v1', mode: 'ranked', bucket: d.bucket, beacon, beaconSource: d.beaconSource, beaconBlock: d.beaconBlock,
+    participants: [x.publicKey, y.publicKey], regions: [null, null], host: host.nodeId, panel: d.panel, buildHash: manifest.buildHash, protocol: PROTOCOL_VERSION, computedBy: ids[1].kp.publicKey, computedAt: Date.now() };
+  assert.equal((await fetch(`${host.addr}/gossip`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ matches: [await seal('match', forged, ids[1].kp)] }) })).status, 200);
+  const refused = await until(async () => { const { matches } = await (await fetch(`${host.addr}/match?playerId=${x.publicKey}`)).json(); const m = matches.find((q) => q.matchId === forged.matchId); return m?.commitSkipped ? m : null; }, 15_000);
+  assert.ok(refused, 'the forged placement is in the book, marked not committed');
+  assert.match(refused.commitSkipped, /beacon is not this host's/);
+  assert.equal(refused.commitTx, null);
+  await new Promise((r) => setTimeout(r, 4000)); // past COMMIT_SETTLE_MS: a commit, had one been scheduled, would be out by now
+  assert.equal(chain.logs().map(mb.decodeLog).filter((e) => e?.event === 'Committed').length, 1, 'the host spent no commit on a beacon that is not its own');
 });

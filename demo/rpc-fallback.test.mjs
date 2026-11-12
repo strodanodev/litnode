@@ -177,3 +177,30 @@ test('a slow chain does not pile up calls: the chain half of a tick waits for th
   const snap = await (await fetch(`${node.addr}/snapshot`)).json();
   assert.ok(snap.peers.some((p) => p.nodeId === node.nodeId), 'its own heartbeat stayed fresh: gossip did not wait on the chain');
 });
+
+test('matchbook scan: the range follows throughput — grows on a flat-cost endpoint, holds below a knee, halves past the slow bound', async () => {
+  const { nextScanRange } = await import('../node/matchbook.js');
+  // Zeeve-shaped: ~2700 ms + 20 ms a block. From 16 the range climbs while each step scans more blocks a second.
+  const flat = { range: 16, knee: null, kneeAt: 0, last: null };
+  for (let i = 0; i < 12; i++) nextScanRange(flat, { span: flat.range, ms: 2700 + 20 * flat.range, now: 1000 });
+  assert.ok(flat.range >= 182 && flat.range <= 256, `grew to ${flat.range}`);
+  assert.ok(2700 + 20 * flat.range < 10_000, 'and stays under the slow bound');
+  // Caldera-shaped: ≤20 blocks in 1.5 s, more in 13 s. 16 → 24 is slower per block: back to 16, held there.
+  const knee = { range: 16, knee: null, kneeAt: 0, last: null };
+  const cost = (n) => (n <= 20 ? 1500 : 13_000);
+  for (let i = 0; i < 6; i++) nextScanRange(knee, { span: knee.range, ms: cost(knee.range), now: 1000 + i });
+  assert.equal(knee.range, 16);
+  assert.equal(knee.knee, 16);
+  // the knee is forgotten after ten minutes, and growth is tried again
+  nextScanRange(knee, { span: 16, ms: 1500, now: 1000 + 11 * 60_000 });
+  assert.equal(knee.range, 24);
+  // past the slow bound (or a timeout): halve
+  const slow = { range: 64, knee: null, kneeAt: 0, last: null };
+  assert.equal(nextScanRange(slow, { span: 64, ms: Infinity, now: 1 }), 32);
+  // caught up (fewer new blocks than the range): the range is left alone
+  const idle = { range: 40, knee: null, kneeAt: 0, last: null };
+  assert.equal(nextScanRange(idle, { span: 3, ms: 2800, now: 1 }), 40);
+  // never below the floor
+  const tiny = { range: 4, knee: null, kneeAt: 0, last: null };
+  assert.equal(nextScanRange(tiny, { span: 4, ms: Infinity, now: 1 }), 4);
+});

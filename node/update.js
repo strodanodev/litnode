@@ -20,7 +20,7 @@ import { basename, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { opened } from '../protocol/keys.js';
 import { PROTOCOL_VERSION } from '../protocol/version.js';
-import { releaseVerdict } from '../protocol/release.js';
+import { releaseVerdict, statusOfCall, decodeStatus } from '../protocol/release.js';
 
 export const RELEASE_TAG = 'release';
 /** The litnode release key. A manifest not signed by it is not a release. */
@@ -69,6 +69,36 @@ export function keepNewerContracts(fromDir, root) {
     }
   } catch { /* unreadable on either side: the release's file stands */ }
   return null;
+}
+
+/** The ReleaseRegistry gate for an updater that runs WITHOUT a node (tools/update.mjs behind update.cmd): the same
+ *  address and endpoints node/cli.mjs gives the node (node.env's RELEASE_REGISTRY / RPC / RPC_FALLBACK, else the
+ *  install's contracts/deployed.testnet.json), read with one eth_call and no dependency. Until 0.12.5 that path built
+ *  its updater with no registry at all, so the manual update was signature-only: the leaked-key case the registry
+ *  exists for (audit of 10 Nov 2026). Returns null only where the node itself runs ungated: no registry configured,
+ *  or OFFLINE. A registry that cannot be read throws, which the updater treats as a refusal. */
+export function registryFor({ root, env = {}, fetchImpl = globalThis.fetch }) {
+  let deployed = {};
+  try { deployed = JSON.parse(readFileSync(join(root, 'contracts', 'deployed.testnet.json'), 'utf8')); } catch { /* no deployed set in this install */ }
+  const address = env.RELEASE_REGISTRY || deployed.ReleaseRegistry?.address || null;
+  if (!address || env.OFFLINE) return null;
+  const list = (s) => String(s ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+  const urls = [...new Set([env.RPC || deployed.rpc || 'https://rpc.testnet.liteforge.zeeve.net/', ...list(env.RPC_FALLBACK), ...(deployed.rpcFallback ?? [])])];
+  const statusOf = async (zipHash) => {
+    let last = new Error('no RPC endpoint');
+    for (const url of urls) {
+      try {
+        const r = await fetchImpl(url, { method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(15_000),
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [statusOfCall(address, zipHash), 'latest'] }) });
+        if (!r.ok) throw new Error(`HTTP ${r.status} from the RPC gateway`);
+        const j = await r.json();
+        if (j.error) throw new Error(j.error.message ?? 'eth_call failed');
+        return decodeStatus(j.result ?? '0x');
+      } catch (e) { last = e; }
+    }
+    throw last;
+  };
+  return { address, statusOf };
 }
 
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
@@ -168,11 +198,18 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
       if (!env.body?.version || typeof env.body.files !== 'object') throw new Error('release manifest malformed');
       if ((env.body.channel ?? 'stable') !== channel) throw new Error(`release is for channel ${env.body.channel ?? 'stable'}, this node follows ${channel}`);
       if (env.body.protocol != null && env.body.protocol < PROTOCOL_VERSION) throw new Error(`release speaks protocol ${env.body.protocol}, older than ours (${PROTOCOL_VERSION}); refused`);
-      // key rotation, only from a key we already accept
-      if (env.body.rotateTo && /^[0-9a-f]{64}$/.test(env.body.rotateTo) && !acceptedKeys().includes(env.body.rotateTo)) { persisted.accepted.push(env.body.rotateTo); saveKeys(); log(`release key rotated: now also accepting ${env.body.rotateTo.slice(0, 12)}…`); }
-      for (const k of env.body.retire ?? []) if (k !== env.signer && acceptedKeys().includes(k) && !persisted.retired.includes(k)) { persisted.retired.push(k); saveKeys(); log(`release key retired: ${k.slice(0, 12)}…`); }
       latest = env.body; lastError = null;
-      if (registry) { const g = await gate(); if (!g.ok) lastError = g.reason; }
+      // With a ReleaseRegistry the signature is necessary, not sufficient — for the key set as much as for the code.
+      // A manifest whose zip the registry does not hold ACTIVE changes no keys: one leaked release key could otherwise
+      // add its own successor and retire the pinned key on every node within the hour, without ever registering a
+      // release (audit of 10 Nov 2026). The rotation is taken on the first check after the release activates.
+      const g = registry ? await gate() : { ok: true };
+      if (!g.ok) lastError = g.reason;
+      const rotates = (env.body.rotateTo && !acceptedKeys().includes(env.body.rotateTo)) || (env.body.retire ?? []).some((k) => k !== env.signer && acceptedKeys().includes(k));
+      if (!g.ok && rotates) log(`release ${env.body.version} carries a key rotation, not taken: ${g.reason}`);
+      // key rotation, only from a key we already accept
+      if (g.ok && env.body.rotateTo && /^[0-9a-f]{64}$/.test(env.body.rotateTo) && !acceptedKeys().includes(env.body.rotateTo)) { persisted.accepted.push(env.body.rotateTo); saveKeys(); log(`release key rotated: now also accepting ${env.body.rotateTo.slice(0, 12)}…`); }
+      if (g.ok) for (const k of env.body.retire ?? []) if (k !== env.signer && acceptedKeys().includes(k) && !persisted.retired.includes(k)) { persisted.retired.push(k); saveKeys(); log(`release key retired: ${k.slice(0, 12)}…`); }
     } catch (e) { lastError = String(e.message ?? e); }
     checkedAt = Date.now();
     return latest;

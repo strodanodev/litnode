@@ -135,9 +135,9 @@ const at = (name) => CONTRACTS.contracts[name]?.address ?? null;
 export const CHAIN = {
   name: 'litVM LiteForge',
   chainId: CONTRACTS.chainId,
-  rpc: CONTRACTS.rpc ?? 'https://liteforge.rpc.caldera.xyz/http',
+  rpc: CONTRACTS.rpc ?? 'https://rpc.testnet.liteforge.zeeve.net/',
   /** rpc, then the deploy record's rpcFallback: what rpcCall (chain.js) walks when a provider is out of bandwidth. */
-  rpcs: [...new Set([CONTRACTS.rpc ?? 'https://liteforge.rpc.caldera.xyz/http', ...(CONTRACTS.rpcFallback ?? [])])],
+  rpcs: [...new Set([CONTRACTS.rpc ?? 'https://rpc.testnet.liteforge.zeeve.net/', ...(CONTRACTS.rpcFallback ?? [])])],
   generation: CONTRACTS.generation,
   NodeStake: at('NodeStake'),
   TestLITVM: at('TestLITVM'),

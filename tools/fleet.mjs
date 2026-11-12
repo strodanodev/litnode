@@ -106,7 +106,7 @@ async function relayProbe() {
   NodeDirectory ${dir}
   NodeStake     ${stake}`);
   if (!dir || !stake) { console.error('relay: the contract set has no NodeDirectory/NodeStake'); process.exitCode = 1; return; }
-  const chain = createChain({ rpc: set.rpc ?? 'https://liteforge.rpc.caldera.xyz/http', nodeDirectory: dir, nodeStake: stake });
+  const chain = createChain({ rpc: set.rpc ?? 'https://rpc.testnet.liteforge.zeeve.net/', nodeDirectory: dir, nodeStake: stake });
   const entries = (await chain.directory()) ?? {};
   const standings = (await chain.standings(Object.keys(entries))) ?? {};
   const nowS = Math.floor(Date.now() / 1000);

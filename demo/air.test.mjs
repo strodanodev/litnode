@@ -126,6 +126,11 @@ test('air: first sign-in mints a sponsored proxy profile with the AIR id bound; 
   assert.equal((await json('/air/session', { token: 'garbage', playerKey: browser.publicKey })).status, 401);
   assert.equal((await json('/air/session', { token: mint({ sub: SUB, partnerId: 'p2', exp: now + 300 }) })).status, 401, 'another partner app');
 
+  // Bonding this node is the operator's act: a caller through the tunnel is refused before the token is even read.
+  const tunnelled = await fetch(`${node.addr}/air/bond`, { method: 'POST', headers: { 'cf-connecting-ip': '203.0.113.7' }, body: JSON.stringify({ token }) });
+  assert.equal(tunnelled.status, 403, 'POST /air/bond answers this machine only');
+  assert.equal(st.txs.length, 0, 'and sent nothing');
+
   const r1 = (await json('/air/session', { token, playerKey: browser.publicKey }));
   assert.equal(r1.status, 200, JSON.stringify(r1.body));
   const s1 = r1.body;

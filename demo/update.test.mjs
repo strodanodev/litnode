@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { generateKeypair, seal } from '../protocol/keys.js';
-import { createUpdater, RELEASE_TAG, newer, pickFile, parkLaunchers } from '../node/update.js';
+import { createUpdater, registryFor, RELEASE_TAG, newer, pickFile, parkLaunchers } from '../node/update.js';
 import { createNode } from '../node/litnode.js';
 
 const tar = process.platform === 'win32' ? 'C:\\Windows\\System32\\tar.exe' : 'tar';
@@ -202,6 +202,82 @@ test('update: channels, protocol floor and release-key rotation', async () => {
   const stranger = await generateKeypair();
   u = createUpdater({ root, version: '0.1.0', releaseUrl: RELEASE, pubkey: releaseKey.publicKey, dataDir, fetchImpl: serve(await seal(RELEASE_TAG, { version: '0.2.3', date: 'd', notes: '', files, rotateTo: stranger.publicKey }, stranger), zipName, zip) });
   await u.check(); assert.match(u.status().lastError, /unknown key/); assert.ok(!u.status().keys.includes(stranger.publicKey));
+});
+
+test('update: with a ReleaseRegistry, a key rotation is taken only from a release the registry holds active', async () => {
+  const releaseKey = await generateKeypair(), nextKey = await generateKeypair();
+  const { root, zipName, zip } = fixture();
+  const files = { [zipName]: { sha256: sha(zip), size: zip.length } };
+  const dataDir = join(root, 'data', 'rot');
+  mkdirSync(dataDir, { recursive: true });
+  let onChain = { registered: false, active: false, revoked: false, version: '', activatesAt: 0 };
+  const registry = { statusOf: async () => onChain };
+  const manifest = await seal(RELEASE_TAG, { version: '0.2.0', date: 'd', notes: '', files, rotateTo: nextKey.publicKey, retire: [] }, releaseKey);
+  let u = createUpdater({ root, version: '0.1.0', releaseUrl: RELEASE, pubkey: releaseKey.publicKey, dataDir, registry, fetchImpl: serve(manifest, zipName, zip) });
+  // signed by the pinned key, never registered: what a leaked release key can publish. No key changes.
+  await u.check();
+  assert.match(u.status().lastError, /not registered/);
+  assert.deepEqual(u.status().keys, [releaseKey.publicKey], 'an unregistered release rotates nothing');
+  assert.ok(!existsSync(join(dataDir, 'release-keys.json')));
+  // registered but not yet active, then unreadable: still nothing
+  onChain = { registered: true, active: false, revoked: false, version: '0.2.0', activatesAt: Math.floor(Date.now() / 1000) + 60 };
+  await u.check(); assert.deepEqual(u.status().keys, [releaseKey.publicKey], 'a pending release rotates nothing');
+  onChain = null;
+  await u.check(); assert.match(u.status().lastError, /unreadable/); assert.deepEqual(u.status().keys, [releaseKey.publicKey]);
+  // active: the rotation is taken on that check
+  onChain = { registered: true, active: true, revoked: false, version: '0.2.0', activatesAt: 1 };
+  await u.check();
+  assert.equal(u.status().lastError, null);
+  assert.deepEqual(u.status().keys, [releaseKey.publicKey, nextKey.publicKey]);
+  // a retire of the pinned key in an unregistered manifest signed by the (now accepted) next key is not taken either
+  onChain = { registered: false, active: false, revoked: false, version: '', activatesAt: 0 };
+  const retire = await seal(RELEASE_TAG, { version: '0.2.1', date: 'd', notes: '', files, retire: [releaseKey.publicKey] }, nextKey);
+  u = createUpdater({ root, version: '0.1.0', releaseUrl: RELEASE, pubkey: releaseKey.publicKey, dataDir, registry, fetchImpl: serve(retire, zipName, zip) });
+  await u.check();
+  assert.deepEqual(u.status().keys, [releaseKey.publicKey, nextKey.publicKey], 'the pinned key is not retired by an unregistered release');
+});
+
+test('update: update.cmd asks the same ReleaseRegistry the node does (registryFor), and an unreadable chain refuses', async () => {
+  const root = join(tmp, 'gate');
+  mkdirSync(join(root, 'contracts'), { recursive: true });
+  const REG = '0x' + '1a'.repeat(20);
+  writeFileSync(join(root, 'contracts', 'deployed.testnet.json'), JSON.stringify({ rpc: 'https://rpc.one', rpcFallback: ['https://rpc.two'], ReleaseRegistry: { address: REG } }));
+  const word = (n) => BigInt(n).toString(16).padStart(64, '0');
+  const status = (registered, active, revoked) => '0x' + word(registered ? 1 : 0) + word(active ? 1 : 0) + word(revoked ? 1 : 0) + word(0xa0) + word(1) + word(5) + Buffer.from('0.2.0').toString('hex').padEnd(64, '0');
+  const asked = [];
+  let answer = () => ({ ok: true, json: async () => ({ result: status(true, true, false) }) });
+  const fetchImpl = async (url, init) => { asked.push({ url, body: JSON.parse(init.body) }); return answer(url); };
+  const zipHash = 'ab'.repeat(32);
+
+  assert.equal(registryFor({ root: join(tmp, 'no-such-install'), env: {}, fetchImpl }), null, 'no deployed set and no RELEASE_REGISTRY: signature only, as the node');
+  assert.equal(registryFor({ root, env: { OFFLINE: '1' }, fetchImpl }), null, 'OFFLINE: as the node');
+  const reg = registryFor({ root, env: {}, fetchImpl });
+  assert.equal(reg.address, REG);
+  assert.deepEqual(await reg.statusOf(zipHash), { registered: true, active: true, revoked: false, version: '0.2.0', activatesAt: 1 });
+  assert.equal(asked[0].url, 'https://rpc.one');
+  assert.equal(asked[0].body.method, 'eth_call');
+  assert.equal(asked[0].body.params[0].to, REG);
+  assert.ok(asked[0].body.params[0].data.endsWith(zipHash), 'statusOf(zipHash)');
+  // node.env wins over the install's file
+  const other = registryFor({ root, env: { RELEASE_REGISTRY: '0x' + '2b'.repeat(20), RPC: 'https://rpc.mine' }, fetchImpl });
+  await other.statusOf(zipHash);
+  assert.equal(asked.at(-1).url, 'https://rpc.mine'); assert.equal(asked.at(-1).body.params[0].to, '0x' + '2b'.repeat(20));
+  // the first endpoint rate-limits: the fallback answers
+  answer = (url) => (url === 'https://rpc.one' ? { ok: false, status: 429 } : { ok: true, json: async () => ({ result: status(true, false, true) }) });
+  assert.equal((await reg.statusOf(zipHash)).revoked, true);
+  // nothing answers: it throws, and the updater built on it refuses rather than applies
+  answer = () => ({ ok: false, status: 502 });
+  await assert.rejects(reg.statusOf(zipHash), /502/);
+  const releaseKey = await generateKeypair();
+  const { root: install, zipName, zip } = fixture();
+  const files = { [zipName]: { sha256: sha(zip), size: zip.length } };
+  const u = createUpdater({ root: install, version: '0.1.0', releaseUrl: RELEASE, pubkey: releaseKey.publicKey, registry: reg, fetchImpl: serve(await seal(RELEASE_TAG, { version: '0.2.0', date: 'd', notes: '', files }, releaseKey), zipName, zip) });
+  await u.check();
+  assert.equal(u.status().registry, 'unreadable');
+  await assert.rejects(u.apply(), /release registry unreadable/);
+  // and tools/update.mjs builds its updater with it
+  const tool = readFileSync(join(process.cwd(), 'tools', 'update.mjs'), 'utf8');
+  assert.ok(tool.includes('registryFor({ root, env: settings })') && /createUpdater\(\{[^\n]*registry,/.test(tool), 'tools/update.mjs passes the registry to its updater');
 });
 
 test('update: the node reports it on /health and /update, and refuses to apply what is not newer', { timeout: 30_000 }, async (t) => {

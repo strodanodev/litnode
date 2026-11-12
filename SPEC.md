@@ -178,7 +178,7 @@ runs (`npm run vendor:cabinet`), pinned by sha256 in
 
 ### 2.4 Chain (litVM LiteForge testnet, chainId 4441)
 
-RPC `https://liteforge.rpc.caldera.xyz/http`, CORS `*`. Contracts in
+RPC `https://rpc.testnet.liteforge.zeeve.net/` (Caldera's `https://liteforge.rpc.caldera.xyz/http` until 11 Nov 2026), CORS `*`. Contracts in
 `contracts/deployed.testnet.json`: `NodeStake` (bond/standing), `TestLITVM`
 (the test token), `ERC6699Registry`, `EpochAnchor`, `PlayerProfile`,
 `NodeBadge`, `NodeDirectory`. The node only ever reads (standings, profiles,
