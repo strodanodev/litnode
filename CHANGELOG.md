@@ -5,6 +5,8 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.12.5] — 2026-11-12 — audit P0 security fixes; litVM RPC moved to Zeeve (Caldera dropped)
+
 Protocol 4, unchanged: no contract, result hash, heartbeat or proof level changes, so 0.12.x nodes stay peers. The node
 changed (the security fixes below, from the audit of 10 Nov 2026, `audit/audit-2026-11-10.md` §3 P0) and so did the
 cabinet: redeploy the arcade with the release that carries this.
