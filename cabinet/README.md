@@ -101,7 +101,8 @@ footer's node URL at a public https seed for players who don't run a node.
     02  Pickle Brawl                  https://www.picklebrawl.live/       ruleset pickle-brawl.v1
     03  Robot Fighting Championship   https://rfc.litvm.games/            ruleset afc.v1 (casual)
     04  Rapture Chess                 https://chess.litvm.games/          ruleset rapture-chess.v1 (featured)
-    05  Ragnarok Online 3             desktop launcher, #/ro3             not settled by the mesh
+    05  Rapture TCG                   https://tcg.litvm.games/            ruleset rapture-duel.v11 (ranked in-game)
+    06  Ragnarok Online 3             desktop launcher, #/ro3             not settled by the mesh
 
 The roster is `GAMES` in config.js. A mesh title that isn't in it, such as
 FLOOD CONTROL (`flood-control.v1`, play.bagyo.app), is listed from its

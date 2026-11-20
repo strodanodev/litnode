@@ -279,6 +279,7 @@ relay is also passed as `?ws=` on the iframe URL. **No title consumes
 | Pickle Brawl | `picklebrawl.live` | `pickle-brawl.v1` | Yes (iframe) |
 | Robot Fighting Championship (AFC) | `rfc.litvm.games` | `afc.v1` (casual, attested) | Yes (iframe) |
 | Rapture Chess (featured) | `chess.litvm.games` | `rapture-chess.v1` (replayable, published from its own node) | Yes (iframe) |
+| Rapture TCG | `tcg.litvm.games` | `rapture-duel.v11` (replayable; ranked queued in the game, no arcade Find match) | Yes (iframe, arcade sign-in) |
 | Ragnarok Online 3 | desktop launcher | No (prototype; `#/ro3` signs the launcher in) | No |
 
 FLOOD CONTROL (`flood-control.v1`, `play.bagyo.app`) is on the mesh but not

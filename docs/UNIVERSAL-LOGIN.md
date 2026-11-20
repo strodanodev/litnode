@@ -96,7 +96,10 @@ What a title does:
 
 Implementations: Pickle Brawl `web/arcadeIdentity.ts` (the same facade the
 game already reads, so no game code changed); Agent Fighter
-`packages/client/src/auth.ts` (arcade mode inside the existing auth state).
+`packages/client/src/auth.ts` (arcade mode inside the existing auth state);
+Rapture TCG `web/lib/account.js` (champion unlocks; it has no AIR Kit of its
+own, so on tcg.litvm.games the player is a guest and "sign in" opens
+`#/game/rapture-tcg` here; its `api/unlocks` takes the arcade partner only).
 
 ## Why a proxy, and what it is not
 
