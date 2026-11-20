@@ -108,6 +108,27 @@ export const GAMES = [
     featured: true, // the title the Arcade page opens with (app.js arcadeGame), whatever the list order
   },
   {
+    id: 'rapture-tcg', // the game sends guests to #/game/rapture-tcg: keep this id
+    title: 'RAPTURE TCG',
+    accent: '#ffc95e',
+    tagline: 'Your NFT is your champion. Your wallet is your deck.',
+    description: 'A trading card game on litVM where the 50 Rapture ARC 1 NFTs are the champions and the cards, by LitVM Games. A champion\'s on-chain stats set its life, spell power and hero power; your deck is the cards you hold. Practice against the bots, run the Gauntlet to unlock champions (saved to your arcade sign-in), solve the daily puzzle, or play ranked on LitNode. Built on the Rapture SDK, it runs at tcg.litvm.games, which this arcade opens in its window. Every match is one integer log that replays (rapture-duel.v11).',
+    controls: ['Play a card: click it, then a lane or a target', 'Attack: click a unit, then its target', 'End turn: the ring button', 'Battle menu: Esc', 'Replays: ← → to step, Space to play'],
+    modes: ['practice vs bots', 'gauntlet', 'daily puzzle', 'ranked'],
+    players: '1P / 2P online',
+    url: 'https://tcg.litvm.games/', // its CSP lets arcade.litvm.games frame it; the arcade lends its AIR session to this origin only
+    cover: './covers/rapture-tcg.jpg',
+    rulesetId: 'rapture-duel.v11', // the game was Rapture Duel before it was its own product; a rules change is the next vN, and this follows
+    buildHash: 'ebe6c8ee3e5b75578cbb738c650d3467ce4fc2a8d2d5ddab4d93953d5a565fdd',
+    kind: 'replayable',
+    status: 'mesh',
+    tags: ['TESSARACT', 'PWA', 'ARC 1 NFTS'],
+    badge: 'tcg.litvm.games',
+    playable: true,
+    login: 'arcade', // champion unlocks are saved to the AIR sign-in: framed here, the game asks cabinet:air
+    queue: false, // ranked is queued from the game's own Ranked page (it seats itself); an arcade-placed launch would go unclaimed
+  },
+  {
     id: 'ro3',
     title: 'RAGNAROK ONLINE 3',
     accent: '#f0c060',

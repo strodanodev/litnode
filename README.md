@@ -105,9 +105,10 @@ a witness also re-runs an attested result's log with the title's registered
 verifier and disputes a `finalHash` that doesn't match.
 
 The arcade also lists **Rapture Chess** (`rapture-chess.v1`, a replayable
-title published from its own node) and **Ragnarok Online 3** community
-servers hosted through litnode (`#/ro3`; a prototype, its results are not
-settled by the mesh).
+title published from its own node), **Rapture TCG** (`rapture-duel.v11`,
+replayable; ranked is queued from the game's own Ranked page) and
+**Ragnarok Online 3** community servers hosted through litnode (`#/ro3`; a
+prototype, its results are not settled by the mesh).
 
 What stays off the mesh: inventory, credits and the economy live in each
 title's own database (Neon or Supabase), never on the node. The arcade's

@@ -5,6 +5,14 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **Rapture TCG in the arcade** (`cabinet/config.js`, `covers/rapture-tcg.jpg`): tcg.litvm.games in the window, with
+  `login: 'arcade'` so its champion unlocks follow the player's AIR sign-in. Ruleset `rapture-duel.v11` (build
+  `ebe6c8ee…`, active on TitleRegistry since 18 Nov 2026) gives it a leaderboard tab; `queue: false`, because the game
+  queues ranked from its own Ranked page with its own player key and does not take an arcade-placed launch. Cabinet
+  change: redeploy the arcade to list it.
+
 ## [0.12.5] — 2026-11-12 — audit P0 security fixes; litVM RPC moved to Zeeve (Caldera dropped)
 
 Protocol 4, unchanged: no contract, result hash, heartbeat or proof level changes, so 0.12.x nodes stay peers. The node
