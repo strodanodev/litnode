@@ -34,7 +34,7 @@ record ranked results on chain. Every node runs the same program.
 |---|---|
 | A machine that stays on | Windows 10/11, macOS or Linux. A laptop is fine for testing; keep it awake while it runs |
 | A **new** browser wallet | MetaMask or similar, used only for this pilot. Never use a wallet that holds real funds |
-| zkLTC for gas | Free at [liteforge.hub.caldera.xyz](https://liteforge.hub.caldera.xyz). 0.05 covers your bond and many matches |
+| zkLTC for gas | Free at [faucet.testnet.liteforge.zeeve.net](https://faucet.testnet.liteforge.zeeve.net). 0.05 covers your bond and many matches |
 | `cloudflared` | Zip and source installs only, to be publicly reachable (the Control Plane sets it up itself). Windows: `winget install Cloudflare.cloudflared`; macOS: `brew install cloudflared`; Linux: [Cloudflare's packages](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) |
 | Node.js 20+ | Only for the plain zip, a source checkout, or hosting Agent Fighter matches. The Windows `-win-x64` zip and the Control Plane carry their own |
 | A synced clock | A node more than ~4 s off is ignored. Windows: Settings › Time › Sync now |
@@ -46,8 +46,8 @@ Network details, for adding LiteForge to your wallet:
 | Network | litVM LiteForge (testnet) |
 | Chain ID | 4441 |
 | RPC | `https://rpc.testnet.liteforge.zeeve.net/` (Caldera's `https://liteforge.rpc.caldera.xyz/http` stopped advancing on 11 Nov 2026: do not list it in `RPC` or `RPC_FALLBACK`) |
-| Explorer | `https://liteforge.explorer.caldera.xyz` |
-| Gas token | zkLTC ([faucet](https://liteforge.hub.caldera.xyz)) |
+| Explorer | `https://explorer.testnet.liteforge.zeeve.net` |
+| Gas token | zkLTC ([faucet](https://faucet.testnet.liteforge.zeeve.net)) |
 | Stake token | tLITVM (faucet button on your node's Nodes page) |
 
 ## 1. Install

@@ -35,7 +35,8 @@ const addrWord = (a) => low(a).slice(2).padStart(64, '0');
 export const explorerToken = (contract, id) => `${CHAIN.explorer}/token/${contract}/instance/${id}`;
 export const explorerAddress = (a) => `${CHAIN.explorer}/address/${a}`;
 
-async function api(path, { timeoutMs = 12000 } = {}) {
+// The Zeeve explorer takes 12 to 17 s for a page of token instances (measured 24 Nov 2026); at 12 s the Cards page gave up first.
+async function api(path, { timeoutMs = 30000 } = {}) {
   const r = await fetch(`${CHAIN.explorer}/api/v2${path}`, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
   if (!r.ok) throw new Error(`explorer ${r.status}`);
   return r.json();

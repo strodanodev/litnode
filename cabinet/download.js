@@ -20,7 +20,7 @@ export const CONTROL_PLANE = {
 
 const RELEASES = 'https://github.com/strodanodev/litnode/releases/latest';
 const GUIDE = 'https://github.com/strodanodev/litnode/blob/master/docs/OPERATORS.md';
-const GAS_FAUCET = 'https://liteforge.hub.caldera.xyz';
+const GAS_FAUCET = 'https://faucet.testnet.liteforge.zeeve.net';
 
 const DL_ICON = '<svg class="dl-ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v8.2m0 0L4.8 6.5M8 9.7l3.2-3.2M2.5 11.5v2.5h11v-2.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="square"/></svg>';
 export const downloadIcon = DL_ICON;

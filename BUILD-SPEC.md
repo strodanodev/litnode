@@ -835,8 +835,8 @@ and blocks phase 2 parameters, not phase 2 code.
 | Chain ID | 4441 (confirmed by `eth_chainId`) |
 | Native currency | zkLTC |
 | RPC | `https://rpc.testnet.liteforge.zeeve.net/` (from 11 Nov 2026; Caldera's `https://liteforge.rpc.caldera.xyz/http` · `wss://liteforge.rpc.caldera.xyz/ws` before) |
-| Explorer | `https://liteforge.explorer.caldera.xyz` |
-| Faucet | `https://liteforge.hub.caldera.xyz` |
+| Explorer | `https://explorer.testnet.liteforge.zeeve.net` |
+| Faucet | `https://faucet.testnet.liteforge.zeeve.net` |
 | EVM | Shanghai; effective gas cap 32M; ~250 ms on-demand blocks |
 
 ---

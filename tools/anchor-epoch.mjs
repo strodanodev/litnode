@@ -48,7 +48,7 @@ if (existing !== ethers.ZeroHash) {
   const rc = await tx.wait();
   const [has, needed, fin] = await anchor.standing(e.epoch, '0x' + e.root);
   console.log(`proposed in tx ${rc.hash} (block ${rc.blockNumber}) · stake behind this root ${ethers.formatEther(has)} of ${ethers.formatEther(needed)} needed${fin ? ' — FINAL' : ' — waiting for more stake'}`);
-  console.log(`explorer: https://liteforge.explorer.caldera.xyz/tx/${rc.hash}`);
+  console.log(`explorer: https://explorer.testnet.liteforge.zeeve.net/tx/${rc.hash}`);
 }
 
 const final = await anchor.rootOf(e.epoch);

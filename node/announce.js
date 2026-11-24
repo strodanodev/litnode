@@ -43,7 +43,7 @@ export function createAnnouncer({ dataDir, nodeId, contract, chainId, rpc, log =
       if (!delegated) { lastError = `announcer ${address} is not delegated for this node — operator: node tools/set-announcer.mjs ${nodeId.slice(0, 12)}… ${address}`; return 'not-delegated'; }
       const bal = BigInt(await call('eth_getBalance', [address, 'latest']));
       funded = bal > 0n;
-      if (!funded) { lastError = `announcer ${address} has no gas — send it a little zkLTC (faucet: liteforge.hub.caldera.xyz)`; return 'unfunded'; }
+      if (!funded) { lastError = `announcer ${address} has no gas — send it a little zkLTC (faucet: faucet.testnet.liteforge.zeeve.net)`; return 'unfunded'; }
       const data = announceCalldata(nodeId, url, wsAddr || '');
       // In the key's one line (node/sender.js): this key also pays for MatchBook, and a nonce read here while a
       // commit is on its way out would be the commit's.

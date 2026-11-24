@@ -39,7 +39,7 @@ A node that is not bonded gossips and hydrates rulesets but is excluded from
 placement and cannot co-sign; its health shows `bonded: false`. Open
 **http://localhost:7801/#/node** and use the **Operator** panel with your
 own browser wallet on litVM LiteForge: faucet tLITVM, bond, set the hot key,
-then fund it with a little zkLTC (free at liteforge.hub.caldera.xyz). The
+then fund it with a little zkLTC (free at faucet.testnet.liteforge.zeeve.net). The
 Setup checklist on that page shows what is left. The full operator guide:
 https://github.com/strodanodev/litnode/blob/master/docs/OPERATORS.md
 

@@ -26,6 +26,7 @@ import { readStake } from './chain.js';
 import { rankedCapacity } from './quorum.js';
 import * as wallet from './wallet.js';
 import * as air from './air.js';
+import { custody } from './custody.js';
 import * as nodeops from './nodeops.js';
 import * as seeds from './seeds.js';
 import { CHAIN } from './config.js';
@@ -445,7 +446,11 @@ async function finishAirProfile() {
   Ai.error = ''; Ai.note = '';
   Ai.busy = 'setting up your litVM profile (first time: three transactions)…'; render();
   try {
-    Ai.me.session = await air.nodeSession(nodeUrl(), { playerKey: player.id, name: player.name.replace(/[^A-Za-z0-9 _.-]/g, '').slice(0, 32) || null });
+    // The sign-in token goes to a node the arcade trusts with it (cabinet/custody.js): the one this page talks to
+    // when it qualifies, else a listed operator's seed. With none in reach the player stays signed in to AIR.
+    const target = await custody().airNode(nodeUrl());
+    if (!target) { Ai.busy = ''; Ai.note = 'You are signed in. Your litVM profile is set up by one of the arcade\'s own nodes, and none is reachable right now: it will be set up when one is back.'; render(); return; }
+    Ai.me.session = await air.nodeSession(target, { playerKey: player.id, name: player.name.replace(/[^A-Za-z0-9 _.-]/g, '').slice(0, 32) || null });
     if (Ai.me.session.name && !load('cabinet.name')) player.name = Ai.me.session.name;
     await refreshBinding();
     Ai.busy = ''; render();
@@ -1211,7 +1216,7 @@ async function pubRun(what, rid) {
 const ex = (kind, v, n = 10) => (v ? `<a class="link mono" target="_blank" rel="noopener" title="${esc(v)}" href="${esc(CHAIN.explorer)}/${kind}/${esc(v)}">${esc(v.slice(0, n))}…</a>` : '—');
 const copyable = (v, n = 12) => (v ? `<span class="mono copy" data-copy="${esc(v)}" title="${esc(v)} — click to copy">${esc(v.slice(0, n))}…</span>` : '—');
 const stateTag = (st) => ({ ok: '<span class="tag live">done</span>', warn: '<span class="tag hosted">pending</span>', todo: '<span class="tag court">to do</span>', na: '<span class="tag">n/a</span>' })[st] ?? '';
-const GAS_FAUCET = 'https://liteforge.hub.caldera.xyz';
+const GAS_FAUCET = 'https://faucet.testnet.liteforge.zeeve.net';
 const secs = (s) => (s == null ? '?' : s >= 60 && s % 60 === 0 ? `${s / 60} min` : `${s} s`);
 const REGISTRY = { active: 'active on ReleaseRegistry', pending: 'registered, activation delay running', revoked: 'REVOKED, will not apply', unset: 'no registry configured', unchecked: 'registry not checked yet', unreadable: 'registry unreadable' };
 // The page is one status band and one tab at a time; the tab is remembered per browser.

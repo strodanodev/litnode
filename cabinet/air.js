@@ -17,6 +17,7 @@
  *  remembered session says it is worth rehydrating. */
 import { AIR } from './config.js';
 import { decodeJwtPayload } from './protocol/air.js';
+import { custody } from './custody.js';
 
 const KEY = 'cabinet.air';
 const load = () => { try { return JSON.parse(localStorage.getItem(KEY) ?? 'null'); } catch { return null; } };
@@ -78,6 +79,7 @@ export async function token() {
 /** Ask the node for this account's litVM identity, binding this browser's key.
  *  The node answers { address (proxy), tokenId, name, custody, playerKey, steps }. */
 export async function nodeSession(nodeUrl, { playerKey = null, name = null } = {}) {
+  await custody().assertTrusted(nodeUrl); // the token is a bearer credential: listed nodes only (cabinet/custody.js)
   const t = await token();
   if (!t) throw new Error('no AIR session token');
   const r = await fetch(`${nodeUrl}/air/session`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: t, playerKey, name }), signal: AbortSignal.timeout(90_000) });
@@ -91,6 +93,7 @@ export async function nodeSession(nodeUrl, { playerKey = null, name = null } = {
  *  { action: 'register'|'set-build'|'revoke'|'transfer', rulesetId, buildHash?, to?, activatesAt? }.
  *  The node answers { tx, title: { publisher, build: { active, reason … } } }. */
 async function post(nodeUrl, path, body) {
+  await custody().assertTrusted(nodeUrl); // before the token is even fetched
   const t = await token();
   if (!t) throw new Error('no AIR session token');
   const r = await fetch(`${nodeUrl}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: t, ...body }), signal: AbortSignal.timeout(180_000) });

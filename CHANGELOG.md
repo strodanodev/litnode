@@ -50,10 +50,26 @@ cabinet both changed: redeploy the arcade with the release that carries this. Fr
   seconds apart. The seat used to be marked as answered before the send, so a failed send left it silent.
 - Tests: `demo/durability.test.mjs` (new), `demo/cabinet.test.mjs`, `demo/verifier.test.mjs`, `demo/air.test.mjs`.
 
-Not in this patch: the AIR token is still a bearer credential the arcade hands to whichever seed it picked. Signing
-the request with the player key does not fix that (a seed can sign with a key of its own); it needs a decision on
-which nodes the arcade may give the token to. The play frames are not sandboxed yet: that could not be checked
-against the live titles from a local page.
+- **The arcade gives a player's AIR sign-in token to listed nodes only** (`cabinet/custody.js`). The token is a bearer
+  credential with no audience in it, and it went to whichever seed the arcade had picked: a seed proves who it is,
+  not that it is honest, and could present the token to another node as the player. It now goes to the node that
+  served the page, a node on the visitor's own machine, or a node that proves its key over https and whose bond,
+  read from the chain by the page, is held by a wallet in `CUSTODY_OPERATORS` (the publisher's, to start). When the
+  page talks to any other node, sign-in uses a listed operator's announced seed instead; with none in reach the
+  player stays signed in to AIR and the litVM profile is set up when one is back. Publishing and bonding from the
+  AIR wallet go through the same check. Tests: `demo/custody-list.test.mjs`.
+
+### Changed
+
+- **Explorer and faucet moved to Zeeve** with the RPC: `https://explorer.testnet.liteforge.zeeve.net` and
+  `https://faucet.testnet.liteforge.zeeve.net`, in `contracts/deployed.testnet.json`, the arcade, the tools' output
+  and the docs. Caldera's explorer answers 404 since the chain moved, which had left the arcade's Cards page and every
+  explorer and faucet link dead. The new explorer serves the same API on the same chain (checked against the RPC
+  head, MatchBook's address and the Rapture Cards collection); its token list takes 12 to 17 s, so the Cards page
+  now waits 30 s for it, not 12.
+
+Not in this patch: the play frames are not sandboxed yet. That could not be checked against the live titles from a
+local page; it is on branch `frame-sandbox` for a preview deploy.
 
 ### Added
 

@@ -159,7 +159,7 @@ export function createMatchBook({
   const readBalance = async () => {
     try { balanceWei = BigInt(await call('eth_getBalance', [address, 'latest'])); balanceAt = Date.now(); funded = balanceWei > 0n; } catch { /* unknown; keep the last */ }
     const p = purse();
-    if (p.low && !lowLogged) { lowLogged = true; log(`matchbook: hot key ${address} is low — ${p.balance} zkLTC covers ~${p.matchesLeft} more matches as host; send it zkLTC (faucet: liteforge.hub.caldera.xyz)`); emit('gas-low', { address, balance: p.balance, matchesLeft: p.matchesLeft }); }
+    if (p.low && !lowLogged) { lowLogged = true; log(`matchbook: hot key ${address} is low — ${p.balance} zkLTC covers ~${p.matchesLeft} more matches as host; send it zkLTC (faucet: faucet.testnet.liteforge.zeeve.net)`); emit('gas-low', { address, balance: p.balance, matchesLeft: p.matchesLeft }); }
     if (!p.low) lowLogged = false;
   };
   const panels = new Map();                 // matchId → { hostKey, panel[] } from Committed

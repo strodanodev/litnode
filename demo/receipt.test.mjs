@@ -11,7 +11,7 @@ import { keccak256Hex, selector } from '../protocol/keccak.js';
 
 const MB = '0x90d642d1f1cb00ebfeb2268dd13dee32a2852e5b';
 const ANCHOR = '0x919e9500785ab077d2058490a465f05bd8238a64';
-const EXPLORER = 'https://liteforge.explorer.caldera.xyz';
+const EXPLORER = 'https://explorer.testnet.liteforge.zeeve.net';
 const M = '524cd42dfcf73b05a38c77e1663e1139d61103a3cc4fe15d55c70d3352e07e8b';
 const A = 'c6'.repeat(32), B = '44'.repeat(32), H = '5b'.repeat(32);
 const W = ['3b'.repeat(32), '90'.repeat(32), '2c'.repeat(32)];

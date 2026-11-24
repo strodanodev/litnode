@@ -34,7 +34,7 @@
  *  --only TitleRegistry[,ReleaseRegistry,…]  add just those contracts to the
  *            existing deployment; NodeStake and everything keyed on it untouched.
  *
- *  Needs zkLTC for gas on the deployer: https://liteforge.hub.caldera.xyz */
+ *  Needs zkLTC for gas on the deployer: https://faucet.testnet.liteforge.zeeve.net */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -287,4 +287,4 @@ deployed.deployer = wallet.address;
 save();
 console.log(`\nwrote ${outPath}`);
 console.log('next: cabinet/config.js CHAIN addresses, then `npm run authority` to snapshot who holds what.');
-console.log(`explorer: https://liteforge.explorer.caldera.xyz/address/${deployed.NodeStake.address}`);
+console.log(`explorer: https://explorer.testnet.liteforge.zeeve.net/address/${deployed.NodeStake.address}`);

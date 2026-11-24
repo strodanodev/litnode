@@ -10,7 +10,7 @@
  *    PowerShell:  $env:DEPLOYER_KEY = (Get-Content ~/.litnode/deployer-key.json | ConvertFrom-Json).privateKey
  *    bash:        export DEPLOYER_KEY=$(node -p "require(require('os').homedir()+'/.litnode/deployer-key.json').privateKey")
  *
- *  Then fund the address with zkLTC (https://liteforge.hub.caldera.xyz) and
+ *  Then fund the address with zkLTC (https://faucet.testnet.liteforge.zeeve.net) and
  *  run `npm run deploy:testnet -- --fresh --quorum 2`. */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -25,4 +25,4 @@ const address = addressOf(privateKey);
 mkdirSync(dirname(file), { recursive: true });
 writeFileSync(file, JSON.stringify({ address, privateKey, createdAt: new Date().toISOString(), purpose: 'litnode testnet deployer / operator (v2 migration)' }, null, 2) + '\n', { mode: 0o600 });
 const shown = file.split('\\').join('/');
-console.log(`new wallet ${address}` + String.fromCharCode(10) + `key written to ${file} (never printed; never commit it)` + String.fromCharCode(10, 10) + 'next:' + String.fromCharCode(10) + `  1. fund ${address} with zkLTC: https://liteforge.hub.caldera.xyz` + String.fromCharCode(10) + `  2. PowerShell:  $env:DEPLOYER_KEY = (Get-Content "${shown}" | ConvertFrom-Json).privateKey` + String.fromCharCode(10) + '  3. npm run deploy:testnet -- --fresh --quorum 2');
+console.log(`new wallet ${address}` + String.fromCharCode(10) + `key written to ${file} (never printed; never commit it)` + String.fromCharCode(10, 10) + 'next:' + String.fromCharCode(10) + `  1. fund ${address} with zkLTC: https://faucet.testnet.liteforge.zeeve.net` + String.fromCharCode(10) + `  2. PowerShell:  $env:DEPLOYER_KEY = (Get-Content "${shown}" | ConvertFrom-Json).privateKey` + String.fromCharCode(10) + '  3. npm run deploy:testnet -- --fresh --quorum 2');

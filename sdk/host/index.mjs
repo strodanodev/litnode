@@ -146,7 +146,7 @@ export function effectiveConfig(env = readEnv() ?? {}, { root = ROOT, processEnv
     releaseChannel: e.RELEASE_CHANNEL || 'stable',
     localUrl: `http://127.0.0.1:${port}`,
     minStake: deployed.NodeStake?.minStake ?? null,
-    explorer: deployed.explorer ?? 'https://liteforge.explorer.caldera.xyz',
+    explorer: deployed.explorer ?? 'https://explorer.testnet.liteforge.zeeve.net',
   };
 }
 

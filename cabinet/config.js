@@ -172,6 +172,6 @@ export const CHAIN = {
   NodeDirectory: at('NodeDirectory'),
   ReleaseRegistry: at('ReleaseRegistry'),
   TitleRegistry: at('TitleRegistry'),
-  explorer: 'https://liteforge.explorer.caldera.xyz',
+  explorer: 'https://explorer.testnet.liteforge.zeeve.net',
   token: 'tLITVM',
 };

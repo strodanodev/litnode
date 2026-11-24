@@ -3,7 +3,7 @@
   "chainId": 4441,
   "rpc": "https://rpc.testnet.liteforge.zeeve.net/",
   "rpcFallback": [],
-  "explorer": "https://liteforge.explorer.caldera.xyz",
+  "explorer": "https://explorer.testnet.liteforge.zeeve.net",
   "deployedAt": "2026-09-20T22:34:07.928Z",
   "contracts": {
     "TestLITVM": {

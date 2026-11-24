@@ -113,7 +113,7 @@ Decisions, with the recommendation marked:
   key*, not that the wallet holds it — sufficient, because a key bound to a
   wallet that does not hold it earns that wallet nothing and costs it gas.
 - **Gas.** Liteforge's native token is zkLTC; the faucet at
-  `liteforge.hub.caldera.xyz` funds it. Two MetaMask prompts on first use
+  `faucet.testnet.liteforge.zeeve.net` funds it. Two MetaMask prompts on first use
   (add chain, send). `registerWithSig` removes gas from the player and moves
   it to a relayer — an operator tool like `tools/anchor-epoch.mjs`, **never
   the node**, which holds no chain key (BUILD-SPEC §11). Build `register`
