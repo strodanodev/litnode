@@ -836,7 +836,7 @@ function renderGames() {
     ${arcadeBanner()}
     <section class="aw" id="aw" aria-label="arcade window">
       <div class="aw-bar" id="aw-bar"></div>
-      <div class="aw-screen" id="aw-screen"><iframe id="aw-frame" title="arcade window" allow="fullscreen *; gamepad *; autoplay *; pointer-lock *; xr-spatial-tracking *; clipboard-write *"></iframe></div>
+      <div class="aw-screen" id="aw-screen"><iframe id="aw-frame" title="arcade window" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-pointer-lock allow-orientation-lock allow-presentation allow-downloads allow-storage-access-by-user-activation" allow="fullscreen *; gamepad *; autoplay *; pointer-lock *; xr-spatial-tracking *; clipboard-write *"></iframe></div>
       <div class="aw-sel" id="aw-sel"></div>
     </section>
     <div class="section-h aw-lib"><h4>Library</h4></div>

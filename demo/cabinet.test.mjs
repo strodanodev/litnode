@@ -214,6 +214,10 @@ test('cabinet: one content security policy on Vercel, on a node and on npm run c
     if (/<[a-z][^<>]*\son[a-z]+\s*=\s*["'`$]/i.test(text) || /javascript:/i.test(text.replace(/\/\/.*$/gm, ''))) inline.push(f);
   }
   assert.deepEqual(inline, [], 'an inline handler or a javascript: URL would be blocked by the policy');
+  // both frames a title runs in are sandboxed: a title cannot navigate the arcade's own tab
+  const frames = [...html.matchAll(/<iframes[^>]*>/g), ...readFileSync(join('cabinet', 'app.js'), 'utf8').matchAll(/<iframes[^>]*>/g)].map((m) => m[0]);
+  assert.equal(frames.length, 2);
+  for (const f of frames) { assert.match(f, /sandbox="[^"]*allow-scripts[^"]*"/); assert.ok(!/allow-top-navigation/.test(f), f); }
 });
 
 test('cabinet: cabinet:init gives the AIR id and email only to an arcade-login title at its own origin', async () => {
