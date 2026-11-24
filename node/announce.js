@@ -8,7 +8,9 @@
  *  send it a little gas. Until both are done the node says what is missing
  *  and keeps working — announcing is how strangers find a seed, not how
  *  the mesh works. */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { writeAtomic } from './atomic.js';
+import { keyQueue } from './sender.js';
 import { join } from 'node:path';
 import { randomPrivateKey, addressOf } from '../protocol/evm.js';
 import { feeParams, signWithFee, capFromEnv } from './fees.js';
@@ -20,7 +22,7 @@ const REFRESH_S = 3 * 24 * 3600;    // re-announce an unchanged entry this often
 export function createAnnouncer({ dataDir, nodeId, contract, chainId, rpc, log = () => {}, emit = () => {} }) {
   const keyPath = join(dataDir, 'announcer.json');
   const key = existsSync(keyPath) ? JSON.parse(readFileSync(keyPath, 'utf8')) : { privateKey: randomPrivateKey() };
-  if (!existsSync(keyPath)) writeFileSync(keyPath, JSON.stringify(key, null, 2) + '\n');
+  if (!existsSync(keyPath)) writeAtomic(keyPath, JSON.stringify(key, null, 2) + '\n');
   const address = addressOf(key.privateKey);
   let lastSentAt = 0, lastTx = null, lastError = null, entry = null, delegated = null, funded = null, pending = false;
 
@@ -43,14 +45,18 @@ export function createAnnouncer({ dataDir, nodeId, contract, chainId, rpc, log =
       funded = bal > 0n;
       if (!funded) { lastError = `announcer ${address} has no gas — send it a little zkLTC (faucet: liteforge.hub.caldera.xyz)`; return 'unfunded'; }
       const data = announceCalldata(nodeId, url, wsAddr || '');
-      const [nonceHex, fee, gasHex] = await Promise.all([
-        call('eth_getTransactionCount', [address, 'pending']),
-        feeParams(call, { capWei: capFromEnv() }), // type 2 with a ceiling where the chain has a base fee (node/fees.js)
-        call('eth_estimateGas', [{ from: address, to: contract, data }]),
-      ]);
-      const raw = signWithFee({ nonce: BigInt(nonceHex), gasLimit: BigInt(gasHex) * 13n / 10n, to: contract, value: 0n, data, chainId: BigInt(chainId) }, fee, key.privateKey);
-      lastSentAt = Date.now();
-      lastTx = await call('eth_sendRawTransaction', [raw]);
+      // In the key's one line (node/sender.js): this key also pays for MatchBook, and a nonce read here while a
+      // commit is on its way out would be the commit's.
+      lastTx = await keyQueue(address).run('announce', async () => {
+        const [nonceHex, fee, gasHex] = await Promise.all([
+          call('eth_getTransactionCount', [address, 'pending']),
+          feeParams(call, { capWei: capFromEnv() }), // type 2 with a ceiling where the chain has a base fee (node/fees.js)
+          call('eth_estimateGas', [{ from: address, to: contract, data }]),
+        ]);
+        const raw = signWithFee({ nonce: BigInt(nonceHex), gasLimit: BigInt(gasHex) * 13n / 10n, to: contract, value: 0n, data, chainId: BigInt(chainId) }, fee, key.privateKey);
+        lastSentAt = Date.now();
+        return call('eth_sendRawTransaction', [raw]);
+      });
       lastError = null;
       // What the directory will say once the transaction mines — status() shows it now rather than the pre-send
       // entry for up to a cycle (the Node page read "announce due" for ten minutes after every restart).

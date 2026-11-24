@@ -21,6 +21,7 @@ import { execFileSync } from 'node:child_process';
 import { opened } from '../protocol/keys.js';
 import { PROTOCOL_VERSION } from '../protocol/version.js';
 import { releaseVerdict, statusOfCall, decodeStatus } from '../protocol/release.js';
+import { writeAtomic } from './atomic.js';
 
 export const RELEASE_TAG = 'release';
 /** The litnode release key. A manifest not signed by it is not a release. */
@@ -184,7 +185,7 @@ export function createUpdater({ root, version, releaseUrl = RELEASE_URL, pubkey 
   if (basename(root) === '.previous') log('WARNING: this node runs from a .previous folder, the rollback copy of an earlier build. Start the install one level up (Control Plane 0.1.12 picks this copy after a self-update).');
   const persisted = keysFile && existsSync(keysFile) ? JSON.parse(readFileSync(keysFile, 'utf8')) : { accepted: [], retired: [] };
   const acceptedKeys = () => [pubkey, ...persisted.accepted].filter((k) => !persisted.retired.includes(k));
-  const saveKeys = () => { if (keysFile) writeFileSync(keysFile, JSON.stringify(persisted, null, 2) + '\n'); };
+  const saveKeys = () => { if (keysFile) writeAtomic(keysFile, JSON.stringify(persisted, null, 2) + '\n'); }; // the accepted and RETIRED release keys: never half-written
 
   /** Fetch and verify the manifest. Returns the verified body or null. */
   const check = async () => {

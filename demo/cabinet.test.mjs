@@ -189,6 +189,64 @@ test('the ranked-capacity notice counts staking wallets, not the labels nodes ch
   assert.deepEqual(rankedCapacity(old, RID, { protocol: 4 }), { ok: true, operators: 4, seats: 3, hosts: 1, by: 'label' });
 });
 
+test('cabinet: one content security policy on Vercel, on a node and on npm run cabinet; no inline script for it to break', async () => {
+  const { readFileSync, readdirSync } = await import('node:fs');
+  const { CSP, REFERRER_POLICY, SECURITY_HEADERS } = await import('../cabinet/headers.js');
+  const vercel = JSON.parse(readFileSync(join('cabinet', 'vercel.json'), 'utf8')).headers.find((h) => h.source === '/(.*)').headers;
+  const of = (k) => vercel.find((h) => h.key === k)?.value;
+  assert.equal(of('Content-Security-Policy'), CSP, 'vercel.json carries cabinet/headers.js word for word');
+  assert.equal(of('Referrer-Policy'), REFERRER_POLICY);
+  assert.equal(of('X-Content-Type-Options'), 'nosniff');
+  assert.equal(SECURITY_HEADERS['content-security-policy'], CSP);
+  // what the policy is for: scripts from this origin only, nothing inline, no plugins, no foreign base
+  const directive = (name) => CSP.split('; ').find((d) => d.startsWith(name + ' '));
+  assert.equal(directive('script-src'), "script-src 'self' 'wasm-unsafe-eval'");
+  assert.ok(!/unsafe-inline|unsafe-eval'|\*/.test(directive('script-src').replace("'wasm-unsafe-eval'", '')), 'no inline or eval scripts, no wildcard');
+  assert.equal(directive('object-src'), "object-src 'none'");
+  assert.equal(directive('base-uri'), "base-uri 'self'");
+  assert.match(directive('frame-ancestors'), /'self'/);
+  // and the page lives within it: one external module script, no inline handler anywhere in the shipped markup or templates
+  const html = readFileSync(join('cabinet', 'index.html'), 'utf8');
+  assert.deepEqual(html.match(/<script[^>]*>/g), ['<script type="module" src="./app.js">']);
+  const inline = [];
+  for (const f of ['index.html', ...readdirSync('cabinet').filter((n) => n.endsWith('.js'))]) {
+    const text = readFileSync(join('cabinet', f), 'utf8');
+    if (/<[a-z][^<>]*\son[a-z]+\s*=\s*["'`$]/i.test(text) || /javascript:/i.test(text.replace(/\/\/.*$/gm, ''))) inline.push(f);
+  }
+  assert.deepEqual(inline, [], 'an inline handler or a javascript: URL would be blocked by the policy');
+});
+
+test('cabinet: cabinet:init gives the AIR id and email only to an arcade-login title at its own origin', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(join('cabinet', 'app.js'), 'utf8');
+  const fn = src.slice(src.indexOf('const sendInit = () => {'), src.indexOf('window.addEventListener(\'message\'', src.indexOf('const sendInit = () => {')));
+  assert.ok(fn.length > 200, 'sendInit found');
+  // run it against a stand-in frame and see what each origin would be handed
+  const run = (current, me) => {
+    const posts = [];
+    const frame = { contentWindow: { postMessage: (msg, origin) => posts.push({ msg, origin }) } };
+    const air = { configured: () => true };
+    const airOriginsOf = (g) => { const out = []; for (const u of [g?.url, ...(g?.origins ?? [])]) { try { out.push(new URL(u).origin); } catch { /* not a url */ } } return out; };
+    const sendInit = new Function('current', 'frame', 'Ai', 'air', 'airOriginsOf', 'player', 'nodeUrl', 'S', 'CHAIN', 'CONTRACTS', 'currentMatch', `${fn}; return sendInit;`)(
+      current, frame, { me }, air, airOriginsOf, { id: 'k'.repeat(64), guest: false, name: 'nezuko' }, () => 'https://node.example', { online: true }, { chainId: 4441, rpc: 'r', generation: 3 }, { contracts: {} }, null);
+    sendInit();
+    return posts;
+  };
+  const me = { id: 'air-user-1', email: 'nezuko@example.com', session: { address: '0xabc', tokenId: '7', name: 'nezuko' } };
+  const third = run({ id: 'x', title: 'X', url: 'https://third.example/', login: null }, me);
+  assert.equal(third.length, 1);
+  assert.equal(third[0].origin, '*');
+  assert.deepEqual(third[0].msg.air, { id: null, email: null, address: '0xabc', tokenId: '7', name: 'nezuko' }, 'public facts only');
+  assert.ok(!JSON.stringify(third).includes('nezuko@example.com') && !JSON.stringify(third).includes('air-user-1'));
+  const first = run({ id: 'tcg', title: 'T', url: 'https://tcg.litvm.games/', login: 'arcade' }, me);
+  assert.deepEqual(first.map((p) => p.origin), ['*', 'https://tcg.litvm.games']);
+  assert.equal(first[0].msg.air.email, null, 'the open post still carries no email');
+  assert.equal(first[1].msg.air.email, 'nezuko@example.com');
+  assert.equal(first[1].msg.air.id, 'air-user-1');
+  assert.equal(first[1].msg.login, 'arcade');
+  assert.equal(run({ id: 'tcg', title: 'T', url: 'https://tcg.litvm.games/', login: 'arcade' }, { session: null }).length, 1, 'signed out: one public init');
+});
+
 test('cabinet: every script the arcade ships parses (a syntax error in one module blanks the whole page)', async () => {
   // 25 Oct 2026: an unescaped quote in cabinet/build.js (e3be6df) passed the suite, which never loads it, and the
   // arcade deploy showed a blank page until it was rolled back. node --check parses without running, and ES module

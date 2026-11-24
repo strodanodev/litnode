@@ -172,3 +172,26 @@ test('air: first sign-in mints a sponsored proxy profile with the AIR id bound; 
   assert.equal(s5.custody, 'elsewhere'); assert.equal(s5.name, 'Elsewhere'); assert.equal(s5.address, '0x' + 'dd'.repeat(20));
   assert.equal(existsSync(join(tmp, 'n', 'proxies', `${airKey(other)}.json`)), false, 'no key minted for a profile that exists elsewhere');
 });
+
+test('air: the sponsor pays for a bounded number of new accounts a day (it is the purse that pays MatchBook)', { timeout: 60_000 }, async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'litnode-air-budget-'));
+  const { st, fetchImpl } = mockChain();
+  process.env.AIR_SPONSOR_DAILY = '1';
+  let node;
+  try { node = await createNode({ dataDir: join(tmp, 'n'), rpc: 'mock://', offline: false, playerProfile: CONTRACT, chainFetch: fetchImpl, heartbeatMs: 200, operator: 'publisher', updates: false, air: { partnerId: 'p1', jwksUrl: 'mock://jwks' } }); }
+  finally { delete process.env.AIR_SPONSOR_DAILY; }
+  t.after(async () => { await node.stop().catch(() => {}); rmSync(tmp, { recursive: true, force: true }); });
+  const json = async (p, body) => { const r = await fetch(`${node.addr}${p}`, body ? { method: 'POST', body: JSON.stringify(body) } : undefined); return { status: r.status, body: await r.json() }; };
+  const info = (await json('/air')).body;
+  assert.equal(info.sponsorDaily, 1); assert.equal(info.sponsoredToday, 0);
+  st.balances[info.sponsor.toLowerCase()] = 10n ** 18n;
+  const first = await json('/air/session', { token: mint({ sub: SUB, partnerId: 'p1', exp: now + 300 }) });
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  const second = await json('/air/session', { token: mint({ sub: 'another-air-user-0002', partnerId: 'p1', exp: now + 300 }) });
+  assert.equal(second.status, 502);
+  assert.match(second.body.error, /sponsored its 1 new accounts for today/);
+  assert.equal(st.txs.filter((x) => x.op === 'transfer').length, 1, 'one top-up left the sponsor, not two');
+  assert.equal((await json('/air')).body.sponsoredToday, 1);
+  // the account that already exists is not affected
+  assert.equal((await json('/air/session', { token: mint({ sub: SUB, partnerId: 'p1', exp: now + 300 }) })).status, 200);
+});

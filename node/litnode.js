@@ -25,6 +25,8 @@ import { MAX_LOG_BYTES, createSettlement } from './settle.js';
 import { createMatchBook } from './matchbook.js';
 import { matchIdBytes32 } from '../protocol/matchbook.js';
 import { createUpdater, RESTART_EXIT } from './update.js';
+import { writeAtomic } from './atomic.js';
+import { SECURITY_HEADERS } from '../cabinet/headers.js';
 import { createTunnel } from './tunnel.js';
 import { createRo3Host, ro3Entry, ro3Name } from './ro3.js';
 import { createGauntlets } from './gauntlet.js';
@@ -332,7 +334,7 @@ export async function createNode({
   // ---------------------------------------------------------------- identity
   const idPath = join(dataDir, 'identity.json');
   const identity = existsSync(idPath) ? JSON.parse(readFileSync(idPath, 'utf8')) : await generateKeypair();
-  if (!existsSync(idPath)) writeFileSync(idPath, JSON.stringify(identity, null, 2) + '\n');
+  if (!existsSync(idPath)) writeAtomic(idPath, JSON.stringify(identity, null, 2) + '\n'); // whole or not at all: a torn identity is a lost bond
   const nodeId = identity.publicKey;
 
   const sandbox = createSandbox({ timeoutMs: sandboxTimeoutMs, memoryMb: sandboxMemoryMb, log });
@@ -1441,7 +1443,10 @@ export async function createNode({
     const safe = rel.replace(/\.\./g, '').replace(/^\/+/, '');
     const file = join(staticRoot, safe);
     if (!existsSync(file) || !statSync(file).isFile()) return false;
-    res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream', ...CORS, 'cache-control': 'no-cache' });
+    // The arcade page carries its content security policy wherever it is served (cabinet/headers.js): the node's copy
+    // holds the same player key in the same kind of storage as the hosted one.
+    const page = extname(file) === '.html' && safe.startsWith('cabinet/');
+    res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream', ...CORS, 'cache-control': 'no-cache', 'x-content-type-options': 'nosniff', ...(page ? SECURITY_HEADERS : {}) });
     res.end(readFileSync(file));
     return true;
   };
@@ -2102,7 +2107,7 @@ export async function createNode({
     // The sponsor is the announcer key (<dataDir>/announcer.json): one key the
     // operator already funds. Created here when there is no directory to announce to.
     const sponsorPath = join(dataDir, 'announcer.json');
-    if (!existsSync(sponsorPath)) writeFileSync(sponsorPath, JSON.stringify({ privateKey: randomPrivateKey() }, null, 2) + '\n');
+    if (!existsSync(sponsorPath)) writeAtomic(sponsorPath, JSON.stringify({ privateKey: randomPrivateKey() }, null, 2) + '\n');
     const sponsorKey = JSON.parse(readFileSync(sponsorPath, 'utf8'));
     airVerifier = createAirVerifier({ jwksUrl: air.jwksUrl, partnerId: air.partnerId ?? null, fetchImpl: chainFetch });
     proxies = createProxyWallets({ dataDir, chainId: chainId ?? 4441, rpc: chain.rpc, playerProfile, sponsor: { privateKey: sponsorKey.privateKey, address: addressOf(sponsorKey.privateKey) }, titleRegistry, nodeStake, stakeToken, nodeId, log, emit });

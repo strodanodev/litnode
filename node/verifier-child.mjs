@@ -20,11 +20,20 @@ registerHooks({
   },
 });
 for (const k of ['fetch', 'WebSocket', 'EventSource', 'XMLHttpRequest']) { try { delete globalThis[k]; } catch { /* not there */ } }
+// The resolve hook above covers `import` and `require`; it does not cover the ways `process` hands out a builtin or
+// reaches outside this process. The title sandbox has always removed them (node/sandbox-child.mjs); this child kept
+// `process` whole, so a bundle could call process.getBuiltinModule('net') past the hook, or process.kill() the node
+// that started it (audit of 10 Nov 2026). What this file itself needs from `process` is taken first.
+const write = process.stdout.write.bind(process.stdout);
+const exit = process.exit.bind(process);
+const stdin = process.stdin;
+for (const k of ['getBuiltinModule', 'binding', '_linkedBinding', 'dlopen', 'openStdin', 'chdir', 'kill', 'abort', 'setuid', 'setgid', 'seteuid', 'setegid', 'setgroups', 'initgroups', 'umask', '_debugProcess', '_debugEnd', '_startProfilerIdleNotifier']) { try { process[k] = undefined; } catch { /* read-only on this runtime */ } }
+try { process.env = Object.freeze({}); } catch { /* ignore */ }
 
-const out = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
+const out = (o) => write(`${JSON.stringify(o)}\n`);
 let input = '';
-process.stdin.setEncoding('utf8');
-for await (const chunk of process.stdin) input += chunk;
+stdin.setEncoding('utf8');
+for await (const chunk of stdin) input += chunk;
 try {
   const { entry, log, spec } = JSON.parse(input);
   const m = await import(entry);
@@ -34,4 +43,4 @@ try {
 } catch (e) {
   out({ ok: false, error: String(e?.message ?? e).slice(0, 500) });
 }
-process.exit(0);
+exit(0);

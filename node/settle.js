@@ -63,6 +63,7 @@ import { createHash } from 'node:crypto';
 import { PROTOCOL_VERSION } from '../protocol/version.js';
 import { matchIdBytes32 } from '../protocol/matchbook.js';
 import { matchIdFor } from '../protocol/pairing.js';
+import { writeAtomic, readJsonOr } from './atomic.js';
 import { disputeHash } from './verifier.js';
 
 export const COSIGN_TAG = 'cosign';
@@ -133,9 +134,13 @@ export function createSettlement({
   };
   const dirs = { ledgers: join(dataDir, 'ledgers'), deltas: join(dataDir, 'deltas'), epochs: join(dataDir, 'epochs'), logs: join(dataDir, 'logs') };
   for (const d of Object.values(dirs)) mkdirSync(d, { recursive: true });
-  const readAll = (dir) => readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readFileSync(join(dir, f), 'utf8')));
-  const put = (dir, id, obj) => writeFileSync(join(dir, `${encodeURIComponent(id)}.json`), JSON.stringify(obj));
-  const get = (dir, id) => { const f = join(dir, `${encodeURIComponent(id)}.json`); return existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : null; };
+  // Every file here is written whole or not at all (node/atomic.js), and a file that does not parse — torn by a crash
+  // or a full disk under an older build — is moved aside and reported instead of stopping the node at start: one
+  // damaged delta used to take every other result on the node down with it (audit of 10 Nov 2026).
+  const corrupt = (file, e, moved) => log(`store: ${file} does not parse (${e.message}); ${moved ? `moved to ${moved}` : 'left in place'} and skipped`);
+  const readAll = (dir) => readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => readJsonOr(join(dir, f), null, corrupt)).filter((x) => x && typeof x === 'object');
+  const put = (dir, id, obj) => writeAtomic(join(dir, `${encodeURIComponent(id)}.json`), JSON.stringify(obj));
+  const get = (dir, id) => readJsonOr(join(dir, `${encodeURIComponent(id)}.json`), null, corrupt);
   // ---------------------------------------------------------------- logs (settlement v4)
   /** Content-addressed: <dataDir>/logs/<sha256>. A log is held only after its bytes hash to the committed inputsHash. */
   const logFile = (hash) => join(dirs.logs, hash);
@@ -144,7 +149,7 @@ export function createSettlement({
   const holdLog = (bytes, expected) => {
     const got = sha256Bytes(bytes);
     if (got !== expected) throw new Error(`log sha256 ${got.slice(0, 12)}… does not match commitments.inputsHash ${String(expected).slice(0, 12)}…`);
-    if (!existsSync(logFile(got))) writeFileSync(logFile(got), bytes);
+    if (!existsSync(logFile(got))) writeAtomic(logFile(got), bytes);
     return got;
   };
   const logStats = () => { let count = 0, bytes = 0; for (const n of readdirSync(dirs.logs)) { if (!isHex64(n)) continue; count++; try { bytes += statSync(logFile(n)).size; } catch { /* gone */ } } return { count, bytes }; };

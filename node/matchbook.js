@@ -38,6 +38,8 @@ import { join } from 'node:path';
 import { randomPrivateKey, addressOf } from '../protocol/evm.js';
 import { feeParams, signWithFee, effectivePrice, capFromEnv } from './fees.js';
 import * as mb from '../protocol/matchbook.js';
+import { writeAtomic } from './atomic.js';
+import { keyQueue, isNonceError } from './sender.js';
 import { progression } from '../protocol/progression.js';
 import { mayActForCall, decodeBool, witnessEligibleCall } from '../protocol/staking.js';
 import { descriptorHash as descriptorHashOf } from './settle.js';
@@ -122,7 +124,7 @@ export function createMatchBook({
   const windows = { settleWindow: 1800, ...contractWindows };
   const keyPath = join(dataDir, 'announcer.json');
   const key = existsSync(keyPath) ? JSON.parse(readFileSync(keyPath, 'utf8')) : { privateKey: randomPrivateKey() };
-  if (!existsSync(keyPath)) writeFileSync(keyPath, JSON.stringify(key, null, 2) + '\n');
+  if (!existsSync(keyPath)) writeAtomic(keyPath, JSON.stringify(key, null, 2) + '\n');
   const address = addressOf(key.privateKey);
   const call = rpc;
 
@@ -167,9 +169,11 @@ export function createMatchBook({
   // settlement store), a seat resumes covering for the host.
   const dutiesPath = join(dataDir, 'matchbook-duties.json');
   const duties = new Map();                 // key → { matchId, role: 'host'|'seat', seat, status, committedAt, settledAt, drawBlock, escalatedAt, tried: {} }
-  const saveDuties = () => { try { writeFileSync(dutiesPath, JSON.stringify([...duties.values()].map(({ tried, ledger, ...d }) => d))); } catch { /* read-only data dir */ } };
+  const saveDuties = () => { try { writeAtomic(dutiesPath, JSON.stringify([...duties.values()].map(({ tried, ledger, ...d }) => d))); } catch { /* read-only data dir */ } };
   const ledgers = new Map();                // key → ledger a seat fetched and verified (to feed an escalation if the host will not)
   const attested = new Set();               // matchIds this node answered (either panel)
+  const attestTries = new Map();            // matchId → { n, at }: attestations whose transaction did not go out
+  const ATTEST_TRIES = 5, ATTEST_RETRY_MS = 10_000;
   const witnessing = new Set();             // in flight
   const escalation = new Map();             // matchId → { panel[], escalatedAt }
   const blockTs = new Map();                // block number → timestamp (seconds), for the hour a Finalized event belongs to
@@ -184,7 +188,7 @@ export function createMatchBook({
   const custodyMem = new Map();
   const keyOf = (id) => mb.matchIdBytes32(String(id));
   const held = (id) => { const key = keyOf(id); if (custodyMem.has(key)) return custodyMem.get(key); try { return JSON.parse(readFileSync(join(custodyDir, `${key}.json`), 'utf8')); } catch { return null; } };
-  const hold = (key, delta, ledger) => { const rec = { key, delta, ledger, at: Date.now() }; try { writeFileSync(join(custodyDir, `${key}.json`), JSON.stringify(rec)); } catch { custodyMem.set(key, rec); } };
+  const hold = (key, delta, ledger) => { const rec = { key, delta, ledger, at: Date.now() }; try { writeAtomic(join(custodyDir, `${key}.json`), JSON.stringify(rec)); } catch { custodyMem.set(key, rec); } };
   const dropHeld = (key) => { custodyMem.delete(key); try { unlinkSync(join(custodyDir, `${key}.json`)); } catch { /* not held */ } };
   const pendingSettle = new Map();          // chain key → { delta, ledger } of a settle held for custody (the clock and the holders live on the duty)
   const settling = new Set();               // chain keys whose held settle is being sent
@@ -195,8 +199,15 @@ export function createMatchBook({
   let nonce = null;
   // One transaction at a time from this key: two sends racing for the same nonce lose one of them
   // (seen in the end-to-end test: two placements committed in the same tick).
-  let chainOfSends = Promise.resolve();
-  const send = (data, what, to) => { const p = chainOfSends.then(() => sendNow(data, what, to)); chainOfSends = p.catch(() => {}); return p; };
+  // The line is the KEY's, not this module's (node/sender.js): the announce and the AIR sponsor's top-ups send from
+  // the same key. After one of theirs the local count is stale, so it is read again; and a send the chain refuses
+  // over its nonce is tried once more with a fresh count instead of being dropped.
+  const queue = keyQueue(address);
+  const send = (data, what, to) => queue.run('matchbook', async ({ foreign }) => {
+    if (foreign) nonce = null;
+    try { return await sendNow(data, what, to); }
+    catch (e) { if (!isNonceError(e)) throw e; nonce = null; log(`matchbook: ${what} refused over its nonce (${e.message}); sending once more with a fresh count`); return sendNow(data, what, to); }
+  });
   const sendNow = async (data, what, to = contract) => {
     if (delegated === false) throw new Error(`delegate ${address} is not this node's delegate on NodeStake — operator: npm run delegate -- ${nodeId.slice(0, 12)}… ${address}`);
     const [nonceHex, fee, gasHex] = await Promise.all([
@@ -679,6 +690,15 @@ export function createMatchBook({
       if (!ours) throw new Error(`could not verify: ${res.reason}`);
       attested.add(s.matchId);
       const tx = await trySend(mb.attestCalldata(delta.matchId, nodeId, ours), res.ok ? 'attest' : 'dispute', delta.matchId);
+      // A send that failed (the RPC, the fee ceiling, an empty purse) is not an answer: the seat is asked again on a
+      // later pass, a few times and not more often than every ten seconds, instead of sitting silent until it is
+      // slashed for a transaction that never left. A call the chain itself refuses (already attested, the window
+      // closed) fails the same way each time and stops at the cap.
+      if (!tx) {
+        const t = attestTries.get(s.matchId) ?? { n: 0, at: 0 };
+        t.n++; t.at = Date.now(); attestTries.set(s.matchId, t);
+        if (t.n < ATTEST_TRIES) setTimeout(() => attested.delete(s.matchId), ATTEST_RETRY_MS).unref?.();
+      } else attestTries.delete(s.matchId);
       emit('attested', { matchId: delta.matchId, agrees: res.ok, reason: res.ok ? null : res.reason, tx, escalation: !!onNine && !onFirst });
     } catch (e) { log(`matchbook: witness ${s.matchId.slice(0, 12)}: ${e.message}`); emit('witness-failed', { matchId: s.matchId, reason: e.message }); }
     finally { witnessing.delete(s.matchId); }

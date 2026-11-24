@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { createReadStream, statSync } from 'node:fs';
 import { join, normalize, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SECURITY_HEADERS } from './headers.js';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT ?? 5180);
@@ -17,7 +18,7 @@ createServer((req, res) => {
   if (!file.startsWith(root)) { res.writeHead(403); return res.end(); }
   try {
     if (!statSync(file).isFile()) throw new Error();
-    res.writeHead(200, { 'content-type': types[extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
+    res.writeHead(200, { 'content-type': types[extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-cache', ...(extname(file) === '.html' ? SECURITY_HEADERS : { 'x-content-type-options': 'nosniff' }) });
     createReadStream(file).pipe(res);
   } catch { res.writeHead(404); res.end('not found'); }
 }).listen(port, '127.0.0.1', () => console.log(`cabinet: http://127.0.0.1:${port}/`));

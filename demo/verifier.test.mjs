@@ -81,6 +81,9 @@ test('the child: verify() runs isolated; a spin is the runner\'s failure, a refu
   assert.match(req.error, /may not import http/, 'require() is refused too');
   const fetchy = await run(`export async function verify() { return { finalHash: typeof fetch } ; }`, good);
   assert.equal(fetchy.finalHash, 'undefined', 'no fetch global');
+  // process hands out no builtin past the hook, cannot signal the node that started it, and carries no environment
+  const proc = await run(`export async function verify() { return { finalHash: [typeof process.getBuiltinModule, typeof process.binding, typeof process.kill, typeof process.dlopen, Object.keys(process.env).length].join(',') }; }`, good);
+  assert.equal(proc.finalHash, 'undefined,undefined,undefined,undefined,0', JSON.stringify(proc));
   const write = await run(`import { writeFileSync } from 'node:fs'; export async function verify() { writeFileSync('owned.txt', 'x'); return { finalHash: 'x' }; }`, good);
   assert.match(write.error, /ERR_ACCESS_DENIED|permission|Access to this API has been restricted/i);
   const spin = await run(`export async function verify() { for (;;) {} }`, good, { node: '>=20', timeoutS: 1 });

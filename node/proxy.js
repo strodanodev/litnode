@@ -22,7 +22,9 @@
  *  (ownerOfKey(airKey)); only the node that created the key can SIGN for
  *  it, and it answers `custody: 'elsewhere'` when the profile exists but
  *  the key is not here. */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { writeAtomic } from './atomic.js';
+import { keyQueue } from './sender.js';
 import { join } from 'node:path';
 import { randomPrivateKey, addressOf, signTransaction } from '../protocol/evm.js';
 import { airKey, nameFor } from '../protocol/air.js';
@@ -41,6 +43,8 @@ const RECEIPT_TIMEOUT_MS = 60_000;
 export function createProxyWallets({ dataDir, chainId, rpc, playerProfile, sponsor, titleRegistry = null, nodeStake = null, stakeToken = null, nodeId = null, signBond = null, log = () => {}, emit = () => {} }) {
   const dir = join(dataDir, 'proxies');
   mkdirSync(dir, { recursive: true });
+  const SPONSOR_DAILY = Math.max(1, Number(process.env.AIR_SPONSOR_DAILY) || 50); // gas top-ups for new AIR accounts a day, per node
+  const topups = { day: 0, n: 0 };
   const locks = new Map();
   /** One operation per AIR user at a time: two tabs signing in together must not mint two profiles. */
   const withLock = async (sub, fn) => {
@@ -55,7 +59,7 @@ export function createProxyWallets({ dataDir, chainId, rpc, playerProfile, spons
   const create = (sub) => {
     const rec = { sub, privateKey: randomPrivateKey(), createdAt: new Date().toISOString() };
     rec.address = addressOf(rec.privateKey).toLowerCase();
-    writeFileSync(keyPath(sub), JSON.stringify(rec, null, 2) + '\n');
+    writeAtomic(keyPath(sub), JSON.stringify(rec, null, 2) + '\n'); // a player's custodied wallet key: whole or not at all
     log(`proxy: new litVM wallet ${rec.address} for AIR user ${sub.slice(0, 8)}…`);
     emit('proxy.created', { sub, address: rec.address });
     return rec;
@@ -76,13 +80,17 @@ export function createProxyWallets({ dataDir, chainId, rpc, playerProfile, spons
   /** Sign and send one call from `key`; the receipt, or a throw. */
   const send = async (key, { to, data = '0x', value = 0n }) => {
     const from = addressOf(key.privateKey);
-    const [nonceHex, gasPriceHex, gasHex] = await Promise.all([
-      rpc('eth_getTransactionCount', [from, 'pending']),
-      rpc('eth_gasPrice', []),
-      rpc('eth_estimateGas', [{ from, to, data, value: '0x' + value.toString(16) }]),
-    ]);
-    const raw = signTransaction({ nonce: BigInt(nonceHex), gasPrice: BigInt(gasPriceHex) * 12n / 10n, gasLimit: BigInt(gasHex) * 13n / 10n, to, value, data, chainId: BigInt(chainId) }, key.privateKey);
-    const hash = await rpc('eth_sendRawTransaction', [raw]);
+    // The sponsor is the node's hot key, which MatchBook and the announce also send from: one line per key
+    // (node/sender.js). Only the send stands in it; the receipt is awaited outside, so a slow block holds nobody up.
+    const hash = await keyQueue(from).run('proxy', async () => {
+      const [nonceHex, gasPriceHex, gasHex] = await Promise.all([
+        rpc('eth_getTransactionCount', [from, 'pending']),
+        rpc('eth_gasPrice', []),
+        rpc('eth_estimateGas', [{ from, to, data, value: '0x' + value.toString(16) }]),
+      ]);
+      const raw = signTransaction({ nonce: BigInt(nonceHex), gasPrice: BigInt(gasPriceHex) * 12n / 10n, gasLimit: BigInt(gasHex) * 13n / 10n, to, value, data, chainId: BigInt(chainId) }, key.privateKey);
+      return rpc('eth_sendRawTransaction', [raw]);
+    });
     return { hash, receipt: await receipt(hash) };
   };
   /** Make sure the proxy can pay for a few calls; the sponsor pays. */
@@ -91,6 +99,14 @@ export function createProxyWallets({ dataDir, chainId, rpc, playerProfile, spons
     if (!sponsor) throw new Error('proxy wallet has no gas and this node has no sponsor key');
     const have = await balance(sponsor.address);
     if (have < TOPUP_WEI * 2n) throw new Error(`sponsor ${sponsor.address} has ${have} wei — the operator must fund it (it is the announcer key on /health)`);
+    // The sponsor is the purse that pays this node's MatchBook transactions. Every new AIR account costs it one
+    // top-up, and signing up is open to the network: without a ceiling, sign-ups could empty the purse a node needs
+    // to settle and attest (audit of 21 Oct and 10 Nov 2026). AIR_SPONSOR_DAILY top-ups a day (default 50), then
+    // new accounts wait for tomorrow; existing accounts are not affected.
+    const day = Math.floor(Date.now() / 86_400_000);
+    if (topups.day !== day) { topups.day = day; topups.n = 0; }
+    if (topups.n >= SPONSOR_DAILY) throw new Error(`this node has sponsored its ${SPONSOR_DAILY} new accounts for today; sign in at another node or try tomorrow`);
+    topups.n++;
     const { hash } = await send(sponsor, { to: address, value: TOPUP_WEI });
     log(`proxy: sponsored ${address} with ${TOPUP_WEI} wei (tx ${hash.slice(0, 12)}…)`);
     return hash;
@@ -261,5 +277,5 @@ export function createProxyWallets({ dataDir, chainId, rpc, playerProfile, spons
   });
 
   return { session, revoke, resolve, publish, bond, title, addressOf: (sub) => load(sub)?.address ?? null,
-    status: () => ({ sponsor: sponsor?.address ?? null, contract: playerProfile, titleRegistry, nodeStake, stakeToken }) };
+    status: () => ({ sponsor: sponsor?.address ?? null, sponsoredToday: topups.day === Math.floor(Date.now() / 86_400_000) ? topups.n : 0, sponsorDaily: SPONSOR_DAILY, contract: playerProfile, titleRegistry, nodeStake, stakeToken }) };
 }

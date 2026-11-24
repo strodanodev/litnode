@@ -5,6 +5,56 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+Protocol 4, unchanged: no contract, result hash, heartbeat or proof level changes, so 0.12.x nodes stay peers. Node and
+cabinet both changed: redeploy the arcade with the release that carries this. From the audit of 10 Nov 2026
+(`audit/audit-2026-11-10.md` §3, P1 and P2).
+
+### Security
+
+- **The arcade page has a content security policy** (`cabinet/headers.js`, `cabinet/vercel.json`, the node's static
+  server, `npm run cabinet`). Scripts run from the page's own origin only: no inline script, no inline handler, no
+  `eval`. An injected `<script>` or `on…=` attribute, from a peer's title listing, a node's answer or NFT metadata,
+  does not run, so the player key in the page's storage stays out of its reach. Also `object-src 'none'`,
+  `base-uri 'self'`, `frame-ancestors` (the arcade's own sites and this machine) and
+  `Referrer-Policy: strict-origin-when-cross-origin`. The page already had one module script and no inline handlers;
+  `demo/cabinet.test.mjs` now fails if either changes, or if `vercel.json` and `headers.js` differ.
+- **`cabinet:init` gives the AIR id and email only to an arcade-login title, at its own origin** (`cabinet/app.js`).
+  They went to every framed title, posted with target `'*'`: a peer-listed or third-party title, or a page a title
+  redirected to, read the player's email. Every title still gets the public half (player key and name, node, chain,
+  match, and the profile's address, token and name); `air.id` and `air.email` are `null` there. A title marked
+  `login: 'arcade'` gets a second init with both, posted to its own origin.
+- **The verifier child has no `process` escape hatch** (`node/verifier-child.mjs`). The resolve hook refused network
+  builtins for `import` and `require`, but `process.getBuiltinModule('net')` went past it and `process.kill()` could
+  signal the node. Both are removed before the bundle loads, with `binding`, `dlopen` and the rest the title sandbox
+  has always removed; the environment is empty. FLOOD CONTROL's registered verifier still reproduces its run.
+- **The AIR gas sponsor has a daily ceiling** (`node/proxy.js`). Each new AIR account costs the sponsor one top-up,
+  the sponsor is the key that pays this node's MatchBook transactions, and signing up is open to the network.
+  `AIR_SPONSOR_DAILY` (default 50) new accounts a day per node; past it a new account gets a clear refusal, existing
+  accounts are unaffected. `GET /air` reports `sponsoredToday` and `sponsorDaily`.
+
+### Fixed
+
+- **State files are written whole or not at all** (`node/atomic.js`). Deltas, ledgers, frozen epochs, logs, the node
+  identity, the hot key, AIR proxy keys, the accepted and retired release keys, MatchBook duties and custody copies
+  were written in place; a crash or a full disk mid-write left half a file. They are now written to a temp file,
+  flushed and renamed over the target.
+- **A file that does not parse no longer stops the node at start** (`node/settle.js`). One torn delta used to throw
+  before the node listened. It is now moved aside as `<file>.corrupt-<time>`, named in the log, and skipped; every
+  other result is served.
+- **One transaction at a time per signing key, across modules** (`node/sender.js`). MatchBook, the NodeDirectory
+  announce and the AIR sponsor's top-ups all send from the node's hot key, and each chose its own nonce. An announce
+  or a top-up between two MatchBook sends made the next commit or attestation carry a used nonce: refused, and lost.
+  All three now stand in one line per key; MatchBook re-reads its nonce after another module's send, and a send
+  refused over its nonce is tried once more with a fresh count.
+- **An attestation whose transaction did not go out is sent again** (`node/matchbook.js`): up to five tries, ten
+  seconds apart. The seat used to be marked as answered before the send, so a failed send left it silent.
+- Tests: `demo/durability.test.mjs` (new), `demo/cabinet.test.mjs`, `demo/verifier.test.mjs`, `demo/air.test.mjs`.
+
+Not in this patch: the AIR token is still a bearer credential the arcade hands to whichever seed it picked. Signing
+the request with the player key does not fix that (a seed can sign with a key of its own); it needs a decision on
+which nodes the arcade may give the token to. The play frames are not sandboxed yet: that could not be checked
+against the live titles from a local page.
+
 ### Added
 
 - **Rapture TCG in the arcade** (`cabinet/config.js`, `covers/rapture-tcg.jpg`): tcg.litvm.games in the window, with

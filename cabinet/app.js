@@ -1556,6 +1556,7 @@ document.addEventListener('click', (e) => {
 
 // ═══════════════════════════════════════════════ play ══
 // Shell → game: { type:'cabinet:init', version:1, player:{id,guest,name}, air:{id,email,address,tokenId,name}|null, node:{url,online}, game:{id,title},
+//                 (air.id and air.email are null unless the title is `login: 'arcade'` and the frame is at its own origin: see sendInit)
 //                 chain:{chainId, rpc, generation, contracts:{NodeDirectory:{address},NodeStake:{address},…}}   ← the CURRENT contract set: a title that discovers the mesh on its own takes these, never its own constants
 //                 match?:{matchId, host, hostAddr, witness, wsAddr, beacon, beaconSource, participants, mode, buildHash, rulesetId, descriptor} }   ← present when launched from a verified placement; `descriptor` is the host's signed envelope: send it back with the ledger (sdk/client.js settle)
 //                 login:'arcade'|null   ← 'arcade': this title signs in through this page (below), never with its own dialog
@@ -1593,7 +1594,21 @@ async function pushAir() {
   const target = frame.contentWindow, origin = titleOrigin, msg = await airState();
   if (frame.contentWindow === target && titleOrigin === origin) target.postMessage(msg, origin);
 }
-const sendInit = () => { if (current && frame.contentWindow) frame.contentWindow.postMessage({ type: 'cabinet:init', version: 1, login: current.login === 'arcade' && air.configured() ? 'arcade' : null, player: { id: player.id, guest: player.guest, name: player.name }, air: Ai.me.session?.address ? { id: Ai.me.id ?? null, email: Ai.me.email ?? null, address: Ai.me.session.address, tokenId: Ai.me.session.tokenId ?? null, name: Ai.me.session.name ?? null } : null, node: { url: nodeUrl(), online: S.online }, game: { id: current.id, title: current.title }, chain: { chainId: CHAIN.chainId, rpc: CHAIN.rpc, generation: CHAIN.generation, contracts: CONTRACTS.contracts }, ...(currentMatch ? { match: currentMatch } : {}) }, '*'); };
+/** cabinet:init. Every title gets the public half, posted to whatever origin the frame holds ('*': a title may
+ *  redirect, and nothing in it is private): the player key and name, the node, the chain, the match, and of the AIR
+ *  account only what the chain already shows (profile address, token, name). The AIR id and email are the player's,
+ *  not the mesh's: they go ONLY to a title config.js marks `login: 'arcade'`, in a second init posted to that
+ *  title's own origin, so a peer-listed or third-party title — or a page a title redirected to — never reads them
+ *  (audit of 10 Nov 2026: they went to every frame, with target '*'). */
+const sendInit = () => {
+  if (!current || !frame.contentWindow) return;
+  const s = Ai.me.session;
+  const pub = s?.address ? { id: null, email: null, address: s.address, tokenId: s.tokenId ?? null, name: s.name ?? null } : null;
+  const arcade = current.login === 'arcade' && air.configured();
+  const init = { type: 'cabinet:init', version: 1, login: arcade ? 'arcade' : null, player: { id: player.id, guest: player.guest, name: player.name }, air: pub, node: { url: nodeUrl(), online: S.online }, game: { id: current.id, title: current.title }, chain: { chainId: CHAIN.chainId, rpc: CHAIN.rpc, generation: CHAIN.generation, contracts: CONTRACTS.contracts }, ...(currentMatch ? { match: currentMatch } : {}) };
+  frame.contentWindow.postMessage(init, '*');
+  if (arcade && pub) for (const origin of new Set(airOriginsOf(current))) frame.contentWindow.postMessage({ ...init, air: { ...pub, id: Ai.me.id ?? null, email: Ai.me.email ?? null } }, origin);
+};
 window.addEventListener('message', async (e) => {
   if (e.source !== frame.contentWindow || !e.data?.type) return;
   if (e.data.type === 'cabinet:hello') sendInit();
