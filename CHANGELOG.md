@@ -5,6 +5,8 @@ follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.12.6] — 2026-11-25 — audit P1/P2 fixes; AIR sign-in to listed nodes only; explorer and faucet moved to Zeeve
+
 Protocol 4, unchanged: no contract, result hash, heartbeat or proof level changes, so 0.12.x nodes stay peers. Node and
 cabinet both changed: redeploy the arcade with the release that carries this. From the audit of 10 Nov 2026
 (`audit/audit-2026-11-10.md` §3, P1 and P2).
